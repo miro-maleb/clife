@@ -1,0 +1,5 @@
+rich
+textual
+gcalcli
+google-auth-oauthlib
+google-api-python-client
