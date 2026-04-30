@@ -1,0 +1,47 @@
+#compdef cl
+
+_cl() {
+  local commands=(
+    "capture:quick text or voice capture → inbox"
+    "inbox:route inbox files"
+    "projects:project review"
+    "notes:notes browser"
+    "review:full review pipeline"
+    "week:weekly planner"
+    "new-project:create a new project"
+    "dashboard:persistent dashboard"
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe "cl commands" commands
+  else
+    case "$words[2]" in
+      capture)
+        _values "capture options" \
+          "--voice[voice capture]" \
+          "--journal[capture to journal]" \
+          "-j[capture to journal]"
+        ;;
+      inbox|notes)
+        _values "options" "--tui[use TUI]"
+        ;;
+      projects)
+        _values "projects options" \
+          "--tui[use TUI]" \
+          "--sleeping[sleeping projects]" \
+          "--active[active projects]" \
+          "--on-hold[on-hold projects]" \
+          "--complete[complete projects]" \
+          "--abandoned[abandoned projects]" \
+          "--all[all projects]"
+        ;;
+      week)
+        _values "week options" \
+          "--regenerate[regenerate this week's plan]" \
+          "--overwrite[regenerate this week's plan]"
+        ;;
+    esac
+  fi
+}
+
+_cl
