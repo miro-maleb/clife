@@ -3,6 +3,7 @@
 _cl() {
   local commands=(
     "capture:quick text or voice capture → inbox"
+    "ingest:pull new email from capture maildir → inbox"
     "inbox:route inbox files"
     "projects:project review"
     "notes:notes browser"
@@ -24,6 +25,10 @@ _cl() {
         ;;
       inbox|notes)
         _values "options" "--tui[use TUI]"
+        ;;
+      ingest)
+        _values "ingest options" \
+          "--dry-run[preview without writing or marking seen]"
         ;;
       projects)
         _values "projects options" \

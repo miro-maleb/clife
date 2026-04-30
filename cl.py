@@ -8,6 +8,7 @@ TUI_COMMANDS = {"inbox", "notes", "projects", "capture", "review"}
 
 COMMANDS = {
     "capture":     "capture",
+    "ingest":      "ingest",
     "week":        "week",
     "inbox":       "inbox",
     "projects":    "projects",
@@ -23,6 +24,7 @@ HELP = """
   cl capture                  quick text capture — one line per item → inbox
   cl capture --voice          voice capture — say 'break' between items, Ctrl+C to finish
   cl capture --journal        capture directly to today's journal (text or voice)
+  cl ingest [--dry-run]       pull new email from kb-capture maildir → inbox
   cl inbox [--tui]            route inbox files — j/n/t/p/v/g/h/s/d
   cl notes [--tui]            notes browser — by area, project, tag, orphans
   cl projects [--tui]         project review — active + on-hold (default)
