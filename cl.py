@@ -27,7 +27,12 @@ HELP = """
   cl capture --journal        capture directly to today's journal (text or voice)
   cl ingest [--dry-run]       pull new email from kb-capture maildir → inbox
   cl inbox [--tui]            route inbox files — j/n/t/p/v/g/h/s/d
-  cl notes [--tui]            notes browser — by area, project, tag, orphans
+  cl notes                    flat fzf browser over every note
+  cl notes --orphans          only orphan notes (no project home, no inbound link)
+  cl notes --stale            only notes unmodified > 90 days
+  cl notes --area NAME        filter to one area
+  cl notes --project NAME     filter to one project
+  cl notes --tag NAME         filter to one tag
   cl projects [--tui]         project review — active + on-hold (default)
   cl projects --sleeping      show sleeping projects
   cl projects --active|--on-hold|--complete|--abandoned|--all

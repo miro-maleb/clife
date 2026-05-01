@@ -42,8 +42,16 @@ _cl() {
           "--journal[capture to journal]" \
           "-j[capture to journal]"
         ;;
-      inbox|notes)
+      inbox)
         _values "options" "--tui[use TUI]"
+        ;;
+      notes)
+        _values "notes options" \
+          "--orphans[only orphan notes]" \
+          "--stale[only notes >90d unmodified]" \
+          "--area[filter to one area]:area:" \
+          "--project[filter to one project]:project:" \
+          "--tag[filter to one tag]:tag:"
         ;;
       ingest)
         _values "ingest options" \
