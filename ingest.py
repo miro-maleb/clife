@@ -81,6 +81,50 @@ def strip_html(html):
     return text
 
 
+LONG_URL_THRESHOLD = 80
+
+
+def clean_text(s):
+    """Normalize email body text for kb inbox display.
+
+    Pipeline:
+    - CRLF → LF
+    - strip trailing whitespace per line (kills email's 76-char wrap artifacts)
+    - collapse 3+ blank lines to 2
+    - unwrap <https://...> autolinks, inserting spaces if smushed against text
+    - footnote any URL > 80 chars: replace inline with [link N], append at end
+    """
+    s = s.replace("\r\n", "\n").replace("\r", "")
+    s = "\n".join(line.rstrip() for line in s.split("\n"))
+    s = re.sub(r"\n{3,}", "\n\n", s)
+
+    # Unwrap <URL> autolinks (Gmail-style), inserting spaces when smushed
+    s = re.sub(r"(?<=\S)<(https?://[^\s>]+)>(?=\S)", r" \1 ", s)
+    s = re.sub(r"<(https?://[^\s>]+)>(?=\S)", r"\1 ", s)
+    s = re.sub(r"(?<=\S)<(https?://[^\s>]+)>", r" \1", s)
+    s = re.sub(r"<(https?://[^\s>]+)>", r"\1", s)
+
+    # Footnote long URLs to keep the body readable
+    long_urls = []
+
+    def shorten(m):
+        url = m.group(0).rstrip(".,;:)]")
+        trailing = m.group(0)[len(url):]
+        if len(url) <= LONG_URL_THRESHOLD:
+            return m.group(0)
+        long_urls.append(url)
+        return f"[link {len(long_urls)}]" + trailing
+
+    s = re.sub(r"https?://[^\s<>\[\]()]+", shorten, s)
+
+    if long_urls:
+        s = s.rstrip() + "\n\n---\n"
+        for i, url in enumerate(long_urls, 1):
+            s += f"[link {i}]: {url}\n"
+
+    return s.strip()
+
+
 def get_text_body(msg):
     """Extract a clean text body, preferring text/plain over stripped HTML."""
 
@@ -96,12 +140,12 @@ def get_text_body(msg):
             if part.get_content_type() == "text/plain" and "attachment" not in str(
                 part.get("Content-Disposition", "")
             ):
-                return _decode(part).strip()
+                return clean_text(_decode(part))
         for part in msg.walk():
             if part.get_content_type() == "text/html":
-                return strip_html(_decode(part)).strip()
+                return clean_text(strip_html(_decode(part)))
         return ""
-    return _decode(msg).strip()
+    return clean_text(_decode(msg))
 
 
 def safe_quote(s):

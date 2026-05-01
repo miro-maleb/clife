@@ -1,0 +1,27 @@
+# mbsync config — copy to ~/.mbsyncrc and edit USER lines.
+#
+# kb-capture: dedicated capture inbox for cl ingest (sub-project 03).
+# Add additional IMAPAccount blocks below for your main Gmail or other accounts.
+
+IMAPAccount kb-capture
+Host imap.gmail.com
+User <YOUR-CAPTURE-ADDRESS>@gmail.com
+PassCmd "cat ~/.config/mbsync/kb-capture-password"
+TLSType IMAPS
+CertificateFile /etc/ssl/certs/ca-certificates.crt
+
+IMAPStore kb-capture-remote
+Account kb-capture
+
+MaildirStore kb-capture-local
+Path ~/mail/kb-capture/
+Inbox ~/mail/kb-capture/Inbox
+SubFolders Verbatim
+
+Channel kb-capture
+Far :kb-capture-remote:
+Near :kb-capture-local:
+Patterns "INBOX"
+Create Both
+SyncState *
+Expunge None
