@@ -165,7 +165,7 @@ def section_inbox():
 
 def section_stale():
     console.print(Rule(
-        f"[bold steel_blue1]  Stale[/bold steel_blue1]  [grey50](>{STALE_DAYS}d unmodified)[/grey50]",
+        f"[bold steel_blue1]  Stale[/bold steel_blue1]  [grey50](>{STALE_DAYS}d no activity)[/grey50]",
         style="grey23",
     ))
     console.print()
@@ -179,22 +179,24 @@ def section_stale():
             status = projects.get_status(content)
             if status in ("complete", "abandoned", "archived", "superseded"):
                 continue
-            if md.stat().st_mtime >= cutoff:
+            activity = projects.last_activity_ts(md)
+            if activity >= cutoff:
                 continue
-            stale.append((md, status))
+            stale.append((md, status, activity))
     if not stale:
         console.print("  [grey50]nothing stale.[/grey50]\n")
         return
-    for md, status in sorted(stale, key=lambda t: t[0].stat().st_mtime):
+    for md, status, activity in sorted(stale, key=lambda t: t[2]):
         rel = md.parent.relative_to(PROJECTS_DIR)
-        days = int((time.time() - md.stat().st_mtime) // 86400)
+        days = int((time.time() - activity) // 86400)
         console.print(
             f"  [tan]{rel}[/tan]  "
             f"[{projects.status_color(status)}]{status}[/{projects.status_color(status)}]  "
             f"[grey50]{days}d ago[/grey50]"
         )
     console.print(
-        "\n  [grey50]consider: sleep, abandon, or just touch with a fresh task[/grey50]\n"
+        "\n  [grey50]activity = max(file mtimes in tree, last_reviewed). "
+        "consider: sleep, abandon, or refresh with a task.[/grey50]\n"
     )
 
 

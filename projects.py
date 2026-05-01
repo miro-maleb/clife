@@ -111,6 +111,32 @@ def days_since_reviewed(content):
         return None
 
 
+def last_activity_ts(md_file):
+    """Return the most recent unix timestamp signaling activity on a project.
+
+    Combines:
+    - max mtime of any .md file under the project/sub-project tree
+    - the last_reviewed: frontmatter date (if set)
+
+    Used by review's stale-detection — catches sub-project work AND formal
+    review cadence, and resists transient mtime noise from one signal.
+    """
+    project_dir = md_file.parent
+    mtimes = [f.stat().st_mtime for f in project_dir.rglob("*.md")]
+    last_mtime = max(mtimes) if mtimes else md_file.stat().st_mtime
+
+    content = md_file.read_text()
+    val = get_field(content, "last_reviewed")
+    last_reviewed_ts = 0.0
+    if val and val not in ("~", "null"):
+        try:
+            last_reviewed_ts = datetime.strptime(val, "%Y-%m-%d").timestamp()
+        except ValueError:
+            pass
+
+    return max(last_mtime, last_reviewed_ts)
+
+
 def set_field(md_file, field, value):
     """Set or add a frontmatter field. Idempotent."""
     content = md_file.read_text()
