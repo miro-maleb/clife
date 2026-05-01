@@ -14,7 +14,8 @@ COMMANDS = {
     "projects":    "projects",
     "notes":       "notes",
     "review":      "review",
-    "new-project": "new_project",
+    "new":         "new",
+    "new-project": "new_project",  # back-compat alias for muscle memory
     "dashboard":   "dashboard_tui",
 }
 
@@ -32,7 +33,12 @@ HELP = """
   cl projects --active|--on-hold|--complete|--abandoned|--all
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl week                     weekly planner
-  cl new-project              create a new project directly (skip inbox)
+  cl new                      scaffold area / project / sub-project (interactive or with flags)
+  cl new --area NAME          create a new area
+  cl new --project NAME       create a new project (fzf prompts for area)
+  cl new --project NAME --in AREA
+  cl new --sub-project NAME [--in PROJECT]
+  cl new-project              alias for `cl new --project` (back-compat)
   cl dashboard                persistent dashboard — journal, calendar, projects, capture
 
   On Termux, inbox/notes/projects automatically use the TUI.

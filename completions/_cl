@@ -1,5 +1,23 @@
 #compdef cl
 
+_cl_areas() {
+  local -a areas
+  local d
+  for d in $HOME/kb/projects/*/area.md(N); do
+    areas+=("${${d%/area.md}##*/}")
+  done
+  _describe "areas" areas
+}
+
+_cl_projects() {
+  local -a projs
+  local d
+  for d in $HOME/kb/projects/*/*/project.md(N); do
+    projs+=("${${d%/project.md}##*/}")
+  done
+  _describe "projects" projs
+}
+
 _cl() {
   local commands=(
     "capture:quick text or voice capture → inbox"
@@ -9,7 +27,8 @@ _cl() {
     "notes:notes browser"
     "review:full review pipeline"
     "week:weekly planner"
-    "new-project:create a new project"
+    "new:scaffold area / project / sub-project"
+    "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
   )
 
@@ -44,6 +63,26 @@ _cl() {
         _values "week options" \
           "--regenerate[regenerate this week's plan]" \
           "--overwrite[regenerate this week's plan]"
+        ;;
+      new)
+        # Smart context: if --project is in the line, --in completes areas;
+        # if --sub-project is in the line, --in completes projects.
+        if [[ "${words[*]}" == *--project* ]]; then
+          if [[ "$words[CURRENT-1]" == "--in" ]]; then
+            _cl_areas
+            return
+          fi
+        elif [[ "${words[*]}" == *--sub-project* ]]; then
+          if [[ "$words[CURRENT-1]" == "--in" ]]; then
+            _cl_projects
+            return
+          fi
+        fi
+        _values "new options" \
+          "--area[create a new area]:name:" \
+          "--project[create a new project]:name:" \
+          "--sub-project[create a new sub-project]:name:" \
+          "--in[parent area or project]:parent:"
         ;;
     esac
   fi
