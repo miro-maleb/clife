@@ -7,8 +7,6 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
-from kb_utils import insert_journal_bullet, today_journal
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -21,7 +19,6 @@ inbox_path = Path.home() / "kb" / "inbox"
 shopping_path = Path.home() / "kb" / "shopping"
 
 HOTKEYS = (
-    "[grey50][[/grey50][steel_blue1]j[/steel_blue1][grey50]][/grey50] journal  "
     "[grey50][[/grey50][steel_blue1]n[/steel_blue1][grey50]][/grey50] note  "
     "[grey50][[/grey50][steel_blue1]t[/steel_blue1][grey50]][/grey50] task  "
     "[grey50][[/grey50][steel_blue1]c[/steel_blue1][grey50]][/grey50] calendar  "
@@ -53,13 +50,32 @@ def get_project_names():
 
 
 def get_project_areas():
-    """Return top-level project folders that are areas (no project.md directly inside)."""
-    areas = []
-    for item in sorted(project_path.iterdir()):
-        if item.is_dir() and not item.name.startswith("."):
-            if not (item / "project.md").exists():
-                areas.append(item)
-    return areas
+    """Return area dirs (those with area.md). Post sub-project 02 migration."""
+    return sorted([
+        d for d in project_path.iterdir()
+        if d.is_dir() and (d / "area.md").exists()
+    ])
+
+
+def list_route_targets():
+    """Return [path-relative-to-projects/] for every routable target.
+
+    Includes areas, projects, and sub-projects — anywhere a captured note can
+    be filed. Used by the `v` (→ project) hotkey for hierarchy-aware routing.
+    """
+    targets = []
+    for area in sorted(project_path.iterdir()):
+        if not area.is_dir() or not (area / "area.md").exists():
+            continue
+        targets.append(area.name)
+        for project in sorted(area.iterdir()):
+            if not project.is_dir() or not (project / "project.md").exists():
+                continue
+            targets.append(f"{area.name}/{project.name}")
+            for sp in sorted(project.iterdir()):
+                if sp.is_dir() and (sp / "sub-project.md").exists():
+                    targets.append(f"{area.name}/{project.name}/{sp.name}")
+    return targets
 
 
 def select_project_fzf(project_names):
@@ -143,13 +159,6 @@ def restore_terminal():
     termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def route_journal(file):
-    content = file.read_text().strip()
-    insert_journal_bullet(content)
-    file.unlink()
-    console.print("[dark_sea_green4]  → journal[/dark_sea_green4]")
-
-
 def route_calendar(file):
     content = file.read_text().strip()
     first_line = content.splitlines()[0] if content else content
@@ -218,10 +227,16 @@ def route_task(file):
 
 
 def route_new_project(file):
-    """Create a new on-hold project from this inbox item."""
+    """Create a new on-hold project from this inbox item.
+
+    Uses the same slugify and frontmatter schema as `cl new` (sub-project 05),
+    but defaults to area=ideas/ since this is a quick-capture flow. Press / to
+    fzf-pick a different area.
+    """
+    from new import slugify
+
     content = file.read_text().strip()
 
-    # Get project name
     restore_terminal()
     slug = ""
     while not slug:
@@ -230,16 +245,18 @@ def route_new_project(file):
             raw = input().strip()
         except EOFError:
             raw = ""
-        slug = raw.lower().replace(" ", "-")
+        slug = slugify(raw)
         if not slug:
             console.print("[red]  name required[/red]")
 
-    # Choose area — default to ideas/
-    console.print(f"\n  [grey50]pick area?[/grey50] [grey70](default: ideas/)[/grey70] [grey50][[/grey50][steel_blue1]y[/steel_blue1][grey50]/[/grey50][grey70]N[/grey70][grey50]][/grey50] ", end="")
+    console.print(
+        "\n  [grey50]area?[/grey50] [grey70](enter for ideas, / to pick)[/grey70] ",
+        end="",
+    )
     key = getch()
     console.print()
 
-    if key in ("y", "Y"):
+    if key == "/":
         areas = get_project_areas()
         area_name = select_area_fzf(areas)
         if not area_name:
@@ -251,47 +268,64 @@ def route_new_project(file):
     area_dir = project_path / area_name
     area_dir.mkdir(parents=True, exist_ok=True)
     project_dir = area_dir / slug
-    project_dir.mkdir(exist_ok=True)
+    if project_dir.exists():
+        console.print(f"[indian_red]  already exists: {area_name}/{slug}[/indian_red]")
+        return
+    project_dir.mkdir()
 
-    title = slug.replace("-", " ").title()
+    title = " ".join(w.capitalize() for w in slug.split("-"))
     today = datetime.now().strftime("%Y-%m-%d")
 
-    (project_dir / "project.md").write_text(f"""---
-created: {today}
-deadline:
-status: on-hold
-completed:
-abandoned:
-sleeping:
-area: {area_name}
-tags: []
----
-
-# {title}
-
-## Idea
-
-{content}
-""")
+    (project_dir / "project.md").write_text(
+        f"---\n"
+        f"created: {today}\n"
+        f"deadline: \n"
+        f"status: on-hold\n"
+        f"completed: \n"
+        f"abandoned: \n"
+        f"sleeping: \n"
+        f"last_reviewed: \n"
+        f"area: {area_name}\n"
+        f"tags: []\n"
+        f"---\n\n"
+        f"# {title}\n\n"
+        f"## Idea\n\n"
+        f"{content}\n"
+    )
     file.unlink()
     console.print(f"[dark_sea_green4]  → new project: {area_name}/{slug}[/dark_sea_green4]")
 
 
 def route_paste_project(file):
-    """Attach this inbox file to an existing project folder."""
-    project_names = get_project_names()
+    """Attach this inbox file to an existing area / project / sub-project.
+
+    Hierarchy-aware: shows flat fzf list of every routable target (areas,
+    projects, sub-projects). Pick `coding` or `coding/ai-pipeline` or
+    `coding/ai-pipeline/01-foo`.
+    """
+    targets = list_route_targets()
+    if not targets:
+        console.print("[indian_red]  no routable targets — projects/ is empty[/indian_red]")
+        return
     print()
-    project = select_project_fzf(project_names)
-    if not project:
+    result = subprocess.run(
+        ["fzf", "--prompt=  → ", "--height=40%", "--reverse", "--no-info"],
+        input="\n".join(targets), capture_output=True, text=True,
+    )
+    if result.returncode != 0:
         console.print("[rosy_brown]  → cancelled[/rosy_brown]")
         return
-    project_file = next((f for f in project_path.rglob("project.md") if f.parent.name == project), None)
-    if not project_file:
-        console.print(f"[indian_red]  project '{project}' not found — skipping[/indian_red]")
+    target = result.stdout.strip()
+    if not target:
+        console.print("[rosy_brown]  → cancelled[/rosy_brown]")
         return
-    dest = project_file.parent / file.name
+    dest_dir = project_path / target
+    if not dest_dir.is_dir():
+        console.print(f"[indian_red]  not a directory: {target}[/indian_red]")
+        return
+    dest = dest_dir / file.name
     file.rename(dest)
-    console.print(f"[dark_sea_green4]  → moved to {project}/{file.name}[/dark_sea_green4]")
+    console.print(f"[dark_sea_green4]  → {target}/{file.name}[/dark_sea_green4]")
 
 
 def route_shopping(file, list_name):
@@ -327,10 +361,7 @@ def process_file(file, index, total):
 
     while True:
         key = getch()
-        if key == "j":
-            route_journal(file)
-            return True
-        elif key == "c":
+        if key == "c":
             route_calendar(file)
             return True
         elif key == "n":
@@ -361,7 +392,29 @@ def process_file(file, index, total):
             return False
 
 
+def try_ingest_email():
+    """If kb-capture is configured, sync + ingest before triage. Silent if not."""
+    maildir_env = os.environ.get("CL_INGEST_MAILDIR", "")
+    default_maildir = Path.home() / "mail" / "kb-capture" / "Inbox"
+    if not maildir_env and not default_maildir.exists():
+        return
+    # Only run mbsync if it's installed and the channel exists in mbsyncrc.
+    mbsyncrc = Path.home() / ".mbsyncrc"
+    has_kb_capture = mbsyncrc.exists() and "kb-capture" in mbsyncrc.read_text()
+    if has_kb_capture:
+        subprocess.run(
+            ["mbsync", "kb-capture"],
+            capture_output=True,
+            text=True,
+        )
+    # Ingest. ingest.main() prints its own status; silent if nothing to do.
+    import ingest
+    ingest.main()
+
+
 def main():
+    try_ingest_email()
+
     files = sorted([
         f for f in inbox_path.iterdir()
         if f.is_file() and f.name != ".gitkeep"
