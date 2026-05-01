@@ -18,7 +18,14 @@ Setup:
 
 **Voice capture this way:** use Google Assistant or any voice-to-text app to dictate a note, then share-to-email the result.
 
-**WhatsApp/SMS:** long-press a message → Share → Email → send to capture address. Manual but reliable.
+**SMS:** long-press a message → Share → Email → send to capture address. Manual but reliable.
+
+**WhatsApp:** the share menu on most modern Android WhatsApp builds only shows in-WhatsApp contacts — exporting to email is intentionally hard. Realistic options:
+
+- **Copy → paste**: long-press → Copy, open email client, paste, send to capture address.
+- **Screenshot → share**: screenshot the message, share-to-email the image (lands as an attachment-only inbox item; transcribe later).
+- **Export Chat** (per-chat menu): heavier, sends the entire conversation as text. Useful for capturing a thread, not a single message.
+- One-tap WhatsApp capture is a real gap — it's the kind of thing a native Android app (sub-project 09 layer 2) closes by registering as a share-target intent.
 
 **iOS:** the share sheet works the same. Anywhere there's a Share menu, Email is in there.
 

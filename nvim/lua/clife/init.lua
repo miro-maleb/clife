@@ -319,6 +319,10 @@ function M.setup(opts)
   opts = opts or {}
   local keymaps = vim.tbl_extend("force", default_keymaps, opts.keymaps or {})
 
+  -- :cl auto-expands to :Cl. nvim user-commands must start uppercase, but
+  -- typing :cl<space> in command mode triggers this and feels native.
+  vim.cmd([[cnoreabbrev <expr> cl getcmdtype() == ':' && getcmdline() == 'cl' ? 'Cl' : 'cl']])
+
   -- :Cl <subcommand>
   vim.api.nvim_create_user_command("Cl", function(args)
     local sub = args.fargs[1]
