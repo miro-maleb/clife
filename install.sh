@@ -158,3 +158,9 @@ step=$((step + 1))
 echo "  $step. First sync + ingest:  mbsync kb-capture && cl ingest"
 step=$((step + 1))
 echo "  $step. Test:  cl --help  and  cl <tab>"
+echo
+echo "Optional — neovim plugin (:Cl capture, :Cl new-note, etc.)"
+echo "  Add to your init.lua:"
+echo "      vim.opt.rtp:prepend(\"$CLIFE_DIR/nvim\")"
+echo "      require(\"clife\").setup()"
+echo "  See $CLIFE_DIR/nvim/README.md for the keymap table."
