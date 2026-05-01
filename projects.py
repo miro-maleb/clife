@@ -1,9 +1,10 @@
 import argparse
 import os
+import shutil
 import sys
 import tty
 import termios
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from rich.console import Console
@@ -12,14 +13,27 @@ from rich.rule import Rule
 
 console = Console()
 
-project_path = Path.home() / "kb" / "projects"
-EXCLUDED_TOP = {"life-os", "personal-life"}
-STATUS_ORDER = {"active": 0, "on-hold": 1, "sleeping": 2, "complete": 3, "abandoned": 4}
+KB = Path.home() / "kb"
+project_path = KB / "projects"
+archive_path = KB / "archive"
 
-# Shown by default in lo projects
-DEFAULT_STATUSES = {"active", "on-hold"}
-# Shown in lo review (includes sleeping)
-REVIEW_STATUSES = {"active", "on-hold", "sleeping"}
+# Top-level dirs whose projects don't belong in routine review.
+# - infrastructure: clife, life-os — system tooling, not goal-oriented projects.
+# - personal-life: ongoing systems (budget, food, etc.) — show with --all if needed.
+EXCLUDED_TOP = {"infrastructure", "personal-life"}
+
+STATUS_ORDER = {
+    "active": 0, "on-hold": 1, "sleeping": 2,
+    "complete": 3, "abandoned": 4, "archived": 5, "superseded": 6,
+}
+
+# Default project review: active + on-hold + complete (so 'complete' bubbles
+# up for the archive prompt).
+DEFAULT_STATUSES = {"active", "on-hold", "complete"}
+# Full review (cl review) widens to include sleeping.
+REVIEW_STATUSES = {"active", "on-hold", "sleeping", "complete"}
+
+REVIEW_FRESH_DAYS = 7  # skip projects reviewed within this many days unless --force
 
 
 def getch():
@@ -38,16 +52,15 @@ def get_top_folder(md_file):
     return parts[idx + 1]
 
 
-def is_structural_area(area_file):
-    """True for container folder markers — area.md files with no created: field."""
-    return "created:" not in area_file.read_text()
+def get_field(content, field):
+    for line in content.splitlines():
+        if line.startswith(f"{field}:"):
+            return line.split(":", 1)[1].strip()
+    return ""
 
 
 def get_status(content):
-    for line in content.splitlines():
-        if line.startswith("status:"):
-            return line.split(":", 1)[1].strip()
-    return "unknown"
+    return get_field(content, "status") or "unknown"
 
 
 def get_goal(content):
@@ -76,7 +89,6 @@ def get_goal(content):
         if not stripped or stripped.startswith("#"):
             continue
         return stripped
-
     return ""
 
 
@@ -87,33 +99,79 @@ def open_task_count(md_file):
     return count
 
 
-def set_status(md_file, new_status):
+def days_since_reviewed(content):
+    """Return int days since last_reviewed, or None if never reviewed."""
+    val = get_field(content, "last_reviewed")
+    if not val or val in ("~", "null"):
+        return None
+    try:
+        d = datetime.strptime(val, "%Y-%m-%d")
+        return (datetime.now() - d).days
+    except ValueError:
+        return None
+
+
+def set_field(md_file, field, value):
+    """Set or add a frontmatter field. Idempotent."""
     content = md_file.read_text()
+    lines = content.splitlines()
+    in_frontmatter = False
+    fm_start = None
+    fm_end = None
+    for i, line in enumerate(lines):
+        if line.strip() == "---":
+            if not in_frontmatter:
+                in_frontmatter = True
+                fm_start = i
+            else:
+                fm_end = i
+                break
+    if fm_start is None or fm_end is None:
+        return  # no frontmatter
+
+    found = False
+    for i in range(fm_start + 1, fm_end):
+        if lines[i].startswith(f"{field}:"):
+            lines[i] = f"{field}: {value}"
+            found = True
+            break
+    if not found:
+        lines.insert(fm_end, f"{field}: {value}")
+
+    md_file.write_text("\n".join(lines) + "\n")
+
+
+def set_status(md_file, new_status):
     today = datetime.now().strftime("%Y-%m-%d")
-    lines = []
-    for line in content.splitlines():
-        if line.startswith("status:"):
-            lines.append(f"status: {new_status}")
-        else:
-            lines.append(line)
-    content = "\n".join(lines)
+    set_field(md_file, "status", new_status)
     if new_status == "complete":
-        content = content.replace("completed:\n", f"completed: {today}\n")
+        set_field(md_file, "completed", today)
     elif new_status == "abandoned":
-        content = content.replace("abandoned:\n", f"abandoned: {today}\n")
+        set_field(md_file, "abandoned", today)
     elif new_status == "sleeping":
-        content = content.replace("sleeping:\n", f"sleeping: {today}\n")
-    md_file.write_text(content)
+        set_field(md_file, "sleeping", today)
 
 
-def reclassify(md_file):
-    """Rename project.md ↔ area.md. Returns the new type label."""
-    if md_file.name == "project.md":
-        md_file.rename(md_file.parent / "area.md")
-        return "area"
-    else:
-        md_file.rename(md_file.parent / "project.md")
-        return "project"
+def mark_reviewed(md_file):
+    set_field(md_file, "last_reviewed", datetime.now().strftime("%Y-%m-%d"))
+
+
+def archive_project(md_file):
+    """Move project dir to ~/kb/archive/<area>/<project>/.
+
+    Preserves the area folder structure. Status flipped to 'archived' before
+    the move. Returns the new path, or None if move was skipped.
+    """
+    set_status(md_file, "archived")
+    project_dir = md_file.parent
+    rel = project_dir.relative_to(project_path)
+    dest = archive_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        console.print(f"[indian_red]  archive target exists: {dest}[/indian_red]")
+        return None
+    shutil.move(str(project_dir), str(dest))
+    return dest
 
 
 def open_in_nvim(file):
@@ -122,122 +180,147 @@ def open_in_nvim(file):
 
 def status_color(status):
     return {
-        "active":   "steel_blue1",
-        "on-hold":  "rosy_brown",
-        "sleeping": "grey50",
-        "complete": "dark_sea_green4",
-        "abandoned": "indian_red",
+        "active":     "steel_blue1",
+        "on-hold":    "rosy_brown",
+        "sleeping":   "grey50",
+        "complete":   "dark_sea_green4",
+        "abandoned":  "indian_red",
+        "archived":   "grey39",
+        "superseded": "grey39",
     }.get(status, "grey70")
 
 
-def build_hotkeys(is_project, status):
+def build_hotkeys(status):
     def key(k, label, color="steel_blue1"):
         return f"[grey50][[/grey50][{color}]{k}[/{color}][grey50]][/grey50] {label}"
 
     parts = [key("k", "keep")]
 
-    if status == "sleeping":
+    if status == "complete":
+        # primary action is archive
+        parts.append(key("A", "archive", "gold3"))
+        parts.append(key("a", "re-activate", "dark_sea_green4"))
+    elif status == "sleeping":
         parts.append(key("w", "wake", "rosy_brown"))
-    else:
-        if status != "active":
-            parts.append(key("a", "activate", "dark_sea_green4"))
-        if status == "active":
-            parts.append(key("h", "hold", "rosy_brown"))
-        if status in ("active", "on-hold"):
-            parts.append(key("z", "sleep", "grey50"))
-        if is_project and status in ("active", "on-hold"):
-            parts.append(key("c", "complete", "dark_sea_green4"))
+    elif status == "active":
+        parts.append(key("h", "hold", "rosy_brown"))
+        parts.append(key("z", "sleep", "grey50"))
+        parts.append(key("c", "complete", "dark_sea_green4"))
+    elif status == "on-hold":
+        parts.append(key("a", "activate", "dark_sea_green4"))
+        parts.append(key("z", "sleep", "grey50"))
+        parts.append(key("c", "complete", "dark_sea_green4"))
 
     parts.append(key("x", "abandon", "indian_red"))
-
-    reclassify_label = "→ Area" if is_project else "→ Project"
-    parts.append(key("r", reclassify_label, "gold3"))
     parts.append(key("o", "open"))
     parts.append(key("q", "quit", "grey70"))
 
     return "  ".join(parts)
 
 
-def get_all_reviewable(statuses=None):
+def get_all_projects(statuses=None, force=False):
+    """Return list of project.md paths for review.
+
+    Filters:
+    - Skips areas (we only list project.md, never area.md)
+    - Skips top-level dirs in EXCLUDED_TOP
+    - Skips projects with last_reviewed within REVIEW_FRESH_DAYS, unless force
+    """
     if statuses is None:
         statuses = DEFAULT_STATUSES
+
     items = []
+    for md_file in sorted(project_path.rglob("project.md")):
+        if get_top_folder(md_file) in EXCLUDED_TOP:
+            continue
+        content = md_file.read_text()
+        if get_status(content) not in statuses:
+            continue
+        if not force:
+            days = days_since_reviewed(content)
+            if days is not None and days < REVIEW_FRESH_DAYS:
+                continue
+        items.append(md_file)
 
-    for pattern in ("project.md", "area.md"):
-        for md_file in sorted(project_path.rglob(pattern)):
-            if get_top_folder(md_file) in EXCLUDED_TOP:
-                continue
-            if pattern == "area.md" and is_structural_area(md_file):
-                continue
-            content = md_file.read_text()
-            status = get_status(content)
-            if status not in statuses:
-                continue
-            items.append(md_file)
-
-    items.sort(key=lambda f: (STATUS_ORDER.get(get_status(f.read_text()), 99), str(f)))
+    items.sort(key=lambda f: (
+        STATUS_ORDER.get(get_status(f.read_text()), 99),
+        str(f),
+    ))
     return items
 
 
 def review_item(md_file, index, total):
     name = md_file.parent.name
     content = md_file.read_text()
-    is_project = md_file.name == "project.md"
     status = get_status(content)
     goal = get_goal(content)
     task_count = open_task_count(md_file)
+    days = days_since_reviewed(content)
 
-    type_label = "[grey50]project[/grey50]" if is_project else "[gold3]area[/gold3]"
     status_str = f"[{status_color(status)}]{status}[/{status_color(status)}]"
+    rel_path = md_file.parent.relative_to(project_path)
 
-    lines = [f"{type_label}  {status_str}"]
+    lines = [f"[grey50]{rel_path}[/grey50]  {status_str}"]
     if goal:
         lines.append(f"\n[grey50]goal[/grey50]  [grey80]{goal}[/grey80]")
     lines.append(f"[grey50]open[/grey50]  [steel_blue1]{task_count}[/steel_blue1] [grey50]tasks[/grey50]")
+    if days is None:
+        lines.append("[grey50]reviewed[/grey50]  [grey50]never[/grey50]")
+    else:
+        lines.append(f"[grey50]reviewed[/grey50]  [grey70]{days}d ago[/grey70]")
 
     console.print()
     console.print(Rule(
         f"[grey50]{index}[/grey50][grey35] of {total}[/grey35]  [tan]{name}[/tan]",
-        style="grey23"
+        style="grey23",
     ))
     console.print(Panel("\n".join(lines), border_style="grey30", padding=(1, 3)))
-    console.print(f"\n  {build_hotkeys(is_project, status)}\n")
+    console.print(f"\n  {build_hotkeys(status)}\n")
 
     while True:
         key = getch()
         if key == "k":
-            console.print("[steel_blue1]  → keeping[/steel_blue1]")
+            mark_reviewed(md_file)
+            console.print("[steel_blue1]  → kept[/steel_blue1]")
             return True
         elif key == "a" and status != "active":
             set_status(md_file, "active")
+            mark_reviewed(md_file)
             console.print("[dark_sea_green4]  → activated[/dark_sea_green4]")
             return True
         elif key == "h" and status == "active":
             set_status(md_file, "on-hold")
-            console.print("[rosy_brown]  → put on hold[/rosy_brown]")
+            mark_reviewed(md_file)
+            console.print("[rosy_brown]  → on hold[/rosy_brown]")
             return True
         elif key == "z" and status in ("active", "on-hold"):
             set_status(md_file, "sleeping")
+            mark_reviewed(md_file)
             console.print("[grey50]  → sleeping[/grey50]")
             return True
         elif key == "w" and status == "sleeping":
             set_status(md_file, "on-hold")
+            mark_reviewed(md_file)
             console.print("[rosy_brown]  → woken to on-hold[/rosy_brown]")
             return True
-        elif key == "c" and is_project and status in ("active", "on-hold"):
+        elif key == "c" and status in ("active", "on-hold"):
             set_status(md_file, "complete")
+            mark_reviewed(md_file)
             console.print("[dark_sea_green4]  → marked complete[/dark_sea_green4]")
+            return True
+        elif key == "A" and status == "complete":
+            dest = archive_project(md_file)
+            if dest:
+                console.print(f"[gold3]  → archived to {dest.relative_to(KB)}[/gold3]")
             return True
         elif key == "x":
             set_status(md_file, "abandoned")
+            mark_reviewed(md_file)
             console.print("[indian_red]  → abandoned[/indian_red]")
-            return True
-        elif key == "r":
-            new_type = reclassify(md_file)
-            console.print(f"[gold3]  → reclassified as {new_type}[/gold3]")
             return True
         elif key == "o":
             open_in_nvim(md_file)
+            mark_reviewed(md_file)
             return True
         elif key == "q":
             return False
@@ -250,29 +333,35 @@ def main(statuses=None):
     parser.add_argument("--sleeping",  action="store_true")
     parser.add_argument("--complete",  action="store_true")
     parser.add_argument("--abandoned", action="store_true")
+    parser.add_argument("--archived",  action="store_true")
     parser.add_argument("--all",       action="store_true")
+    parser.add_argument("--force",     action="store_true",
+                        help="don't skip recently-reviewed projects")
     args, _ = parser.parse_known_args()
 
     if statuses is not None:
-        # Called programmatically (e.g. from review.py)
         pass
     elif args.all:
-        statuses = {"active", "on-hold", "sleeping", "complete", "abandoned"}
-    elif any([args.active, args.on_hold, args.sleeping, args.complete, args.abandoned]):
+        statuses = {"active", "on-hold", "sleeping", "complete", "abandoned", "archived"}
+    elif any([args.active, args.on_hold, args.sleeping, args.complete, args.abandoned, args.archived]):
         statuses = set()
         if args.active:    statuses.add("active")
         if args.on_hold:   statuses.add("on-hold")
         if args.sleeping:  statuses.add("sleeping")
         if args.complete:  statuses.add("complete")
         if args.abandoned: statuses.add("abandoned")
+        if args.archived:  statuses.add("archived")
     else:
         statuses = DEFAULT_STATUSES
 
-    items = get_all_reviewable(statuses)
+    items = get_all_projects(statuses, force=args.force)
 
     if not items:
         console.print()
-        console.print("[grey50]  nothing to review[/grey50]")
+        if not args.force:
+            console.print("[grey50]  nothing to review[/grey50]  [grey35](use --force to include recently-reviewed)[/grey35]")
+        else:
+            console.print("[grey50]  nothing to review[/grey50]")
         console.print()
         return
 
@@ -283,14 +372,14 @@ def main(statuses=None):
 
     status_summary = "  ".join(
         f"[{status_color(s)}]{counts[s]} {s}[/{status_color(s)}]"
-        for s in ("active", "on-hold", "sleeping", "complete", "abandoned")
+        for s in ("active", "on-hold", "sleeping", "complete", "abandoned", "archived")
         if counts.get(s, 0) > 0
     )
 
     console.print()
     console.print(Rule(
         f"[bold steel_blue1]  Project Review[/bold steel_blue1]  [grey50]—[/grey50]  {status_summary}",
-        style="steel_blue1 dim"
+        style="steel_blue1 dim",
     ))
     console.print()
 
