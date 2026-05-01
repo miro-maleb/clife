@@ -35,9 +35,14 @@ def load_maildir():
     if not p:
         secrets = Path.home() / ".config" / "life-os" / "secrets.env"
         if secrets.exists():
-            for line in secrets.read_text().splitlines():
+            for raw in secrets.read_text().splitlines():
+                line = raw.strip()
+                if line.startswith("export "):
+                    line = line[len("export "):]
                 if line.startswith("CL_INGEST_MAILDIR="):
                     p = line.split("=", 1)[1].strip().strip("\"'")
+                    # Expand $HOME and ~ for shell-style values
+                    p = os.path.expandvars(p)
                     break
     return Path(p).expanduser() if p else DEFAULT_MAILDIR
 
