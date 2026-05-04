@@ -10,6 +10,7 @@ COMMANDS = {
     "capture":     "capture",
     "ingest":      "ingest",
     "week":        "week",
+    "agenda":      "agenda",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -40,6 +41,9 @@ HELP = """
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
   cl week                     weekly planner
+  cl agenda                   today's anchor — gcal + system blocks; mark done/skip
+  cl agenda --dump            print today, headless
+  cl agenda --date YYYY-MM-DD operate on a specific date
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)

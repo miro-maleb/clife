@@ -28,6 +28,7 @@ _cl() {
     "review:full review pipeline"
     "tree:bird's-eye view of areas/projects"
     "week:weekly planner"
+    "agenda:today's anchor — gcal + system blocks"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
@@ -72,6 +73,11 @@ _cl() {
         _values "week options" \
           "--regenerate[regenerate this week's plan]" \
           "--overwrite[regenerate this week's plan]"
+        ;;
+      agenda)
+        _values "agenda options" \
+          "--dump[print today, headless]" \
+          "--date[operate on YYYY-MM-DD]:date:"
         ;;
       tree)
         _values "tree options" \
