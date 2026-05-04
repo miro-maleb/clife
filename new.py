@@ -1,10 +1,12 @@
 """
-new.py — `cl new` — scaffold a new area / project / sub-project.
+new.py — `cl new` — scaffold a new area / project / sub-project / goal / system.
 
   cl new                                       interactive
   cl new --area NAME
   cl new --project NAME [--in AREA]
   cl new --sub-project NAME [--in PROJECT]
+  cl new --goal NAME [--year YYYY]             default year: current
+  cl new --system NAME
 
 When --in is omitted, fzf prompts among existing parents.
 Sub-project folders auto-numbered (NN-slug, matching the parent's series).
@@ -24,6 +26,8 @@ console = Console()
 
 KB = Path.home() / "kb"
 PROJECTS = KB / "projects"
+GOALS = KB / "goals"
+SYSTEMS = KB / "systems"
 
 
 def slugify(name):
@@ -236,9 +240,116 @@ def create_subproject(name, parent_project=None):
     open_in_editor(sp_file)
 
 
+def create_goal(name, year=None):
+    slug = slugify(name)
+    if not slug:
+        console.print("[red]  name required[/red]")
+        sys.exit(1)
+
+    if year is None:
+        year = datetime.now().year
+    year_dir = GOALS / str(year)
+    year_dir.mkdir(parents=True, exist_ok=True)
+
+    goal_file = year_dir / f"{slug}.md"
+    if goal_file.exists():
+        console.print(f"[red]  already exists: {goal_file.relative_to(KB)}[/red]")
+        sys.exit(1)
+
+    goal_file.write_text(
+        f"---\n"
+        f"goal: {slug}\n"
+        f"year: {year}\n"
+        f"status: active\n"
+        f'marker: ""\n'
+        f"systems: []\n"
+        f"projects: []\n"
+        f"---\n\n"
+        f"# {title_of(name)}\n\n"
+        f"## Why now\n\n"
+        f"## End-of-year marker\n\n"
+        f"*Concrete numbers — the more specific, the harder to lie to yourself about.*\n\n"
+        f"## Quarterly checkpoints\n\n"
+        f"- **Q2 (by {year}-06-30):**\n"
+        f"- **Q3 (by {year}-09-30):**\n"
+        f"- **Q4 (by {year}-12-31):**\n\n"
+        f"## Notes\n"
+    )
+    console.print(
+        f"[dark_sea_green4]  → created goals/{year}/{slug}.md[/dark_sea_green4]"
+    )
+    open_in_editor(goal_file)
+
+
+def create_system(name):
+    """Scaffold a system as a folder: <slug>/system.md + <slug>/blocks/<block>.md.
+
+    The uniform folder structure supports both single-block and multi-block systems
+    — start with one block; add more later by creating additional files in blocks/.
+
+    The first block is named by stripping any leading cadence prefix from the system
+    slug (`daily-writing-block` → `writing-block`, `weekly-meal-prep` → `meal-prep`).
+    Block names must be globally unique across all systems — they double as gcal
+    event titles.
+    """
+    slug = slugify(name)
+    if not slug:
+        console.print("[red]  name required[/red]")
+        sys.exit(1)
+
+    system_dir = SYSTEMS / slug
+    if system_dir.exists():
+        console.print(f"[red]  already exists: {system_dir.relative_to(KB)}[/red]")
+        sys.exit(1)
+
+    block_name = re.sub(r"^(daily|weekly|monthly)-", "", slug)
+
+    blocks_dir = system_dir / "blocks"
+    blocks_dir.mkdir(parents=True)
+
+    system_file = system_dir / "system.md"
+    system_file.write_text(
+        f"---\n"
+        f"system: {slug}\n"
+        f"status: active\n"
+        f"goals: []\n"
+        f"orientations: []\n"
+        f"---\n\n"
+        f"# {title_of(name)}\n\n"
+        f"## Why it exists\n\n"
+        f"## Blocks\n\n"
+        f"- [{block_name}](blocks/{block_name}.md)\n\n"
+        f"## Notes\n"
+    )
+
+    main_block = blocks_dir / f"{block_name}.md"
+    main_block.write_text(
+        f"---\n"
+        f"block: {block_name}\n"
+        f"parent: {slug}\n"
+        f"calendar: \n"
+        f"cadence: \n"
+        f"days: []\n"
+        f"duration: \n"
+        f"instances: 1\n"
+        f'default_start: ""\n'
+        f"preferred_when: \n"
+        f"---\n\n"
+        f"# {title_of(name)} — {block_name}\n\n"
+        f"## What this block is\n\n"
+        f'## "Done" looks like\n\n'
+        f"## Notes\n"
+    )
+
+    console.print(
+        f"[dark_sea_green4]  → created systems/{slug}/system.md + blocks/{block_name}.md[/dark_sea_green4]"
+    )
+    open_in_editor(system_file)
+
+
 def interactive():
     """Bare `cl new` — pick type, then name, then parent."""
-    types = ["area", "project", "sub-project"]
+    types = ["area", "project", "sub-project", "goal", "system"]
     choice = fzf_pick(types, prompt="  what to create: ")
     if not choice:
         console.print("[rosy_brown]  → cancelled[/rosy_brown]")
@@ -251,8 +362,12 @@ def interactive():
         create_area(name)
     elif choice == "project":
         create_project(name)
-    else:
+    elif choice == "sub-project":
         create_subproject(name)
+    elif choice == "goal":
+        create_goal(name)
+    else:
+        create_system(name)
 
 
 def main():
@@ -262,8 +377,12 @@ def main():
     group.add_argument("--project", metavar="NAME", help="create a new project")
     group.add_argument("--sub-project", dest="subproject", metavar="NAME",
                        help="create a new sub-project")
+    group.add_argument("--goal", metavar="NAME", help="create a new goal")
+    group.add_argument("--system", metavar="NAME", help="create a new system")
     parser.add_argument("--in", dest="parent", metavar="PARENT",
                         help="parent area (for --project) or project (for --sub-project)")
+    parser.add_argument("--year", type=int, metavar="YYYY",
+                        help="year for --goal (default: current year)")
     args = parser.parse_args()
 
     if args.area:
@@ -275,6 +394,16 @@ def main():
         create_project(args.project, parent_area=args.parent)
     elif args.subproject:
         create_subproject(args.subproject, parent_project=args.parent)
+    elif args.goal:
+        if args.parent:
+            console.print("[red]  --in is not used with --goal[/red]")
+            sys.exit(1)
+        create_goal(args.goal, year=args.year)
+    elif args.system:
+        if args.parent or args.year:
+            console.print("[red]  --in / --year are not used with --system[/red]")
+            sys.exit(1)
+        create_system(args.system)
     else:
         interactive()
 

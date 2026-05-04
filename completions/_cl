@@ -96,7 +96,10 @@ _cl() {
           "--area[create a new area]:name:" \
           "--project[create a new project]:name:" \
           "--sub-project[create a new sub-project]:name:" \
-          "--in[parent area or project]:parent:"
+          "--goal[create a new goal]:name:" \
+          "--system[create a new system]:name:" \
+          "--in[parent area or project]:parent:" \
+          "--year[year for --goal]:year:"
         ;;
     esac
   fi
