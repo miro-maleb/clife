@@ -5,6 +5,36 @@ from pathlib import Path
 _journal_dir = Path.home() / "kb" / "journal"
 
 
+def capture_payload(file_path):
+    """Return the routable text from an inbox capture file.
+
+    Email captures (frontmatter `source: email`) → the subject line.
+    Everything else → the body, stripped. Returns "" if nothing usable.
+    """
+    text = Path(file_path).read_text()
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        end = next(
+            (i for i in range(1, len(lines)) if lines[i].strip() == "---"),
+            None,
+        )
+        if end is not None:
+            body = "\n".join(lines[end + 1:]).strip()
+            meta = {}
+            for line in lines[1:end]:
+                if ":" not in line:
+                    continue
+                key, _, val = line.partition(":")
+                val = val.strip()
+                if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+                    val = val[1:-1].replace('\\"', '"')
+                meta[key.strip()] = val
+            if meta.get("source") == "email":
+                return meta.get("subject", "").strip() or body
+            return body
+    return text.strip()
+
+
 def today_journal():
     return _journal_dir / f"{datetime.now().strftime('%Y-%m-%d')}.md"
 

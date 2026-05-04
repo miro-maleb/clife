@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
+from kb_utils import capture_payload
+
 console = Console()
 
 notes_path = Path.home() / "kb" / "notes"
@@ -164,8 +166,7 @@ def restore_terminal():
 
 
 def route_calendar(file):
-    content = file.read_text().strip()
-    first_line = content.splitlines()[0] if content else content
+    first_line = capture_payload(file)
     console.print(f"\n  [grey50]adding to calendar:[/grey50] [tan]{first_line}[/tan]")
     console.print("  [grey50]confirm?[/grey50] [grey50][[/grey50][steel_blue1]y[/steel_blue1][grey50]/[/grey50][grey70]e[/grey70][grey50]dit/[/grey50][grey70]n[/grey70][grey50]][/grey50] ", end="")
     key = getch()
@@ -212,8 +213,7 @@ status: seed
 
 
 def route_task(file):
-    content = file.read_text().strip()
-    first_line = content.splitlines()[0] if content else file.stem
+    payload = capture_payload(file) or file.stem
     project_names = get_project_names()
     print()
     project = select_project_fzf(project_names)
@@ -225,7 +225,7 @@ def route_task(file):
         console.print(f"[indian_red]  project '{project}' not found — skipping[/indian_red]")
         return
     with project_file.open("a") as f:
-        f.write(f"\n- [ ] {first_line}")
+        f.write(f"\n- [ ] {payload}")
     file.unlink()
     console.print(f"[dark_sea_green4]  → task added to {project}[/dark_sea_green4]")
 
@@ -333,14 +333,13 @@ def route_paste_project(file):
 
 
 def route_shopping(file, list_name):
-    content = file.read_text().strip()
-    first_line = content.splitlines()[0] if content else content
+    payload = capture_payload(file)
     shopping_path.mkdir(parents=True, exist_ok=True)
     list_file = shopping_path / f"{list_name}.md"
     if not list_file.exists():
         list_file.write_text(f"# {list_name.capitalize()}\n\n")
     with list_file.open("a") as f:
-        f.write(f"- [ ] {first_line}\n")
+        f.write(f"- [ ] {payload}\n")
     file.unlink()
     console.print(f"[dark_sea_green4]  → added to {list_name}[/dark_sea_green4]")
 
