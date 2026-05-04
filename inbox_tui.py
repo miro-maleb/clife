@@ -17,9 +17,9 @@ from inbox import (
     project_path,
     get_project_names,
     get_project_areas,
-    route_journal,
     route_note,
     route_shopping,
+    route_system_improvement,
 )
 
 from pathlib import Path
@@ -102,13 +102,13 @@ class InboxApp(App):
     """
 
     BINDINGS = [
-        Binding("j", "route_journal", show=False),
         Binding("n", "route_note", show=False),
         Binding("t", "route_task", show=False),
         Binding("p", "new_project", show=False),
         Binding("v", "paste_project", show=False),
         Binding("g", "route_grocery", show=False),
         Binding("h", "route_household", show=False),
+        Binding("i", "route_improvement", show=False),
         Binding("e", "edit", show=False),
         Binding("s", "skip", show=False),
         Binding("d", "delete", show=False),
@@ -161,14 +161,14 @@ class InboxApp(App):
             if TERMUX:
                 # 2 rows of 6 icons for mobile touch targets
                 with Horizontal(classes="key-row"):
-                    yield KeyButton("j", "📖",  "route_journal")
                     yield KeyButton("n", "📝",  "route_note")
                     yield KeyButton("t", "✅",  "route_task")
                     yield KeyButton("p", "🌱",  "new_project")
                     yield KeyButton("v", "📁",  "paste_project")
-                with Horizontal(classes="key-row"):
                     yield KeyButton("g", "🛒",  "route_grocery")
                     yield KeyButton("h", "🏠",  "route_household")
+                with Horizontal(classes="key-row"):
+                    yield KeyButton("i", "🔧",  "route_improvement")
                     yield KeyButton("e", "✍️",  "edit",   color="muted")
                     yield KeyButton("s", "⏩",   "skip",   color="muted")
                     yield KeyButton("d", "🗑",   "delete", color="destructive")
@@ -176,21 +176,18 @@ class InboxApp(App):
             else:
                 # Desktop: key letter + icon + label
                 with Horizontal(classes="key-row"):
-                    yield KeyButton("j", "📖 journal",      "route_journal")
                     yield KeyButton("n", "📝 note",         "route_note")
                     yield KeyButton("t", "✅ task",         "route_task")
                     yield KeyButton("p", "🌱 new project",  "new_project")
                     yield KeyButton("v", "📁 → project",    "paste_project")
+                    yield KeyButton("g", "🛒 grocery",      "route_grocery")
+                    yield KeyButton("h", "🏠 household",    "route_household")
                 with Horizontal(classes="key-row"):
-                    yield KeyButton("g", "🛒 grocery",   "route_grocery")
-                    yield KeyButton("h", "🏠 household", "route_household")
-                    yield KeyButton("e", "✍  edit",      "edit",   color="muted")
-                    yield KeyButton("s", "⏭  skip",      "skip",   color="muted")
-                    yield KeyButton("d", "🗑  delete",    "delete", color="destructive")
-                    yield KeyButton("q", "✖  quit",      "quit",   color="muted")
-
-    def action_route_journal(self) -> None:
-        self._do_route(route_journal)
+                    yield KeyButton("i", "🔧 improvement", "route_improvement")
+                    yield KeyButton("e", "✍  edit",         "edit",   color="muted")
+                    yield KeyButton("s", "⏭  skip",         "skip",   color="muted")
+                    yield KeyButton("d", "🗑  delete",       "delete", color="destructive")
+                    yield KeyButton("q", "✖  quit",         "quit",   color="muted")
 
     def action_route_note(self) -> None:
         self._do_route(route_note)
@@ -200,6 +197,9 @@ class InboxApp(App):
 
     def action_route_household(self) -> None:
         self._do_route(route_shopping, "household")
+
+    def action_route_improvement(self) -> None:
+        self._do_route(route_system_improvement)
 
     def action_edit(self) -> None:
         editor = os.environ.get("EDITOR", "nvim")

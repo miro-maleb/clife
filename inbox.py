@@ -17,6 +17,9 @@ notes_path = Path.home() / "kb" / "notes"
 project_path = Path.home() / "kb" / "projects"
 inbox_path = Path.home() / "kb" / "inbox"
 shopping_path = Path.home() / "kb" / "shopping"
+system_improvements_path = (
+    Path.home() / "kb" / "projects" / "infrastructure" / "clife" / "system-improvements.md"
+)
 
 HOTKEYS = (
     "[grey50][[/grey50][steel_blue1]n[/steel_blue1][grey50]][/grey50] note  "
@@ -26,6 +29,7 @@ HOTKEYS = (
     "[grey50][[/grey50][steel_blue1]v[/steel_blue1][grey50]][/grey50] → project  "
     "[grey50][[/grey50][steel_blue1]g[/steel_blue1][grey50]][/grey50] grocery  "
     "[grey50][[/grey50][steel_blue1]h[/steel_blue1][grey50]][/grey50] household  "
+    "[grey50][[/grey50][steel_blue1]i[/steel_blue1][grey50]][/grey50] improvement  "
     "[grey50][[/grey50][grey70]s[/grey70][grey50]][/grey50] skip  "
     "[grey50][[/grey50][grey70]d[/grey70][grey50]][/grey50] delete  "
     "[grey50][[/grey50][grey70]q[/grey70][grey50]][/grey50] quit"
@@ -341,6 +345,46 @@ def route_shopping(file, list_name):
     console.print(f"[dark_sea_green4]  → added to {list_name}[/dark_sea_green4]")
 
 
+def route_system_improvement(file):
+    """Append the inbox capture as a bullet under '## Open ideas' in
+    system-improvements.md. Used during the use-don't-build period to defer
+    system tweaks to the weekly maintenance session.
+    """
+    if not system_improvements_path.exists():
+        console.print(
+            f"[indian_red]  system-improvements.md missing at {system_improvements_path}[/indian_red]"
+        )
+        return
+    content = file.read_text().strip()
+    first_line = content.splitlines()[0] if content else content
+    if not first_line:
+        console.print("[rosy_brown]  → empty capture, skipped[/rosy_brown]")
+        return
+    text = system_improvements_path.read_text()
+    lines = text.splitlines()
+    open_idx = next(
+        (i for i, ln in enumerate(lines) if ln.strip() == "## Open ideas"), None
+    )
+    if open_idx is None:
+        console.print(
+            "[indian_red]  no '## Open ideas' section in system-improvements.md[/indian_red]"
+        )
+        return
+    end_idx = next(
+        (i for i in range(open_idx + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    insert_idx = end_idx
+    while insert_idx > open_idx + 1 and lines[insert_idx - 1].strip() == "":
+        insert_idx -= 1
+    lines.insert(insert_idx, f"- {first_line}")
+    system_improvements_path.write_text(
+        "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    )
+    file.unlink()
+    console.print("[dark_sea_green4]  → system improvements[/dark_sea_green4]")
+
+
 def route_delete(file):
     console.print("  delete? [grey50][[/grey50][steel_blue1]y[/steel_blue1][grey50]/[/grey50][grey70]n[/grey70][grey50]][/grey50] ", end="")
     key = getch()
@@ -381,6 +425,9 @@ def process_file(file, index, total):
             return True
         elif key == "h":
             route_shopping(file, "household")
+            return True
+        elif key == "i":
+            route_system_improvement(file)
             return True
         elif key == "s":
             console.print("[rosy_brown]  → skipped[/rosy_brown]")
