@@ -75,8 +75,8 @@ _cl() {
         ;;
       tree)
         _values "tree options" \
-          "--full[include sub-projects]" \
-          "--active[only active projects]"
+          "--full[include sub-projects, systems, goals, orientations]" \
+          "--active[only active projects/systems/goals/orientations]"
         ;;
       new)
         # Smart context: if --project is in the line, --in completes areas;

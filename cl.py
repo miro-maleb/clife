@@ -38,7 +38,7 @@ HELP = """
   cl projects --sleeping      show sleeping projects
   cl projects --active|--on-hold|--complete|--abandoned|--all
   cl review                   full review pipeline — projects (incl. sleeping) → notes
-  cl tree [--full] [--active] bird's-eye view: areas → projects [→ sub-projects]
+  cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
   cl week                     weekly planner
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area

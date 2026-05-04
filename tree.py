@@ -19,6 +19,9 @@ console = Console()
 
 KB = Path.home() / "kb"
 PROJECTS = KB / "projects"
+SYSTEMS = KB / "systems"
+GOALS = KB / "goals"
+ORIENTATIONS = KB / "orientations"
 
 
 def fmt_project(proj_dir, status, open_tasks):
@@ -32,6 +35,78 @@ def fmt_project(proj_dir, status, open_tasks):
 def fmt_subproject(sub_dir, status):
     color = proj.status_color(status)
     return f"{sub_dir.name}  [{color}]{status}[/{color}]"
+
+
+def render_systems_tree(active_only):
+    """Build a Tree of systems → blocks. Returns (tree, n_systems, n_blocks)."""
+    tree = Tree("[bold steel_blue1]kb/systems[/bold steel_blue1]")
+    n_systems = 0
+    n_blocks = 0
+    if not SYSTEMS.exists():
+        return tree, n_systems, n_blocks
+    for sys_dir in sorted(SYSTEMS.iterdir()):
+        if not sys_dir.is_dir():
+            continue
+        sf = sys_dir / "system.md"
+        if not sf.exists():
+            continue
+        status = proj.get_status(sf.read_text())
+        if active_only and status != "active":
+            continue
+        n_systems += 1
+        color = proj.status_color(status)
+        label = f"[bold]{sys_dir.name}[/bold]  [{color}]{status}[/{color}]"
+        sys_branch = tree.add(label)
+        bd = sys_dir / "blocks"
+        if not bd.exists():
+            continue
+        for bf in sorted(bd.iterdir()):
+            if bf.suffix != ".md":
+                continue
+            n_blocks += 1
+            sys_branch.add(f"[grey70]{bf.stem}[/grey70]")
+    return tree, n_systems, n_blocks
+
+
+def render_orientations_tree(active_only):
+    """Build a flat Tree of orientations. Returns (tree, n_orientations)."""
+    tree = Tree("[bold steel_blue1]kb/orientations[/bold steel_blue1]")
+    n = 0
+    if not ORIENTATIONS.exists():
+        return tree, n
+    for of in sorted(ORIENTATIONS.glob("*.md")):
+        status = proj.get_status(of.read_text())
+        if active_only and status != "active":
+            continue
+        n += 1
+        color = proj.status_color(status)
+        tree.add(f"[bold]{of.stem}[/bold]  [{color}]{status}[/{color}]")
+    return tree, n
+
+
+def render_goals_tree(active_only):
+    """Build a Tree of year → goals. Returns (tree, n_goals)."""
+    tree = Tree("[bold steel_blue1]kb/goals[/bold steel_blue1]")
+    n_goals = 0
+    if not GOALS.exists():
+        return tree, n_goals
+    for year_dir in sorted(GOALS.iterdir()):
+        if not year_dir.is_dir():
+            continue
+        year_goals = []
+        for gf in sorted(year_dir.glob("*.md")):
+            status = proj.get_status(gf.read_text())
+            if active_only and status != "active":
+                continue
+            year_goals.append((gf, status))
+        if active_only and not year_goals:
+            continue
+        year_branch = tree.add(f"[tan]{year_dir.name}/[/tan]")
+        for gf, status in year_goals:
+            n_goals += 1
+            color = proj.status_color(status)
+            year_branch.add(f"[bold]{gf.stem}[/bold]  [{color}]{status}[/{color}]")
+    return tree, n_goals
 
 
 def main():
@@ -92,9 +167,26 @@ def main():
 
     console.print()
     console.print(tree)
+
+    n_systems = n_blocks = n_goals = n_orientations = 0
+    if args.full:
+        sys_tree, n_systems, n_blocks = render_systems_tree(args.active)
+        goals_tree, n_goals = render_goals_tree(args.active)
+        orient_tree, n_orientations = render_orientations_tree(args.active)
+        console.print()
+        console.print(sys_tree)
+        console.print()
+        console.print(goals_tree)
+        console.print()
+        console.print(orient_tree)
+
     summary = f"  [grey50]{n_areas} areas · {n_projects} projects"
     if args.full:
-        summary += f" · {n_subprojects} sub-projects"
+        summary += (
+            f" · {n_subprojects} sub-projects"
+            f" · {n_systems} systems · {n_blocks} blocks"
+            f" · {n_goals} goals · {n_orientations} orientations"
+        )
     if args.active:
         summary += " · active only"
     summary += "[/grey50]"
