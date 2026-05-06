@@ -15,6 +15,7 @@ local M = {}
 local KB = vim.fn.expand("~/kb")
 local PROJECTS = KB .. "/projects"
 local INBOX = KB .. "/inbox"
+local TEMPLATES = KB .. "/templates"
 local CL = vim.fn.expand("~/clife/cl")
 
 local default_keymaps = {
@@ -29,6 +30,7 @@ local default_keymaps = {
   week              = "<leader>cw",
   journal           = "<leader>cj",
   review            = "<leader>cr",
+  template          = "<leader>it",
 }
 
 -- ------------------------------------------------------------------
@@ -289,6 +291,67 @@ function M.notes()
 end
 
 -- ------------------------------------------------------------------
+-- Templates
+-- ------------------------------------------------------------------
+
+-- Substitute {{...}} placeholders. Existing convention from kb/templates/journal.md
+-- uses {{day}} {{month}} {{date}} {{year}}; {{today}} (ISO) and {{title}} are new.
+-- Unknown placeholders are left as-is so they're visible to the user.
+local function render_template(content)
+  local subs = {
+    day   = os.date("%A"),        -- "Wednesday"
+    month = os.date("%B"),        -- "May"
+    date  = os.date("%-d"),       -- "6" (unpadded day of month)
+    year  = os.date("%Y"),        -- "2026"
+    today = os.date("%Y-%m-%d"),  -- "2026-05-06" (ISO)
+    title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":t:r"),
+  }
+  return (content:gsub("{{(%w+)}}", function(k)
+    return subs[k] or "{{" .. k .. "}}"
+  end))
+end
+
+function M.template_insert()
+  if not telescope_or_warn() then return end
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  local results = vim.fn.systemlist("find " .. TEMPLATES .. " -maxdepth 1 -name '*.md' -type f | sort")
+  if #results == 0 then
+    notify("no templates in " .. TEMPLATES, vim.log.levels.WARN)
+    return
+  end
+
+  pickers.new({}, {
+    prompt_title = "templates → insert at cursor",
+    finder = finders.new_table({
+      results = results,
+      entry_maker = function(entry)
+        local name = vim.fn.fnamemodify(entry, ":t:r")
+        return { value = entry, display = name, ordinal = name }
+      end,
+    }),
+    sorter = conf.generic_sorter({}),
+    attach_mappings = function(prompt_bufnr, _)
+      actions.select_default:replace(function()
+        actions.close(prompt_bufnr)
+        local sel = action_state.get_selected_entry()
+        if not sel then return end
+        local raw = table.concat(vim.fn.readfile(sel.value), "\n")
+        local lines = vim.split(render_template(raw), "\n", { plain = true })
+        local row = vim.api.nvim_win_get_cursor(0)[1]
+        vim.api.nvim_buf_set_lines(0, row - 1, row - 1, false, lines)
+        notify("inserted: " .. vim.fn.fnamemodify(sel.value, ":t:r"))
+      end)
+      return true
+    end,
+  }):find()
+end
+
+-- ------------------------------------------------------------------
 -- Quick file openers
 -- ------------------------------------------------------------------
 
@@ -313,6 +376,7 @@ local subcommands = {
   week              = M.week,
   journal           = M.journal,
   review            = M.review,
+  template          = M.template_insert,
 }
 
 function M.setup(opts)
@@ -370,6 +434,7 @@ function M.setup(opts)
   map("n", keymaps.week,              M.week,              "clife: weekly plan")
   map("n", keymaps.journal,           M.journal,           "clife: today's journal")
   map("n", keymaps.review,            M.review,            "clife: full review")
+  map("n", keymaps.template,          M.template_insert,   "clife: insert template at cursor")
 end
 
 return M
