@@ -255,7 +255,6 @@ class AgendaPane(Static):
         Binding("g",     "top",         "top",  show=False),
         Binding("G",     "bottom",      "bot",  show=False),
         Binding("space", "cycle_status","cycle"),
-        Binding("enter", "cycle_status","cycle", show=False),
         Binding("x",     "mark_done",   "done", show=False),
         Binding("~",     "mark_partial","partial"),
         Binding("s",     "mark_skip",   "skip"),
@@ -264,12 +263,25 @@ class AgendaPane(Static):
         Binding("m",     "move",        "move"),
         Binding("w",     "cross_day",   "→ week"),
         Binding("o",     "open",        "open"),
+        Binding("enter", "open",        "open", show=False),
     ]
 
     focus_index: reactive[int] = reactive(0)
     selectable_count: int = 0
     selectable_events: list = []
     focus_y_lines: list = []
+
+    def on_mount(self) -> None:
+        # Tick the "now" line every minute so the time stays current even when
+        # the agenda sits unfocused on a side screen. Aligns to the next minute
+        # boundary so the displayed HH:MM matches the wall clock.
+        now = datetime.now()
+        delay = 60 - now.second - now.microsecond / 1_000_000
+        self.set_timer(delay, self._start_now_ticker)
+
+    def _start_now_ticker(self) -> None:
+        self.refresh()
+        self.set_interval(60, self.refresh)
 
     def render(self) -> str:
         rows = self.app.rows_for(self.app.target_date)
