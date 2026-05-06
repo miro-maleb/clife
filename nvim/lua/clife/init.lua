@@ -30,7 +30,7 @@ local default_keymaps = {
   week              = "<leader>cw",
   journal           = "<leader>cj",
   review            = "<leader>cr",
-  template          = "<leader>it",
+  template          = "<leader>t",
 }
 
 -- ------------------------------------------------------------------

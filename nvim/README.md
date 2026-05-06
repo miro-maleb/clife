@@ -30,7 +30,7 @@ All commands are namespaced under `:Cl`:
 | `:Cl week` | `<leader>cw` | open this week's plan |
 | `:Cl journal` | `<leader>cj` | today's journal |
 | `:Cl review` | `<leader>cr` | run `cl review` in a terminal split |
-| `:Cl template` | `<leader>it` | Telescope picker over `~/kb/templates/` → insert chosen template at cursor with `{{day}}/{{month}}/{{date}}/{{year}}/{{today}}/{{title}}` substituted |
+| `:Cl template` | `<leader>t` | Telescope picker over `~/kb/templates/` → insert chosen template at cursor with `{{day}}/{{month}}/{{date}}/{{year}}/{{today}}/{{title}}` substituted |
 
 ## Override / disable keymaps
 
