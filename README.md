@@ -102,7 +102,7 @@ Claude is the exception handler, not the runtime.
 ├── review.py / ..      # full review pipeline
 ├── week.py             # weekly planner
 ├── new_project.py      # scaffold a project
-├── dashboard_tui.py    # persistent dashboard TUI
+├── dashboard.py        # `cl dashboard` — tmux session launcher
 ├── kb_utils.py         # shared journal/path helpers
 ├── tui_common.py       # shared TUI widgets
 ├── completions/_cl     # zsh tab-completion

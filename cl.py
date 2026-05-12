@@ -18,7 +18,7 @@ COMMANDS = {
     "tree":        "tree",
     "new":         "new",
     "new-project": "new_project",  # back-compat alias for muscle memory
-    "dashboard":   "dashboard_tui",
+    "dashboard":   "dashboard",
 }
 
 HELP = """
@@ -50,7 +50,7 @@ HELP = """
   cl new --project NAME --in AREA
   cl new --sub-project NAME [--in PROJECT]
   cl new-project              alias for `cl new --project` (back-compat)
-  cl dashboard                persistent dashboard — journal, calendar, projects, capture
+  cl dashboard                tmux session: tree (left), shell (center), agenda (right)
 
   On Termux, inbox/notes/projects automatically use the TUI.
 """
@@ -67,7 +67,7 @@ def main():
         sys.exit(1)
 
     if cmd == "dashboard":
-        module = __import__("dashboard_tui")
+        module = __import__("dashboard")
         module.main()
         return
 

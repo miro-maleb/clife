@@ -30,6 +30,30 @@ When a sub-project finishes a task, mark it complete in its own doc AND check wh
 
 `./install.sh` is idempotent. Re-run it anytime — it skips done steps.
 
+## Multi-machine sync
+
+The user runs clife on multiple devices. Known peers (Tailscale MagicDNS):
+
+- `miro-thinkpad` (100.123.213.85)
+- `miro-terminal` (100.99.166.56)
+
+**Whenever you make a change that affects daily-driver behavior — clife code, nvim config, i3 bindings, shell config, dotfiles** — proactively offer to propagate it to the other machine(s) over SSH. Don't wait to be asked.
+
+What syncs how:
+
+- **clife repo (`~/clife/`)** — public GitHub remote (`miro-maleb/clife`). Commit + push, then `git pull` on the peer.
+- **i3 config (`~/.config/i3/config`)** — not in any repo. Patch in place over SSH (back up first: `cp config config.bak.$(date +%s)`).
+- **nvim config (`~/.config/nvim/`)** — not in any repo. Same — patch in place over SSH.
+- **`~/.zshrc` and other dotfiles** — not in any repo. Same.
+
+Reload patterns:
+
+- i3: SSH and `i3-msg reload`. The remote i3 socket is reachable if you grab `DISPLAY` + `XAUTHORITY` from `/proc/$(pgrep -u miro -x i3)/environ`. Skip reload if i3 isn't running there.
+- nvim: no reload needed; new buffers pick up changes.
+- zsh: tell the user to `exec zsh` or open a new shell.
+
+Failure mode to watch: if a peer's file has diverged locally, a blind patch can clobber. Always grep first to confirm anchor lines exist and the change isn't already applied.
+
 ## Sub-project map
 
 | # | Folder | What |
@@ -41,7 +65,7 @@ When a sub-project finishes a task, mark it complete in its own doc AND check wh
 | 05 | new-command | `cl new` |
 | 06 | review-system | `cl projects`, `cl review`, `cl week`, archive flow |
 | 07 | notes-zettelkasten | `cl notes` (pass 1 = browser; pass 2 = AI organizer, deferred) |
-| 08 | desktop-dashboard | `cl dashboard` (paused) |
+| 08 | desktop-dashboard | `cl dashboard` — tmux tree/shell/agenda layout |
 | 09 | mobile-capture | MOBILE.md (MVP shipped); native Android app deferred |
 | 10 | user-manual | end-state docs (pending) |
 | 11 | editor-integration | clife.nvim |
