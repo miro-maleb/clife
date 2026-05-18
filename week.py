@@ -146,8 +146,10 @@ def fetch_events(calendar, start, end):
     Header row is filtered out.
 
     Multi-day all-day events are expanded into one row per covered date,
-    with a "[day N/M]" suffix appended to the title for display. The suffix
-    is stripped before any title round-trips back to gcal.
+    with a "(day N/M)" suffix appended to the title for display. The suffix
+    is stripped before any title round-trips back to gcal — see
+    strip_display_suffix(). Parens not brackets because Rich would parse
+    `[day 1/3]` as a style tag and crash.
     """
     cmd = [
         "gcalcli",
@@ -169,6 +171,20 @@ def fetch_events(calendar, start, end):
         console.print(f"[yellow]warning: gcalcli failed for {calendar}: {result.stderr.strip()}[/yellow]")
         return []
     events = []
+
+    def in_window(date_str):
+        """gcalcli returns events overlapping [start, end+1); clip to [start, end].
+
+        Without this, multi-day events that began before `start` (e.g. a retreat
+        starting last week) bleed into selectable_events as phantom rows that
+        aren't rendered — focus_index lands on them and breaks move/skip.
+        """
+        try:
+            d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return True
+        return start <= d <= end
+
     for line in result.stdout.split("\n"):
         if not line.strip():
             continue
@@ -193,11 +209,14 @@ def fetch_events(calendar, start, end):
             d = sd
             n = 1
             while d < ed:
-                events.append((d.strftime("%Y-%m-%d"), "", "", f"{title} (day {n}/{total})"))
+                date_str = d.strftime("%Y-%m-%d")
+                if in_window(date_str):
+                    events.append((date_str, "", "", f"{title} (day {n}/{total})"))
                 d += timedelta(days=1)
                 n += 1
         else:
-            events.append((start_date, start_time, end_time, title))
+            if in_window(start_date):
+                events.append((start_date, start_time, end_time, title))
     return events
 
 

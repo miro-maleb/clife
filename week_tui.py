@@ -414,28 +414,64 @@ class ScheduleScreen(ModalScreen):
         self.field = "time" if self.field == "day" else "day"
         self._refresh()
 
-    def action_prev_day(self) -> None:
+    def _placed_dates(self) -> set:
+        """Set of YYYY-MM-DD strings where this daily block is already on gcal
+        in the current week. Excludes the modal's own live preview so the
+        proposed slot doesn't block itself.
+
+        Weekly blocks return an empty set — instance numbering (#N) handles
+        weekly slots; we don't gray-out daily-style.
+        """
+        if self.meta.get("cadence") != "daily":
+            return set()
+        cal = self.meta.get("calendar", "")
+        block_name = self.meta.get("block", "")
+        events = self.app.events_by_cal.get(cal, [])
+        preview_pseudo = self._preview_pseudo[1] if self._preview_pseudo else None
+        return {
+            d for ev in events
+            for (d, _, _, t) in [ev]
+            if t == block_name and ev is not preview_pseudo
+        }
+
+    def _is_blocked_idx(self, day_idx: int, monday) -> bool:
+        """True if this block can't land on DAYS[day_idx] of the current week.
+
+        Reasons: weekday not in block's days: list, OR daily block already
+        scheduled on that date.
+        """
         days_allowed = self.meta.get("days") or DAYS
+        if DAYS[day_idx] not in days_allowed:
+            return True
+        target_date = monday + timedelta(days=day_idx)
+        return target_date.strftime("%Y-%m-%d") in self._placed_dates()
+
+    def action_prev_day(self) -> None:
+        monday, _ = week_range(offset_weeks=self.offset_weeks)
         idx = DAYS.index(self.day) if self.day in DAYS else 0
-        # Skip past days where this block can't run.
+        # Skip past days where this block can't run (days: exclusion OR
+        # already-placed for daily blocks).
         for next_idx in range(idx - 1, -1, -1):
-            if DAYS[next_idx] in days_allowed:
-                self.day = DAYS[next_idx]
-                self._revert_preview()
-                self._apply_preview()
-                return
+            if self._is_blocked_idx(next_idx, monday):
+                continue
+            self.day = DAYS[next_idx]
+            self._revert_preview()
+            self._apply_preview()
+            return
         # No valid day to the left — stay.
 
     def action_next_day(self) -> None:
-        days_allowed = self.meta.get("days") or DAYS
+        monday, _ = week_range(offset_weeks=self.offset_weeks)
         idx = DAYS.index(self.day) if self.day in DAYS else 0
-        # Skip past days where this block can't run.
+        # Skip past days where this block can't run (days: exclusion OR
+        # already-placed for daily blocks).
         for next_idx in range(idx + 1, 7):
-            if DAYS[next_idx] in days_allowed:
-                self.day = DAYS[next_idx]
-                self._revert_preview()
-                self._apply_preview()
-                return
+            if self._is_blocked_idx(next_idx, monday):
+                continue
+            self.day = DAYS[next_idx]
+            self._revert_preview()
+            self._apply_preview()
+            return
         # No valid day to the right — stay.
 
     def _nudge(self, delta: int) -> None:
@@ -753,32 +789,58 @@ class WeekPane(Static):
             self.focus_index = max(0, self.selectable_count - 1)
 
         # Placement context: if a block is being placed, days excluded by its
-        # `days:` list render dimmed so the user sees what's off-limits.
+        # `days:` list — or, for daily blocks, days where it's already
+        # scheduled — render dimmed so the user sees what's off-limits.
         placement_meta = getattr(self.app, "placement_meta", None)
+        placement_days = None
+        placed_dates: set = set()
         if placement_meta is not None:
             placement_days = placement_meta.get("days") or DAYS
-        else:
-            placement_days = None
+            if placement_meta.get("cadence") == "daily":
+                pm_cal = placement_meta.get("calendar", "")
+                pm_block = placement_meta.get("block", "")
+                pm_events = events_by_cal.get(pm_cal, [])
+                placed_dates = {
+                    d for d, _, _, t in pm_events if t == pm_block
+                }
+
+        # Strong dim color for unavailable days — more visible than [dim],
+        # which Rich treats as a faint subtractive overlay.
+        DIM = "#5a5a5a"
+        SEP_COLOR = "#262b34"
+        SEP = f"[{SEP_COLOR}]" + "─" * 36 + "[/]"
 
         lines = []
         sel_idx = 0
         focus_y_lines = []
         preview_marker = getattr(self.app, "preview_marker", None)
         for offset in range(7):
+            if offset > 0:
+                lines.append(SEP)
             date = monday + timedelta(days=offset)
             d_str = date.strftime("%Y-%m-%d")
             weekday_lc = DAYS[date.weekday()]
             weekday = weekday_lc.upper()
-            day_dimmed = placement_days is not None and weekday_lc not in placement_days
+            # Exclude this day's preview from the "already-placed" check so the
+            # proposed slot doesn't blackout itself.
+            day_already_placed = (
+                d_str in placed_dates
+                and (preview_marker is None or preview_marker[1] != d_str)
+            )
+            day_dimmed = placement_meta is not None and (
+                weekday_lc not in placement_days or day_already_placed
+            )
             if day_dimmed:
-                day_label = f"[dim]{weekday} {date.month}/{date.day}[/dim]"
+                day_label = f"[bold {DIM}]{weekday} {date.month}/{date.day}[/bold {DIM}]"
             else:
                 day_label = f"[bold cyan]{weekday} {date.month}/{date.day}[/bold cyan]"
 
             day_events = events_by_date.get(d_str, [])
             if not day_events:
-                marker = "[dim]·[/dim]"
-                lines.append(f"{day_label}  {marker}")
+                if day_dimmed:
+                    lines.append(f"{day_label}  [{DIM}]·[/]")
+                else:
+                    lines.append(f"{day_label}  [dim]·[/dim]")
                 continue
 
             for i, (d, s, e, t, cal) in enumerate(day_events):
@@ -794,21 +856,28 @@ class WeekPane(Static):
                 # First event of the day shows the day label in the prefix;
                 # subsequent events on the same day get a blank prefix of equal width
                 prefix = day_label if i == 0 else "       "  # ≈ "MON 5/4" width
-                if not s:
-                    body = f"[dim]all-day[/dim]   [{color}]{t}[/]"
-                else:
-                    dur = fmt_min(minutes_between(s, e)) if e else "?"
-                    if is_preview:
-                        body = f"[bold #ffd75f underline on #3a2f1a]{s} {t} ({dur})[/]"
-                    elif focused:
-                        body = f"[{color} reverse]{s} {t} ({dur})[/]"
-                    else:
-                        body = f"[grey50]{s}[/grey50] [{color}]{t}[/] [grey50]({dur})[/grey50]"
                 focus_y_lines.append(len(lines))
-                line = f"{prefix} {marker} {body}"
                 if day_dimmed and not (focused or is_preview):
-                    line = f"[dim]{line}[/dim]"
-                lines.append(line)
+                    # Rebuild body without calendar color so the dim is uniform
+                    # and unmistakably "not actionable."
+                    if not s:
+                        body = f"[{DIM}]all-day  {t}[/]"
+                    else:
+                        dur = fmt_min(minutes_between(s, e)) if e else "?"
+                        body = f"[{DIM}]{s} {t} ({dur})[/]"
+                    lines.append(f"{prefix} {marker} {body}")
+                else:
+                    if not s:
+                        body = f"[dim]all-day[/dim]   [{color}]{t}[/]"
+                    else:
+                        dur = fmt_min(minutes_between(s, e)) if e else "?"
+                        if is_preview:
+                            body = f"[bold #ffd75f underline on #3a2f1a]{s} {t} ({dur})[/]"
+                        elif focused:
+                            body = f"[{color} reverse]{s} {t} ({dur})[/]"
+                        else:
+                            body = f"[grey50]{s}[/grey50] [{color}]{t}[/] [grey50]({dur})[/grey50]"
+                    lines.append(f"{prefix} {marker} {body}")
                 sel_idx += 1
 
         self.focus_y_lines = focus_y_lines
