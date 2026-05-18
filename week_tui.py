@@ -1093,55 +1093,86 @@ class WeekApp(App):
         # the "rapid-fire commits sometimes don't write" bug. Lock ensures one
         # gcalcli operation runs at a time while UI stays optimistic.
         self.write_lock = asyncio.Lock()
+        # Cache events per-week so prev/next jumps feel instant. Maps
+        # offset_weeks → {calendar: [events]}. Mutations always target
+        # events_cache[current_offset]; events_by_cal is a working reference.
+        self.events_cache = {}
         self._setup_state()
         bank = self.query_one(BankPane)
         bank.focus()
         self._update_status_bar()
-        self.load_events()
+        self._prefetch_adjacent()
 
     def _setup_state(self) -> None:
-        """Sync setup — no network. Clears events_by_cal so the panes show 'loading…'."""
+        """Sync setup — no network. Binds events_by_cal to the cache slot for
+        the current offset so optimistic mutations land in the right week.
+        """
         self.blocks = load_blocks()
         self.active = [(s, m, st) for s, m, st in self.blocks if st == "active"]
         monday, sunday = week_range(offset_weeks=self.offset_weeks)
         self.monday = monday
         self.sunday = sunday
-        self.events_by_cal = {}
+        if not hasattr(self, "events_cache"):
+            self.events_cache = {}
+        self.events_cache.setdefault(self.offset_weeks, {})
+        self.events_by_cal = self.events_cache[self.offset_weeks]
         if not hasattr(self, "all_calendars"):
             self.all_calendars = []
         self.title = f"cl week — {monday} → {sunday}"
 
-    @work(exclusive=True)
-    async def load_events(self) -> None:
-        """Async loader: each gcalcli call runs in a thread via asyncio.to_thread.
+    def _prefetch_adjacent(self) -> None:
+        """Trigger loads for current + prev + next weeks (idempotent — cached
+        weeks return immediately). Makes p/n navigation feel instant after
+        the first load.
+        """
+        for off in (self.offset_weeks, self.offset_weeks - 1, self.offset_weeks + 1):
+            self.load_week(off)
 
-        UI thread stays responsive between fetches; events_by_cal fills in
-        progressively and panes refresh after each calendar.
+    @work(exclusive=False)
+    async def load_week(self, offset: int) -> None:
+        """Fetch events for the week at `offset` into events_cache.
+
+        Idempotent — calendars already cached for this offset are skipped.
+        Updates events_by_cal + refreshes panes only when this offset matches
+        the currently-viewed week.
         """
         try:
             if not self.all_calendars:
                 self.status = "discovering calendars…"
                 cals = await asyncio.to_thread(list_calendars)
                 self.all_calendars = [c for c in cals if c not in EXCLUDE_CALENDARS]
+            cache_for_offset = self.events_cache.setdefault(offset, {})
+            monday, sunday = week_range(offset_weeks=offset)
             for cal in self.all_calendars:
-                self.status = f"fetching {cal}…"
-                events = await asyncio.to_thread(fetch_events, cal, self.monday, self.sunday)
-                self.events_by_cal[cal] = events
-                self._refresh_panes()
-            self.status = ""
+                if cal in cache_for_offset:
+                    continue
+                if offset == self.offset_weeks:
+                    self.status = f"fetching {cal}…"
+                events = await asyncio.to_thread(fetch_events, cal, monday, sunday)
+                cache_for_offset[cal] = events
+                if offset == self.offset_weeks:
+                    # Re-bind in case _setup_state ran between fetches
+                    self.events_by_cal = cache_for_offset
+                    self._refresh_panes()
+            if offset == self.offset_weeks:
+                self.status = ""
         except Exception as exc:
-            self.status = f"load error: {exc}"
+            if offset == self.offset_weeks:
+                self.status = f"load error: {exc}"
 
     @work(exclusive=False)
     async def refetch_one(self, cal: str) -> None:
-        """Single-calendar refetch in the background after a mutation."""
+        """Single-calendar refetch in the background after a mutation. Targets
+        the cache slot for the currently-viewed week."""
         if not cal:
             return
         self.status = f"refetching {cal}…"
         try:
-            self.events_by_cal[cal] = await asyncio.to_thread(
+            cache_for_offset = self.events_cache.setdefault(self.offset_weeks, {})
+            cache_for_offset[cal] = await asyncio.to_thread(
                 fetch_events, cal, self.monday, self.sunday
             )
+            self.events_by_cal = cache_for_offset
         finally:
             self.status = ""
         self._refresh_panes()
@@ -1232,21 +1263,22 @@ class WeekApp(App):
             self._setup_state()
             self._refresh_panes()
             self._update_status_bar()
-            self.load_events()
+            self._prefetch_adjacent()
 
     def action_next_week(self) -> None:
         self.offset_weeks = self.offset_weeks + 1
 
     def action_prev_week(self) -> None:
-        # Clamp at 0 — no scheduling in the past
-        if self.offset_weeks > 0:
-            self.offset_weeks = self.offset_weeks - 1
+        # No clamp — past weeks are useful for looking back.
+        self.offset_weeks = self.offset_weeks - 1
 
     def action_refresh(self) -> None:
+        # Wipe the cache so adjacent weeks re-fetch too.
+        self.events_cache = {}
         self._setup_state()
         self._refresh_panes()
         self._update_status_bar()
-        self.load_events()
+        self._prefetch_adjacent()
 
     def on_schedule_dismissed(self, result) -> None:
         # Optimistic update already happened in ScheduleScreen.action_commit;
