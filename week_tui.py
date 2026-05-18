@@ -281,6 +281,9 @@ class ScheduleScreen(ModalScreen):
         self.query_one("#schedule-panel", Static).update(self._render_panel())
 
     def on_mount(self) -> None:
+        # Tell the WeekPane which block is being placed so it can fade days
+        # where the block can't go.
+        self.app.placement_meta = self.meta
         # Apply live preview as soon as the modal opens (so the user sees the
         # event in its proposed position from the start)
         self._apply_preview()
@@ -412,20 +415,28 @@ class ScheduleScreen(ModalScreen):
         self._refresh()
 
     def action_prev_day(self) -> None:
+        days_allowed = self.meta.get("days") or DAYS
         idx = DAYS.index(self.day) if self.day in DAYS else 0
-        if idx == 0:
-            return  # already on monday — don't wrap to sunday
-        self.day = DAYS[idx - 1]
-        self._revert_preview()
-        self._apply_preview()
+        # Skip past days where this block can't run.
+        for next_idx in range(idx - 1, -1, -1):
+            if DAYS[next_idx] in days_allowed:
+                self.day = DAYS[next_idx]
+                self._revert_preview()
+                self._apply_preview()
+                return
+        # No valid day to the left — stay.
 
     def action_next_day(self) -> None:
+        days_allowed = self.meta.get("days") or DAYS
         idx = DAYS.index(self.day) if self.day in DAYS else 0
-        if idx >= 6:
-            return  # already on sunday — don't wrap to monday
-        self.day = DAYS[idx + 1]
-        self._revert_preview()
-        self._apply_preview()
+        # Skip past days where this block can't run.
+        for next_idx in range(idx + 1, 7):
+            if DAYS[next_idx] in days_allowed:
+                self.day = DAYS[next_idx]
+                self._revert_preview()
+                self._apply_preview()
+                return
+        # No valid day to the right — stay.
 
     def _nudge(self, delta: int) -> None:
         try:
@@ -458,8 +469,10 @@ class ScheduleScreen(ModalScreen):
         cal, pseudo = self._preview_pseudo
         date_str, start, end, title = pseudo
         when = f"{date_str} {start}"
-        # Clear the preview marker — event is now confirmed, render normally
+        # Clear the preview marker + placement context — event is now
+        # confirmed, render normally
         self.app.preview_marker = None
+        self.app.placement_meta = None
         self.app._refresh_panes()
         # Schedule the gcal write — preview stays in place
         self.app.background_place(
@@ -473,6 +486,7 @@ class ScheduleScreen(ModalScreen):
         self._revert_preview()
         self._restore_old()
         self.app.preview_marker = None
+        self.app.placement_meta = None
         self.app._refresh_panes()
         self.dismiss(None)
 
@@ -738,6 +752,14 @@ class WeekPane(Static):
         if self.focus_index >= self.selectable_count:
             self.focus_index = max(0, self.selectable_count - 1)
 
+        # Placement context: if a block is being placed, days excluded by its
+        # `days:` list render dimmed so the user sees what's off-limits.
+        placement_meta = getattr(self.app, "placement_meta", None)
+        if placement_meta is not None:
+            placement_days = placement_meta.get("days") or DAYS
+        else:
+            placement_days = None
+
         lines = []
         sel_idx = 0
         focus_y_lines = []
@@ -745,12 +767,18 @@ class WeekPane(Static):
         for offset in range(7):
             date = monday + timedelta(days=offset)
             d_str = date.strftime("%Y-%m-%d")
-            weekday = DAYS[date.weekday()].upper()
-            day_label = f"[bold cyan]{weekday} {date.month}/{date.day}[/bold cyan]"
+            weekday_lc = DAYS[date.weekday()]
+            weekday = weekday_lc.upper()
+            day_dimmed = placement_days is not None and weekday_lc not in placement_days
+            if day_dimmed:
+                day_label = f"[dim]{weekday} {date.month}/{date.day}[/dim]"
+            else:
+                day_label = f"[bold cyan]{weekday} {date.month}/{date.day}[/bold cyan]"
 
             day_events = events_by_date.get(d_str, [])
             if not day_events:
-                lines.append(f"{day_label}  [dim]·[/dim]")
+                marker = "[dim]·[/dim]"
+                lines.append(f"{day_label}  {marker}")
                 continue
 
             for i, (d, s, e, t, cal) in enumerate(day_events):
@@ -777,7 +805,10 @@ class WeekPane(Static):
                     else:
                         body = f"[grey50]{s}[/grey50] [{color}]{t}[/] [grey50]({dur})[/grey50]"
                 focus_y_lines.append(len(lines))
-                lines.append(f"{prefix} {marker} {body}")
+                line = f"{prefix} {marker} {body}"
+                if day_dimmed and not (focused or is_preview):
+                    line = f"[dim]{line}[/dim]"
+                lines.append(line)
                 sel_idx += 1
 
         self.focus_y_lines = focus_y_lines
@@ -972,6 +1003,11 @@ class WeekApp(App):
     offset_weeks: reactive[int] = reactive(0)
     status: reactive[str] = reactive("starting…")
     pending_writes: reactive[int] = reactive(0)
+
+    # Set by ScheduleScreen on mount; read by WeekPane to dim disallowed days.
+    placement_meta = None
+    # Set by ScheduleScreen during preview; read by WeekPane to highlight.
+    preview_marker = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-bar")

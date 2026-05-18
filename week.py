@@ -130,11 +130,24 @@ def list_calendars(access=("owner", "writer", "reader")):
     return cals
 
 
+def strip_display_suffix(title):
+    """Remove '(day N/M)' suffix added by multi-day event expansion.
+
+    Used wherever a title needs to round-trip back to gcal (delete, search).
+    System-block titles never carry this suffix.
+    """
+    return re.sub(r" \(day \d+/\d+\)$", "", title)
+
+
 def fetch_events(calendar, start, end):
     """Run gcalcli agenda for one calendar; return list of (date, start_time, end_time, title).
 
     start_time and end_time are HH:MM strings, or "" for all-day events.
     Header row is filtered out.
+
+    Multi-day all-day events are expanded into one row per covered date,
+    with a "[day N/M]" suffix appended to the title for display. The suffix
+    is stripped before any title round-trips back to gcal.
     """
     cmd = [
         "gcalcli",
@@ -164,7 +177,27 @@ def fetch_events(calendar, start, end):
             continue
         if parts[0] == "start_date":  # header row
             continue
-        events.append((parts[0], parts[1], parts[3], parts[4]))
+        start_date, start_time, end_date, end_time, title = parts[0], parts[1], parts[2], parts[3], parts[4]
+        # All-day multi-day expansion: gcal end_date is exclusive, so an
+        # event May 19 → May 26 covers May 19..25 (7 days). Single-day all-day
+        # events (May 31 → Jun 1) have total=1 — no suffix, no expansion.
+        total = 0
+        if not start_time and start_date != end_date:
+            try:
+                sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+                ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+                total = (ed - sd).days
+            except ValueError:
+                total = 0
+        if total > 1:
+            d = sd
+            n = 1
+            while d < ed:
+                events.append((d.strftime("%Y-%m-%d"), "", "", f"{title} (day {n}/{total})"))
+                d += timedelta(days=1)
+                n += 1
+        else:
+            events.append((start_date, start_time, end_time, title))
     return events
 
 
@@ -488,6 +521,7 @@ def find_event_on_date(events, block_name, target_date):
 
 def delete_event_by_title(calendar, title, date):
     """Delete a gcal event by exact title on a specific date."""
+    title = strip_display_suffix(title)
     cmd = [
         "gcalcli", "delete",
         "--calendar", calendar,
