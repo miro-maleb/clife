@@ -32,6 +32,7 @@ _cl() {
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
+    "view:open an HTML view of kb/ in a native window"
   )
 
   if (( CURRENT == 2 )); then
@@ -78,6 +79,15 @@ _cl() {
         _values "agenda options" \
           "--dump[print today, headless]" \
           "--date[operate on YYYY-MM-DD]:date:"
+        ;;
+      view)
+        local -a views
+        local d
+        for d in $HOME/clife/views/*/view.html(N); do
+          views+=("${${d%/view.html}##*/}")
+        done
+        _describe "views" views
+        _values "view options" "--list[list available views]"
         ;;
       tree)
         _values "tree options" \

@@ -19,6 +19,7 @@ COMMANDS = {
     "new":         "new",
     "new-project": "new_project",  # back-compat alias for muscle memory
     "dashboard":   "dashboard",
+    "view":        "view",
 }
 
 HELP = """
@@ -51,6 +52,8 @@ HELP = """
   cl new --sub-project NAME [--in PROJECT]
   cl new-project              alias for `cl new --project` (back-compat)
   cl dashboard                tmux session: tree (left), shell (center), agenda (right)
+  cl view [NAME]              open an HTML view of kb/ in a native window (default: projects)
+  cl view --list             list available views
 
   On Termux, inbox/notes/projects automatically use the TUI.
 """

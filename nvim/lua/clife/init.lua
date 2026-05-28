@@ -203,6 +203,7 @@ end
 function M.inbox()    term_run(CL .. " inbox")    end
 function M.review()   term_run(CL .. " review")   end
 function M.week()     term_run(CL .. " week")     end
+function M.view()     term_run(CL .. " view")     end
 
 -- ------------------------------------------------------------------
 -- Pickers (Telescope)
@@ -376,6 +377,7 @@ local subcommands = {
   week              = M.week,
   journal           = M.journal,
   review            = M.review,
+  view              = M.view,
   template          = M.template_insert,
 }
 

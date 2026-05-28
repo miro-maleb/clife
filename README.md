@@ -21,6 +21,7 @@ Commands:
 | `cl notes` | notes browser |
 | `cl new-project` | scaffold a new project |
 | `cl dashboard` | persistent dashboard TUI |
+| `cl view` | open an HTML view of kb/ in a native window |
 
 ## Architecture
 

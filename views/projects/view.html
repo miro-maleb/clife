@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KB Projects</title>
+<style>
+  :root {
+    --bg: #0c0d12;
+    --surface: #151721;
+    --surface-hover: #1a1d2a;
+    --surface-active: #1e2136;
+    --border: #1f2233;
+    --border-subtle: #181b28;
+    --border-hover: #282c42;
+    --text: #e4e6ed;
+    --text-secondary: #b0b4c7;
+    --text-dim: #636882;
+    --text-ghost: #3d4260;
+    --accent: #818cf8;
+    --accent-dim: rgba(129, 140, 248, 0.12);
+    --accent-glow: rgba(129, 140, 248, 0.06);
+    --green: #34d399;
+    --green-dim: rgba(52, 211, 153, 0.12);
+    --green-bg: rgba(52, 211, 153, 0.08);
+    --amber: #fbbf24;
+    --amber-dim: rgba(251, 191, 36, 0.12);
+    --amber-bg: rgba(251, 191, 36, 0.06);
+    --indigo: #a5b4fc;
+    --indigo-dim: rgba(165, 180, 252, 0.12);
+    --red: #f87171;
+    --red-dim: rgba(248, 113, 113, 0.10);
+    --gray-pill: #6b7280;
+    --gray-pill-dim: rgba(107, 114, 128, 0.12);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.15);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --radius-xs: 4px;
+    --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px 24px 40px;
+    max-width: 1100px;
+    margin: 0 auto;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ---- Scrollbar ---- */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3f55; }
+
+  /* ---- Header ---- */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  header h1 {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+  }
+
+  .refresh-btn:hover {
+    color: var(--text-secondary);
+    border-color: var(--border-hover);
+    background: var(--surface);
+  }
+
+  .refresh-btn:active {
+    background: var(--surface-active);
+  }
+
+  .refresh-btn svg {
+    width: 12px;
+    height: 12px;
+    transition: transform 0.4s ease;
+  }
+
+  .refresh-btn.spinning svg {
+    animation: spin 0.6s ease;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .load-time {
+    font-size: 0.65rem;
+    color: var(--text-ghost);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Summary Bar ---- */
+  .summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    flex-wrap: wrap;
+  }
+
+  .summary-total {
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-right: 4px;
+  }
+
+  .summary-sep {
+    color: var(--text-ghost);
+    margin: 0 2px;
+  }
+
+  .summary-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .summary-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ---- Filter Controls ---- */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .filter-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-ghost);
+    margin-right: 4px;
+    font-weight: 500;
+  }
+
+  .filter-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text-dim);
+    font-size: 0.68rem;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+    user-select: none;
+  }
+
+  .filter-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text-secondary);
+  }
+
+  .filter-btn.active {
+    background: var(--accent-dim);
+    border-color: rgba(129, 140, 248, 0.25);
+    color: var(--accent);
+  }
+
+  .filter-btn .fdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .filter-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+
+  .filter-btn.show-all {
+    font-style: italic;
+  }
+
+  .filter-btn.show-all.active {
+    background: var(--surface-active);
+    border-color: var(--border-hover);
+    color: var(--text-secondary);
+  }
+
+  /* ---- Area Sections ---- */
+  .area-section {
+    margin-bottom: 12px;
+  }
+
+  .area-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    user-select: none;
+    transition: all var(--transition);
+  }
+
+  .area-header:hover {
+    border-color: var(--border-hover);
+    background: var(--surface-hover);
+  }
+
+  .area-chevron {
+    color: var(--text-ghost);
+    transition: transform var(--transition-slow);
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+  }
+
+  .area-section.collapsed .area-chevron {
+    transform: rotate(-90deg);
+  }
+
+  .area-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    text-transform: capitalize;
+  }
+
+  .area-count {
+    font-size: 0.65rem;
+    color: var(--text-ghost);
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+  }
+
+  .area-active-count {
+    font-size: 0.62rem;
+    color: var(--green);
+    background: var(--green-dim);
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .area-body {
+    overflow: hidden;
+    transition: max-height var(--transition-slow), opacity var(--transition-slow);
+    max-height: 2000px;
+    opacity: 1;
+  }
+
+  .area-section.collapsed .area-body {
+    max-height: 0;
+    opacity: 0;
+  }
+
+  .project-list {
+    padding: 4px 0 0 0;
+  }
+
+  /* ---- Project Row ---- */
+  .project-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+    margin: 2px 0;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition);
+    cursor: pointer;
+  }
+
+  .project-row:hover {
+    background: var(--surface-hover);
+  }
+
+  .project-row:active {
+    background: var(--surface-active);
+  }
+
+  .project-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .status-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .status-active {
+    color: var(--green);
+    background: var(--green-dim);
+  }
+
+  .status-on-hold {
+    color: var(--amber);
+    background: var(--amber-dim);
+  }
+
+  .status-sleeping {
+    color: var(--indigo);
+    background: var(--indigo-dim);
+  }
+
+  .status-complete {
+    color: var(--gray-pill);
+    background: var(--gray-pill-dim);
+  }
+
+  .status-abandoned {
+    color: #ef4444;
+    background: var(--red-dim);
+    opacity: 0.7;
+  }
+
+  .status-superseded {
+    color: #9ca3af;
+    background: rgba(156, 163, 175, 0.10);
+    opacity: 0.7;
+  }
+
+  .status-pending {
+    color: var(--text-dim);
+    background: rgba(99, 104, 130, 0.10);
+  }
+
+  .status-shipped {
+    color: var(--green);
+    background: var(--green-dim);
+  }
+
+  .project-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .project-date {
+    font-size: 0.65rem;
+    color: var(--text-ghost);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .project-deadline {
+    font-size: 0.62rem;
+    color: var(--amber);
+    background: var(--amber-bg);
+    border: 1px solid var(--amber-dim);
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .project-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex-shrink: 2;
+    overflow: hidden;
+    max-height: 20px;
+  }
+
+  .tag-pill {
+    font-size: 0.58rem;
+    color: var(--text-ghost);
+    background: rgba(99, 104, 130, 0.08);
+    border: 1px solid rgba(99, 104, 130, 0.12);
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+
+  .project-row:hover .tag-pill {
+    color: var(--text-dim);
+    border-color: rgba(99, 104, 130, 0.2);
+  }
+
+  /* ---- Empty state ---- */
+  .empty-state {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 5rem 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+
+  .empty-state .waiting {
+    font-size: 1.4rem;
+    margin-bottom: 0.75rem;
+    opacity: 0.5;
+  }
+
+  .error-state {
+    text-align: center;
+    color: var(--red);
+    padding: 3rem 1.5rem;
+    font-size: 0.8rem;
+    opacity: 0.8;
+  }
+
+  /* ---- No-results ---- */
+  .no-results {
+    text-align: center;
+    color: var(--text-ghost);
+    padding: 3rem 1rem;
+    font-size: 0.78rem;
+  }
+
+  /* ---- Detail Panel ---- */
+  .panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-slow), visibility var(--transition-slow);
+    z-index: 100;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+
+  .panel-backdrop.open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .detail-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 420px;
+    max-width: 100vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    z-index: 101;
+    transform: translateX(100%);
+    transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .detail-panel.open {
+    transform: translateX(0);
+  }
+
+  .panel-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all var(--transition);
+    z-index: 2;
+  }
+
+  .panel-close:hover {
+    background: var(--surface-hover);
+    border-color: var(--border-hover);
+    color: var(--text-secondary);
+  }
+
+  .panel-close:active {
+    background: var(--surface-active);
+  }
+
+  .panel-close svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 28px 24px 32px;
+  }
+
+  /* Panel Header */
+  .panel-header {
+    margin-bottom: 20px;
+    padding-right: 40px;
+  }
+
+  .panel-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.35;
+    margin-bottom: 10px;
+  }
+
+  .panel-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .panel-area-pill {
+    font-size: 0.62rem;
+    font-weight: 500;
+    text-transform: capitalize;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 2px 10px;
+    border-radius: 10px;
+  }
+
+  /* Panel Metadata */
+  .panel-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    padding: 14px 0;
+    margin-bottom: 4px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.7rem;
+  }
+
+  .panel-meta-label {
+    color: var(--text-ghost);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.6rem;
+    font-weight: 500;
+  }
+
+  .panel-meta-value {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .panel-meta-value.deadline-value {
+    color: var(--amber);
+    font-weight: 500;
+  }
+
+  /* Panel Sections */
+  .panel-section {
+    margin-top: 18px;
+  }
+
+  .panel-section-title {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-ghost);
+    font-weight: 600;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-section-count {
+    font-size: 0.6rem;
+    color: var(--text-ghost);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Goals & Orientations pills */
+  .panel-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .panel-goal-pill {
+    font-size: 0.68rem;
+    color: var(--green);
+    background: var(--green-dim);
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+
+  .panel-orientation-pill {
+    font-size: 0.68rem;
+    color: var(--indigo);
+    background: var(--indigo-dim);
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+
+  /* Tasks checklist */
+  .panel-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .panel-task {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 0;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+  }
+
+  .panel-task + .panel-task {
+    border-top: 1px solid rgba(31, 34, 51, 0.5);
+  }
+
+  .task-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-xs);
+    border: 1.5px solid var(--border-hover);
+    flex-shrink: 0;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+  }
+
+  .task-checkbox.checked {
+    background: var(--green-dim);
+    border-color: var(--green);
+  }
+
+  .task-checkbox.checked svg {
+    opacity: 1;
+  }
+
+  .task-checkbox svg {
+    width: 10px;
+    height: 10px;
+    color: var(--green);
+    opacity: 0;
+    transition: opacity var(--transition);
+  }
+
+  .task-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+  }
+
+  .task-text.done {
+    color: var(--text-ghost);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-ghost);
+  }
+
+  /* Subprojects */
+  .panel-subprojects {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .panel-subproject {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 0.74rem;
+  }
+
+  .panel-subproject + .panel-subproject {
+    border-top: 1px solid rgba(31, 34, 51, 0.5);
+  }
+
+  .subproject-name {
+    color: var(--text-secondary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .subproject-badge {
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1px 7px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Subproject progress bar */
+  .subproject-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .progress-bar-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--green);
+    transition: width var(--transition-slow);
+  }
+
+  .progress-label {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Panel Tags */
+  .panel-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .panel-tag {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    background: rgba(99, 104, 130, 0.08);
+    border: 1px solid rgba(99, 104, 130, 0.15);
+    padding: 3px 9px;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 700px) {
+    body { padding: 14px 12px 30px; }
+    .project-tags { display: none; }
+    .project-meta { gap: 6px; }
+    .summary-bar { gap: 4px; padding: 10px 12px; }
+
+    .detail-panel {
+      width: 100vw;
+    }
+
+    .panel-scroll {
+      padding: 24px 18px 28px;
+    }
+  }
+
+  @media (min-width: 1200px) {
+    body { max-width: 1200px; padding: 24px 40px 48px; }
+  }
+
+  /* ---- Fade-in ---- */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .area-section.fade-in {
+    animation: fadeIn 0.3s ease both;
+  }
+
+  /* Prevent body scroll when panel is open */
+  body.panel-open {
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>Projects</h1>
+  </div>
+  <div class="header-right">
+    <span class="load-time" id="load-time"></span>
+    <button class="refresh-btn" id="refresh-btn" onclick="refresh()">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1.5 8a6.5 6.5 0 0 1 11.25-4.5M14.5 8a6.5 6.5 0 0 1-11.25 4.5"/>
+        <polyline points="1.5 3.5 1.5 6.5 4.5 6.5"/>
+        <polyline points="14.5 12.5 14.5 9.5 11.5 9.5"/>
+      </svg>
+      Refresh
+    </button>
+  </div>
+</header>
+
+<div id="summary-bar"></div>
+<div id="filter-bar"></div>
+<div id="content">
+  <div class="empty-state">
+    <div class="waiting">&#x23F3;</div>
+    Loading projects&hellip;
+  </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="panel-backdrop" id="panel-backdrop" onclick="closePanel()"></div>
+<div class="detail-panel" id="detail-panel">
+  <button class="panel-close" onclick="closePanel()" aria-label="Close panel">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <line x1="4" y1="4" x2="12" y2="12"/>
+      <line x1="12" y1="4" x2="4" y2="12"/>
+    </svg>
+  </button>
+  <div class="panel-scroll" id="panel-content"></div>
+</div>
+
+<script>
+const DATA_URL = './data.json';
+
+const STATUS_CONFIG = {
+  active:      { label: 'Active',      color: '#34d399', bg: 'rgba(52, 211, 153, 0.12)',  cls: 'status-active' },
+  'on-hold':   { label: 'On Hold',     color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.12)',  cls: 'status-on-hold' },
+  sleeping:    { label: 'Sleeping',     color: '#a5b4fc', bg: 'rgba(165, 180, 252, 0.12)', cls: 'status-sleeping' },
+  complete:    { label: 'Complete',     color: '#6b7280', bg: 'rgba(107, 114, 128, 0.12)', cls: 'status-complete' },
+  abandoned:   { label: 'Abandoned',    color: '#ef4444', bg: 'rgba(248, 113, 113, 0.10)', cls: 'status-abandoned' },
+  superseded:  { label: 'Superseded',   color: '#9ca3af', bg: 'rgba(156, 163, 175, 0.10)', cls: 'status-superseded' },
+  pending:     { label: 'Pending',      color: '#636882', bg: 'rgba(99, 104, 130, 0.10)',  cls: 'status-pending' },
+  shipped:     { label: 'Shipped',      color: '#34d399', bg: 'rgba(52, 211, 153, 0.12)',  cls: 'status-shipped' },
+};
+
+const STATUS_ORDER = ['active', 'on-hold', 'sleeping', 'complete', 'abandoned', 'superseded'];
+
+let projectData = null;
+let activeFilters = new Set(['active', 'on-hold']);
+let showAll = false;
+let collapsedAreas = new Set();
+let loadTimestamp = null;
+let projectIndex = {}; // slug -> project for quick lookup
+
+// ---- Filter logic ----
+
+function isVisible(project) {
+  if (showAll) return true;
+  return activeFilters.has(project.status);
+}
+
+function toggleFilter(status) {
+  if (showAll) {
+    showAll = false;
+    activeFilters.clear();
+    activeFilters.add(status);
+  } else if (activeFilters.has(status)) {
+    activeFilters.delete(status);
+  } else {
+    activeFilters.add(status);
+  }
+  renderAll();
+}
+
+function toggleShowAll() {
+  showAll = !showAll;
+  if (showAll) {
+    activeFilters.clear();
+  } else {
+    activeFilters.add('active');
+    activeFilters.add('on-hold');
+  }
+  renderAll();
+}
+
+function toggleArea(areaName) {
+  if (collapsedAreas.has(areaName)) {
+    collapsedAreas.delete(areaName);
+  } else {
+    collapsedAreas.add(areaName);
+  }
+  const el = document.getElementById('area-' + areaName);
+  if (el) el.classList.toggle('collapsed');
+}
+
+// ---- Panel logic ----
+
+function openPanel(slug) {
+  const p = projectIndex[slug];
+  if (!p) return;
+
+  const panel = document.getElementById('detail-panel');
+  const backdrop = document.getElementById('panel-backdrop');
+  const content = document.getElementById('panel-content');
+
+  content.innerHTML = renderPanelContent(p);
+
+  // Trigger open with a frame delay so the transition fires
+  requestAnimationFrame(() => {
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    document.body.classList.add('panel-open');
+  });
+}
+
+function closePanel() {
+  const panel = document.getElementById('detail-panel');
+  const backdrop = document.getElementById('panel-backdrop');
+
+  panel.classList.remove('open');
+  backdrop.classList.remove('open');
+  document.body.classList.remove('panel-open');
+}
+
+function renderPanelContent(p) {
+  const cfg = STATUS_CONFIG[p.status] || STATUS_CONFIG.active;
+  let html = '';
+
+  // Header
+  html += '<div class="panel-header">';
+  html += '<div class="panel-title">' + escHtml(p.name) + '</div>';
+  html += '<div class="panel-badges">';
+  html += '<span class="status-badge ' + cfg.cls + '">' + cfg.label + '</span>';
+  if (p.area && p.area !== 'None') {
+    html += '<span class="panel-area-pill">' + escHtml(p.area) + '</span>';
+  }
+  html += '</div>';
+  html += '</div>';
+
+  // Metadata row
+  html += '<div class="panel-meta">';
+  if (p.created) {
+    html += '<div class="panel-meta-item"><span class="panel-meta-label">Created</span><span class="panel-meta-value">' + formatDate(p.created) + '</span></div>';
+  }
+  if (p.deadline) {
+    html += '<div class="panel-meta-item"><span class="panel-meta-label">Deadline</span><span class="panel-meta-value deadline-value">' + deadlineDate(p.deadline) + '</span></div>';
+  }
+  if (p.completed) {
+    html += '<div class="panel-meta-item"><span class="panel-meta-label">Completed</span><span class="panel-meta-value">' + formatDate(p.completed) + '</span></div>';
+  }
+  if (p.last_reviewed) {
+    html += '<div class="panel-meta-item"><span class="panel-meta-label">Reviewed</span><span class="panel-meta-value">' + formatDate(p.last_reviewed) + '</span></div>';
+  }
+  html += '</div>';
+
+  // Goals & Orientations
+  const hasGoals = p.goals && p.goals.length;
+  const hasOrientations = p.orientations && p.orientations.length;
+  if (hasGoals || hasOrientations) {
+    html += '<div class="panel-section">';
+    html += '<div class="panel-section-title">Goals &amp; Orientations</div>';
+    html += '<div class="panel-pills">';
+    if (hasGoals) {
+      for (const g of p.goals) {
+        html += '<span class="panel-goal-pill">' + escHtml(g) + '</span>';
+      }
+    }
+    if (hasOrientations) {
+      for (const o of p.orientations) {
+        html += '<span class="panel-orientation-pill">' + escHtml(o) + '</span>';
+      }
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  // Tasks
+  if (p.tasks && p.tasks.length) {
+    // Filter out empty tasks
+    const tasks = p.tasks.filter(t => t.text && t.text.trim());
+    if (tasks.length) {
+      const doneCount = tasks.filter(t => t.done).length;
+      html += '<div class="panel-section">';
+      html += '<div class="panel-section-title">Tasks <span class="panel-section-count">' + doneCount + ' / ' + tasks.length + '</span></div>';
+      html += '<div class="panel-tasks">';
+      for (const t of tasks) {
+        html += '<div class="panel-task">';
+        html += '<div class="task-checkbox' + (t.done ? ' checked' : '') + '">';
+        html += '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2.5 6 5 8.5 9.5 3.5"/></svg>';
+        html += '</div>';
+        html += '<span class="task-text' + (t.done ? ' done' : '') + '">' + escHtml(t.text) + '</span>';
+        html += '</div>';
+      }
+      html += '</div>';
+      html += '</div>';
+    }
+  }
+
+  // Subprojects
+  if (p.subprojects && p.subprojects.length) {
+    const subs = p.subprojects;
+    const completedStatuses = ['complete', 'shipped'];
+    const completeCount = subs.filter(s => completedStatuses.includes(s.status)).length;
+    const pct = Math.round((completeCount / subs.length) * 100);
+
+    html += '<div class="panel-section">';
+    html += '<div class="panel-section-title">Sub-projects <span class="panel-section-count">' + completeCount + ' / ' + subs.length + ' complete</span></div>';
+
+    // Progress bar
+    html += '<div class="subproject-progress">';
+    html += '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+    html += '<span class="progress-label">' + pct + '%</span>';
+    html += '</div>';
+
+    html += '<div class="panel-subprojects">';
+    for (const s of subs) {
+      const sCfg = STATUS_CONFIG[s.status] || STATUS_CONFIG.active;
+      html += '<div class="panel-subproject">';
+      html += '<span class="subproject-badge ' + sCfg.cls + '">' + sCfg.label + '</span>';
+      html += '<span class="subproject-name">' + escHtml(s.name) + '</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  // Tags
+  if (p.tags && p.tags.length) {
+    html += '<div class="panel-section">';
+    html += '<div class="panel-section-title">Tags</div>';
+    html += '<div class="panel-tags">';
+    for (const t of p.tags) {
+      html += '<span class="panel-tag">' + escHtml(t) + '</span>';
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  return html;
+}
+
+// Keyboard close
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    const panel = document.getElementById('detail-panel');
+    if (panel.classList.contains('open')) {
+      closePanel();
+    }
+  }
+});
+
+// ---- Date formatting ----
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+}
+
+function shortDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const now = new Date();
+  if (d.getFullYear() === now.getFullYear()) {
+    return months[d.getMonth()] + ' ' + d.getDate();
+  }
+  return months[d.getMonth()] + ' ' + d.getDate() + " '" + String(d.getFullYear()).slice(2);
+}
+
+function deadlineDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const now = new Date();
+  now.setHours(0,0,0,0);
+  const diff = Math.ceil((d - now) / (1000 * 60 * 60 * 24));
+  const label = shortDate(dateStr);
+  if (diff < 0) return label + ' (overdue)';
+  if (diff === 0) return label + ' (today)';
+  if (diff <= 7) return label + ' (' + diff + 'd)';
+  return label;
+}
+
+// ---- Rendering ----
+
+function buildProjectIndex(data) {
+  projectIndex = {};
+  for (const area of Object.values(data.areas)) {
+    for (const p of area) {
+      projectIndex[p.slug] = p;
+    }
+  }
+}
+
+function renderSummary(data) {
+  const counts = {};
+  let total = 0;
+  for (const area of Object.values(data.areas)) {
+    for (const p of area) {
+      total++;
+      counts[p.status] = (counts[p.status] || 0) + 1;
+    }
+  }
+
+  let html = '<div class="summary-bar">';
+  html += '<span class="summary-total">' + total + ' projects</span>';
+
+  const parts = [];
+  for (const s of STATUS_ORDER) {
+    if (counts[s]) {
+      const cfg = STATUS_CONFIG[s] || STATUS_CONFIG.active;
+      parts.push('<span class="summary-stat"><span class="summary-dot" style="background:' + cfg.color + '"></span>' + counts[s] + ' ' + cfg.label.toLowerCase() + '</span>');
+    }
+  }
+  html += parts.join('<span class="summary-sep">&middot;</span>');
+  html += '</div>';
+
+  document.getElementById('summary-bar').innerHTML = html;
+}
+
+function renderFilters() {
+  let html = '<div class="filter-bar">';
+  html += '<span class="filter-label">Show</span>';
+
+  for (const s of STATUS_ORDER) {
+    const cfg = STATUS_CONFIG[s];
+    const isActive = showAll || activeFilters.has(s);
+    html += '<button class="filter-btn' + (isActive ? ' active' : '') + '" onclick="toggleFilter(\'' + s + '\')">';
+    html += '<span class="fdot" style="background:' + cfg.color + (isActive ? '' : ';opacity:0.4') + '"></span>';
+    html += cfg.label;
+    html += '</button>';
+  }
+
+  html += '<span class="filter-divider"></span>';
+  html += '<button class="filter-btn show-all' + (showAll ? ' active' : '') + '" onclick="toggleShowAll()">All</button>';
+  html += '</div>';
+
+  document.getElementById('filter-bar').innerHTML = html;
+}
+
+function renderProjectRow(p) {
+  const cfg = STATUS_CONFIG[p.status] || STATUS_CONFIG.active;
+  const escapedSlug = p.slug.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  let html = '<div class="project-row" onclick="openPanel(\'' + escapedSlug + '\')">';
+
+  html += '<span class="status-badge ' + cfg.cls + '">' + cfg.label + '</span>';
+  html += '<span class="project-name">' + escHtml(p.name) + '</span>';
+
+  // Tags
+  if (p.tags && p.tags.length) {
+    html += '<span class="project-tags">';
+    for (const t of p.tags.slice(0, 4)) {
+      html += '<span class="tag-pill">' + escHtml(t) + '</span>';
+    }
+    if (p.tags.length > 4) {
+      html += '<span class="tag-pill">+' + (p.tags.length - 4) + '</span>';
+    }
+    html += '</span>';
+  }
+
+  html += '<span class="project-meta">';
+  if (p.deadline) {
+    html += '<span class="project-deadline">' + deadlineDate(p.deadline) + '</span>';
+  }
+  if (p.created) {
+    html += '<span class="project-date">' + shortDate(p.created) + '</span>';
+  }
+  html += '</span>';
+  html += '</div>';
+
+  return html;
+}
+
+function renderAreas(data) {
+  const areas = data.areas || {};
+
+  // Build area entries with sorting info
+  const areaEntries = Object.entries(areas).map(([name, projects]) => {
+    const visibleProjects = projects.filter(isVisible);
+    const activeCount = projects.filter(p => p.status === 'active').length;
+    return { name, projects, visibleProjects, activeCount };
+  });
+
+  // Sort: most active projects first, then alphabetical
+  areaEntries.sort((a, b) => {
+    if (b.activeCount !== a.activeCount) return b.activeCount - a.activeCount;
+    return a.name.localeCompare(b.name);
+  });
+
+  // Filter out areas with no visible projects
+  const visibleAreas = areaEntries.filter(a => a.visibleProjects.length > 0);
+
+  if (visibleAreas.length === 0) {
+    document.getElementById('content').innerHTML = '<div class="no-results">No projects match the current filters.</div>';
+    return;
+  }
+
+  let html = '';
+  for (const area of visibleAreas) {
+    const isCollapsed = collapsedAreas.has(area.name);
+    html += '<div class="area-section' + (isCollapsed ? ' collapsed' : '') + '" id="area-' + area.name + '">';
+
+    // Header
+    html += '<div class="area-header" onclick="toggleArea(\'' + area.name + '\')">';
+    html += '<svg class="area-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 3 10 8 5 13"/></svg>';
+    html += '<span class="area-name">' + escHtml(area.name) + '</span>';
+    if (area.activeCount > 0) {
+      html += '<span class="area-active-count">' + area.activeCount + ' active</span>';
+    }
+    html += '<span class="area-count">' + area.visibleProjects.length + (area.visibleProjects.length !== area.projects.length ? ' / ' + area.projects.length : '') + '</span>';
+    html += '</div>';
+
+    // Body
+    html += '<div class="area-body"><div class="project-list">';
+
+    // Sort projects within area: active first, then by status order, then by created desc
+    const sorted = [...area.visibleProjects].sort((a, b) => {
+      const aIdx = STATUS_ORDER.indexOf(a.status);
+      const bIdx = STATUS_ORDER.indexOf(b.status);
+      if (aIdx !== bIdx) return aIdx - bIdx;
+      // Within same status, newer first
+      return (b.created || '').localeCompare(a.created || '');
+    });
+
+    for (const p of sorted) {
+      html += renderProjectRow(p);
+    }
+
+    html += '</div></div></div>';
+  }
+
+  document.getElementById('content').innerHTML = html;
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.area-section').forEach((el, i) => {
+      el.style.animationDelay = (i * 0.03) + 's';
+      el.classList.add('fade-in');
+    });
+  });
+}
+
+function renderAll() {
+  if (!projectData) return;
+  buildProjectIndex(projectData);
+  renderSummary(projectData);
+  renderFilters();
+  renderAreas(projectData);
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---- Data fetching ----
+
+async function fetchData() {
+  try {
+    const res = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    projectData = await res.json();
+    loadTimestamp = new Date();
+    renderAll();
+    updateLoadTime();
+  } catch (e) {
+    if (!projectData) {
+      document.getElementById('content').innerHTML = '<div class="error-state">Failed to load projects.json<br><span style="font-size:0.7rem;opacity:0.6">' + escHtml(e.message) + '</span></div>';
+    }
+  }
+}
+
+function updateLoadTime() {
+  const el = document.getElementById('load-time');
+  if (!loadTimestamp) { el.textContent = ''; return; }
+  const h = loadTimestamp.getHours();
+  const m = String(loadTimestamp.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  const h12 = h % 12 || 12;
+  el.textContent = 'loaded ' + h12 + ':' + m + ampm;
+}
+
+async function refresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  await fetchData();
+  setTimeout(() => btn.classList.remove('spinning'), 600);
+}
+
+// ---- Init ----
+fetchData();
+</script>
+</body>
+</html>
