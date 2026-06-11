@@ -34,7 +34,7 @@ console = Console()
 KB = Path.home() / "kb"
 PROJECTS_DIR = KB / "projects"
 INBOX_DIR = KB / "inbox"
-STALE_DAYS = 90
+STALE_DAYS = 30
 
 
 def getch():
@@ -115,11 +115,11 @@ def section_areas():
 
 def section_projects():
     console.print(Rule("[bold steel_blue1]  Projects[/bold steel_blue1]", style="grey23"))
-    projects.main(statuses=projects.REVIEW_STATUSES)
+    projects.main(statuses=projects.REVIEW_STATUSES, force=True)
 
 
 def section_open_questions():
-    console.print(Rule("[bold steel_blue1]  Open questions[/bold steel_blue1]", style="grey23"))
+    console.print(Rule("[bold steel_blue1]  Active work[/bold steel_blue1]  [grey50](open questions)[/grey50]", style="grey23"))
     console.print()
     found = 0
     for marker in ("project.md", "sub-project.md"):
@@ -127,7 +127,7 @@ def section_open_questions():
             if projects.get_top_folder(md) in projects.EXCLUDED_TOP:
                 continue
             content = md.read_text()
-            if projects.get_status(content) in ("complete", "abandoned", "archived", "superseded"):
+            if projects.get_status(content) != "active":
                 continue
             m = re.search(
                 r"^## Open questions\s*\n(.+?)(?=^## |\Z)",
@@ -147,7 +147,7 @@ def section_open_questions():
             console.print()
             found += 1
     if not found:
-        console.print("  [grey50]no open questions surfaced.[/grey50]\n")
+        console.print("  [grey50]no open questions on active projects.[/grey50]\n")
 
 
 def section_inbox():

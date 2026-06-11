@@ -17,6 +17,7 @@ w cross-day · o open working · r refresh
 
 import asyncio
 import os
+import shlex
 import subprocess
 import sys
 from datetime import date as _date, datetime, timedelta
@@ -62,6 +63,7 @@ from week_tui import (
     minutes_between,
     add_minutes,
 )
+from tui_common import dispatch_subprocess
 
 
 # ── Comment input modal ─────────────────────────────────────────────────────
@@ -569,7 +571,10 @@ class AgendaPane(Static):
         self.app.push_screen(CommentScreen(block_name, default=existing), _save)
 
     def action_open(self) -> None:
-        """Open the focused block's working list in $EDITOR.
+        """Open the focused block's working list. Standalone: suspend the TUI
+        and launch $EDITOR locally. In dashboard pane mode: dispatch nvim
+        into the dashboard's center pane instead, since suspending a tmux
+        pane TUI just hides our own UI.
 
         Falls back to system.md if working.md doesn't exist — some systems
         won't ever need a project list.
@@ -584,6 +589,9 @@ class AgendaPane(Static):
             target = sys_dir / "system.md"
         if not target.exists():
             self.app.notify(f"no system file for {ev['system']}", severity="error")
+            return
+        if self.app.pane_mode:
+            self.app._dispatch_to_center(f"nvim {shlex.quote(str(target))}")
             return
         editor = os.environ.get("EDITOR", "nvim")
         with self.app.suspend():
@@ -725,15 +733,29 @@ class AgendaApp(App):
     status: reactive[str] = reactive("starting…")
     pending_writes: reactive[int] = reactive(0)
 
-    def __init__(self, start_date: _date | None = None):
+    def __init__(self, start_date: _date | None = None, pane_mode: bool = False):
         super().__init__()
         # Stash for on_mount — assigning to self.target_date here would fire
         # the watcher before the event loop exists (load_events → create_task).
         self._pending_start_date = start_date
+        # pane_mode = embedded in the dashboard right pane. Routes "open" through
+        # tmux send-keys to the center pane instead of suspending.
+        self.pane_mode = pane_mode
         # Date-keyed cache of raw gcal event lists (pre-annotation).
         # None = not yet loaded; [] = loaded, empty.
         self._events_cache: dict[_date, list | None] = {}
         self._mounted_once = False
+
+    @work(exclusive=False)
+    async def _dispatch_to_center(self, cmd: str) -> None:
+        """Send a shell command into the dashboard's center pane via tmux.
+        Wrapped in a worker because tmux send-keys can stall — see
+        tui_common.dispatch_subprocess."""
+        rc = await dispatch_subprocess(cmd)
+        if rc is None:
+            self.notify("dashboard dispatch timed out", severity="warning", timeout=2)
+        elif rc != 0:
+            self.notify("dashboard center pane unavailable", severity="warning", timeout=2)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-bar")

@@ -11,9 +11,11 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.padding import Padding
 from rich.tree import Tree
 
 import projects as proj
+from tui_common import ACCENT, ACCENT_DIM, BODY, MUTED
 
 console = Console()
 
@@ -26,20 +28,20 @@ ORIENTATIONS = KB / "orientations"
 
 def fmt_project(proj_dir, status, open_tasks):
     color = proj.status_color(status)
-    label = f"[bold]{proj_dir.name}[/bold]  [{color}]{status}[/{color}]"
+    label = f"[bold {BODY}]{proj_dir.name}[/bold {BODY}]  [{color}]{status}[/{color}]"
     if open_tasks > 0:
-        label += f"  [grey50]{open_tasks} open[/grey50]"
+        label += f"  [{MUTED}]{open_tasks} open[/{MUTED}]"
     return label
 
 
 def fmt_subproject(sub_dir, status):
     color = proj.status_color(status)
-    return f"{sub_dir.name}  [{color}]{status}[/{color}]"
+    return f"[{BODY}]{sub_dir.name}[/{BODY}]  [{color}]{status}[/{color}]"
 
 
 def render_systems_tree(active_only):
     """Build a Tree of systems → blocks. Returns (tree, n_systems, n_blocks)."""
-    tree = Tree("[bold steel_blue1]kb/systems[/bold steel_blue1]")
+    tree = Tree(f"[bold {ACCENT}]kb/systems[/bold {ACCENT}]")
     n_systems = 0
     n_blocks = 0
     if not SYSTEMS.exists():
@@ -55,8 +57,9 @@ def render_systems_tree(active_only):
             continue
         n_systems += 1
         color = proj.status_color(status)
-        label = f"[bold]{sys_dir.name}[/bold]  [{color}]{status}[/{color}]"
-        sys_branch = tree.add(label)
+        sys_branch = tree.add(
+            f"[bold {BODY}]{sys_dir.name}[/bold {BODY}]  [{color}]{status}[/{color}]"
+        )
         bd = sys_dir / "blocks"
         if not bd.exists():
             continue
@@ -64,13 +67,13 @@ def render_systems_tree(active_only):
             if bf.suffix != ".md":
                 continue
             n_blocks += 1
-            sys_branch.add(f"[grey70]{bf.stem}[/grey70]")
+            sys_branch.add(f"[{MUTED}]{bf.stem}[/{MUTED}]")
     return tree, n_systems, n_blocks
 
 
 def render_orientations_tree(active_only):
     """Build a flat Tree of orientations. Returns (tree, n_orientations)."""
-    tree = Tree("[bold steel_blue1]kb/orientations[/bold steel_blue1]")
+    tree = Tree(f"[bold {ACCENT}]kb/orientations[/bold {ACCENT}]")
     n = 0
     if not ORIENTATIONS.exists():
         return tree, n
@@ -80,13 +83,15 @@ def render_orientations_tree(active_only):
             continue
         n += 1
         color = proj.status_color(status)
-        tree.add(f"[bold]{of.stem}[/bold]  [{color}]{status}[/{color}]")
+        tree.add(
+            f"[bold {BODY}]{of.stem}[/bold {BODY}]  [{color}]{status}[/{color}]"
+        )
     return tree, n
 
 
 def render_goals_tree(active_only):
     """Build a Tree of year → goals. Returns (tree, n_goals)."""
-    tree = Tree("[bold steel_blue1]kb/goals[/bold steel_blue1]")
+    tree = Tree(f"[bold {ACCENT}]kb/goals[/bold {ACCENT}]")
     n_goals = 0
     if not GOALS.exists():
         return tree, n_goals
@@ -101,23 +106,18 @@ def render_goals_tree(active_only):
             year_goals.append((gf, status))
         if active_only and not year_goals:
             continue
-        year_branch = tree.add(f"[tan]{year_dir.name}/[/tan]")
+        year_branch = tree.add(f"[{ACCENT_DIM}]{year_dir.name}/[/{ACCENT_DIM}]")
         for gf, status in year_goals:
             n_goals += 1
             color = proj.status_color(status)
-            year_branch.add(f"[bold]{gf.stem}[/bold]  [{color}]{status}[/{color}]")
+            year_branch.add(
+                f"[bold {BODY}]{gf.stem}[/bold {BODY}]  [{color}]{status}[/{color}]"
+            )
     return tree, n_goals
 
 
-def main():
-    parser = argparse.ArgumentParser(prog="cl tree")
-    parser.add_argument("--full", action="store_true",
-                        help="include sub-projects under each project")
-    parser.add_argument("--active", action="store_true",
-                        help="only active projects (and their parent areas)")
-    args = parser.parse_args()
-
-    tree = Tree("[bold steel_blue1]kb/projects[/bold steel_blue1]")
+def render(args):
+    tree = Tree(f"[bold {ACCENT}]kb/projects[/bold {ACCENT}]")
 
     n_areas = 0
     n_projects = 0
@@ -146,14 +146,14 @@ def main():
             continue
 
         n_areas += 1
-        area_branch = tree.add(f"[tan]{area_dir.name}/[/tan]")
+        area_branch = tree.add(f"[{ACCENT_DIM}]{area_dir.name}/[/{ACCENT_DIM}]")
 
         for project_dir, display_path, status, tasks in area_projects:
             n_projects += 1
             color = proj.status_color(status)
-            label = f"[bold]{display_path}[/bold]  [{color}]{status}[/{color}]"
+            label = f"[bold {BODY}]{display_path}[/bold {BODY}]  [{color}]{status}[/{color}]"
             if tasks > 0:
-                label += f"  [grey50]{tasks} open[/grey50]"
+                label += f"  [{MUTED}]{tasks} open[/{MUTED}]"
             project_branch = area_branch.add(label)
 
             if args.full:
@@ -165,8 +165,9 @@ def main():
                     n_subprojects += 1
                     project_branch.add(fmt_subproject(sub_dir, sp_status))
 
+    pad = (0, 0, 0, 2)
     console.print()
-    console.print(tree)
+    console.print(Padding(tree, pad))
 
     n_systems = n_blocks = n_goals = n_orientations = 0
     if args.full:
@@ -174,13 +175,13 @@ def main():
         goals_tree, n_goals = render_goals_tree(args.active)
         orient_tree, n_orientations = render_orientations_tree(args.active)
         console.print()
-        console.print(sys_tree)
+        console.print(Padding(sys_tree, pad))
         console.print()
-        console.print(goals_tree)
+        console.print(Padding(goals_tree, pad))
         console.print()
-        console.print(orient_tree)
+        console.print(Padding(orient_tree, pad))
 
-    summary = f"  [grey50]{n_areas} areas · {n_projects} projects"
+    summary = f"  [{MUTED}]{n_areas} areas · {n_projects} projects"
     if args.full:
         summary += (
             f" · {n_subprojects} sub-projects"
@@ -189,9 +190,36 @@ def main():
         )
     if args.active:
         summary += " · active only"
-    summary += "[/grey50]"
+    summary += f"[/{MUTED}]"
     console.print(summary)
     console.print()
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="cl tree")
+    parser.add_argument("--full", action="store_true",
+                        help="include sub-projects under each project")
+    parser.add_argument("--active", action="store_true",
+                        help="only active projects (and their parent areas)")
+    parser.add_argument("--watch", action="store_true",
+                        help="loop render, refresh every 60s (for dashboard pane)")
+    parser.add_argument("--pane", action="store_true",
+                        help="launch as a Textual pane app (for dashboard left pane)")
+    args = parser.parse_args()
+
+    if args.pane:
+        from tree_pane import run
+        run(active_only=args.active)
+        return
+
+    if args.watch:
+        import time
+        while True:
+            console.clear()
+            render(args)
+            time.sleep(60)
+
+    render(args)
 
 
 if __name__ == "__main__":

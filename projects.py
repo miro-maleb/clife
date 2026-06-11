@@ -205,15 +205,8 @@ def open_in_nvim(file):
 
 
 def status_color(status):
-    return {
-        "active":     "steel_blue1",
-        "on-hold":    "rosy_brown",
-        "sleeping":   "grey50",
-        "complete":   "dark_sea_green4",
-        "abandoned":  "indian_red",
-        "archived":   "grey39",
-        "superseded": "grey39",
-    }.get(status, "grey70")
+    from tui_common import STATUS_COLORS, MUTED
+    return STATUS_COLORS.get(status, MUTED)
 
 
 def build_hotkeys(status):
@@ -352,7 +345,7 @@ def review_item(md_file, index, total):
             return False
 
 
-def main(statuses=None):
+def main(statuses=None, force=False):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--active",    action="store_true")
     parser.add_argument("--on-hold",   action="store_true", dest="on_hold")
@@ -364,6 +357,7 @@ def main(statuses=None):
     parser.add_argument("--force",     action="store_true",
                         help="don't skip recently-reviewed projects")
     args, _ = parser.parse_known_args()
+    force = force or args.force
 
     if statuses is not None:
         pass
@@ -380,11 +374,11 @@ def main(statuses=None):
     else:
         statuses = DEFAULT_STATUSES
 
-    items = get_all_projects(statuses, force=args.force)
+    items = get_all_projects(statuses, force=force)
 
     if not items:
         console.print()
-        if not args.force:
+        if not force:
             console.print("[grey50]  nothing to review[/grey50]  [grey35](use --force to include recently-reviewed)[/grey35]")
         else:
             console.print("[grey50]  nothing to review[/grey50]")

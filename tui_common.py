@@ -2,6 +2,7 @@
 tui_common.py — Shared Textual UI components for Life OS TUI scripts.
 """
 
+import asyncio
 import datetime
 import os
 import subprocess
@@ -16,13 +17,39 @@ from textual.widgets import Input, ListItem, ListView, Static
 TERMUX = "com.termux" in os.environ.get("PREFIX", "")
 GIT = "/data/data/com.termux/files/usr/bin/git" if TERMUX else "git"
 
-# ── Warm pastel palette ────────────────────────────────────────────────────────
-# Desktop uses hex; Termux uses named colors (older Rich compat)
+# ── Palette (single source of truth) ───────────────────────────────────────────
+# Imported by Textual screens (CSS) and Rich-based commands (markup).
+# Hex works in both Rich and Textual. Termux falls back to named colors below.
+
+BG          = "#000000"   # true black — terminal/screen background
+PANEL_BG    = "#000000"   # rounded panel inner bg (same as BG by default)
+ACCENT      = "#e8a87c"   # warm amber — primary interactive / titles
+ACCENT_DIM  = "#c9a87c"   # duller amber — secondary highlight
+BODY        = "#cdd9e5"   # light grey — main text
+MUTED       = "#768390"   # mid grey — secondary text
+EMPTY       = "#4a3f38"   # dim — empty / disabled / past
+BORDER      = "#30363d"   # rounded border lines
+DESTRUCTIVE = "#d4878a"   # muted rose — danger / errors
+GOOD        = "#a8c5a0"   # sage — active / positive
+
+# Status colors — single source of truth for project / sub-project / system status.
+# Consumed by projects.status_color(); pulled in everywhere statuses render.
+STATUS_COLORS = {
+    "active":     GOOD,
+    "on-hold":    ACCENT_DIM,
+    "sleeping":   MUTED,
+    "complete":   EMPTY,
+    "abandoned":  DESTRUCTIVE,
+    "archived":   EMPTY,
+    "superseded": EMPTY,
+}
+
+# Legacy alias used by KeyButton + modal CSS below.
 _COLORS = {
-    "action":      "#e8a87c",   # warm amber — primary interactive
-    "destructive": "#d4878a",   # muted rose — danger
-    "muted":       "#6b5c54",   # warm dark gray — secondary
-    "label":       "#8a7a70",   # warm mid-gray — key hints
+    "action":      ACCENT,
+    "destructive": DESTRUCTIVE,
+    "muted":       "#6b5c54",
+    "label":       "#8a7a70",
 }
 
 # Named-color fallbacks for Termux (older Rich builds)
@@ -302,6 +329,48 @@ def apply_termux_css(css: str) -> str:
 #name-input-dialog { width: 90%; }
 """
     return result
+
+
+# ── Dashboard center-pane dispatch ─────────────────────────────────────────────
+# Used by `cl tree --pane` and `cl agenda --pane` to fire a shell command into
+# the dashboard's center tmux pane. `tmux send-keys` can occasionally stall, so
+# both consumers wrap this in a Textual @work coroutine with a hard timeout.
+
+DASHBOARD_SESSION = "dashboard"
+CENTER_PANE_ENV = "CLIFE_CENTER_PANE"
+CENTER_PANE_FALLBACK = "dashboard:main.2"
+
+
+def resolve_center_pane() -> str:
+    """Look up the dashboard center pane_id from the tmux session env, falling
+    back to the index-based target if the env var isn't set (e.g. running
+    `cl tree --pane` outside the dashboard)."""
+    result = subprocess.run(
+        ["tmux", "show-environment", "-t", DASHBOARD_SESSION, CENTER_PANE_ENV],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0 and "=" in result.stdout:
+        return result.stdout.strip().split("=", 1)[1]
+    return CENTER_PANE_FALLBACK
+
+
+async def dispatch_subprocess(cmd: str, timeout: float = 2.0) -> int | None:
+    """Run `tmux send-keys` for `cmd` in a thread with a hard timeout. Returns
+    the subprocess returncode, or None if the timeout fired (which abandons
+    the worker thread; the hung tmux client lingers but the caller is freed)."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: subprocess.run(
+                    ["tmux", "send-keys", "-t", resolve_center_pane(), cmd, "Enter"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                ).returncode
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return None
 
 
 def exit_to_launcher() -> None:

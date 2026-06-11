@@ -21,6 +21,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from tui_common import ACCENT, BODY, MUTED, EMPTY
 from week import (
     DAYS,
     delete_event_by_title,
@@ -224,52 +225,69 @@ _MARKERS = {
 }
 
 
+def _now_line(now_str: str) -> str:
+    return f"  [bold {ACCENT}]──── now {now_str} {'─' * 22}[/bold {ACCENT}]"
+
+
 def dump(target_date: _date) -> None:
     weekday = DAYS[target_date.weekday()]
-    console.print(f"\n[bold]cl agenda — {weekday.title()} {target_date}[/bold]\n")
+    console.print(
+        f"\n  [bold {ACCENT}]agenda[/bold {ACCENT}]  "
+        f"[{MUTED}]{weekday.title()} {target_date}[/{MUTED}]\n"
+    )
 
     events = fetch_day_events(target_date)
     rows = annotate_with_status(events, target_date.strftime("%Y-%m-%d"))
 
     if not rows:
-        console.print("  [dim]nothing on the calendar today[/dim]\n")
+        console.print(f"  [{EMPTY}]nothing on the calendar today[/{EMPTY}]\n")
         return
+
+    is_today = target_date == _date.today()
+    now_str = datetime.now().strftime("%H:%M") if is_today else None
+    now_marked = not is_today
 
     all_day = [r for r in rows if not r["start"]]
     timed = [r for r in rows if r["start"]]
 
     if all_day:
         for r in all_day:
-            console.print(f"  [grey50]all-day[/grey50]    {r['title']}  [grey42]({r['calendar']})[/grey42]")
+            console.print(
+                f"  [{MUTED}]all-day[/{MUTED}]    [{BODY}]{r['title']}[/{BODY}]  "
+                f"[{EMPTY}]({r['calendar']})[/{EMPTY}]"
+            )
         console.print()
 
     done = partial = skipped = pending = 0
     for r in timed:
+        if not now_marked and r["start"] >= now_str:
+            console.print(_now_line(now_str))
+            now_marked = True
         st = (r["status"] or {}).get("status") if r["status"] else None
         marker = _MARKERS.get(st, _MARKERS[None])
         if r["meta"]:
-            tag = f"({r['system']})"
-            color = "white"
+            tag = f"[{MUTED}]({r['system']})[/{MUTED}]"
+            color = BODY
         else:
             marker = "   "
-            tag = f"[grey50](gcal — {r['calendar']})[/grey50]"
-            color = "grey50"
+            tag = f"[{EMPTY}](gcal — {r['calendar']})[/{EMPTY}]"
+            color = MUTED
         title = r["title"]
         if st == "done":
-            title_md = f"[strike grey50]{title}[/strike grey50]"
+            title_md = f"[strike {EMPTY}]{title}[/strike {EMPTY}]"
         elif st == "skip":
-            title_md = f"[grey50]{title}[/grey50]"
+            title_md = f"[{EMPTY}]{title}[/{EMPTY}]"
         elif st == "partial":
-            title_md = f"[strike grey50]{title}[/strike grey50] [dim](partial)[/dim]"
+            title_md = f"[strike {MUTED}]{title}[/strike {MUTED}] [{EMPTY}](partial)[/{EMPTY}]"
         else:
             title_md = f"[{color}]{title}[/{color}]"
 
         time_col = f"{r['start']}–{r['end']}" if r["end"] else r["start"]
-        console.print(f"  {marker} {time_col:13s} {title_md:40s} {tag}")
+        console.print(f"  {marker} [{MUTED}]{time_col:13s}[/{MUTED}] {title_md:40s} {tag}")
 
         note = (r["status"] or {}).get("note") if r["status"] else ""
         if note:
-            console.print(f"          [dim]note: {note}[/dim]")
+            console.print(f"          [{MUTED}]note: {note}[/{MUTED}]")
 
         if r["meta"]:
             if st == "done":
@@ -281,11 +299,14 @@ def dump(target_date: _date) -> None:
             else:
                 pending += 1
 
+    if not now_marked:
+        console.print(_now_line(now_str))
+
     total_blocks = done + partial + skipped + pending
     console.print()
     console.print(
-        f"[bold]{done}/{total_blocks} done[/bold]"
-        f"  ·  {partial} partial  ·  {skipped} skipped  ·  {pending} pending\n"
+        f"  [bold {ACCENT}]{done}/{total_blocks}[/bold {ACCENT}] [{BODY}]done[/{BODY}]"
+        f"  [{MUTED}]·  {partial} partial  ·  {skipped} skipped  ·  {pending} pending[/{MUTED}]\n"
     )
 
 
@@ -300,9 +321,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="cl agenda")
     parser.add_argument("--dump", action="store_true",
                         help="print today's items + status, headless")
+    parser.add_argument("--watch", action="store_true",
+                        help="loop --dump, refresh every 60s (legacy non-interactive pane)")
+    parser.add_argument("--pane", action="store_true",
+                        help="interactive TUI for the dashboard right pane; "
+                             "`open` dispatches into the center pane")
     parser.add_argument("--date", type=parse_date_arg, default=None,
                         help="operate on this date (YYYY-MM-DD); default today")
     args = parser.parse_args()
+
+    if args.watch:
+        # gcal fetch is slow (~15s). Render to a buffer first, then clear+print
+        # atomically so the old content stays visible during the fetch.
+        import time
+        while True:
+            with console.capture() as cap:
+                dump(args.date or datetime.now().date())
+            console.clear()
+            sys.stdout.write(cap.get())
+            sys.stdout.flush()
+            time.sleep(300)
 
     target = args.date or datetime.now().date()
 
@@ -311,7 +349,7 @@ def main() -> None:
         return
 
     from agenda_tui import AgendaApp
-    app = AgendaApp(start_date=target)
+    app = AgendaApp(start_date=target, pane_mode=args.pane)
     app.run()
 
 

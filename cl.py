@@ -16,6 +16,7 @@ COMMANDS = {
     "notes":       "notes",
     "review":      "review",
     "tree":        "tree",
+    "show":        "show",
     "new":         "new",
     "new-project": "new_project",  # back-compat alias for muscle memory
     "dashboard":   "dashboard",
@@ -41,6 +42,7 @@ HELP = """
   cl projects --active|--on-hold|--complete|--abandoned|--all
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
+  cl show PATH                overview for an area / project / sub-project (dir or .md file)
   cl week                     weekly planner
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless
