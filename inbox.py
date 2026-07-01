@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import re
 import subprocess
@@ -438,6 +440,249 @@ def process_file(file, index, total):
             return False
 
 
+# ── Non-interactive routing (web / automation surface) ──────────────────────
+#
+# Same routing semantics as the interactive keys, but every selection that the
+# TUI gathers via fzf/keypress is passed in as a value. Each returns a result
+# dict; nothing prints to stdout (callers emit JSON).
+
+
+def inbox_files():
+    return sorted([
+        f for f in inbox_path.iterdir()
+        if f.is_file() and f.name != ".gitkeep"
+    ])
+
+
+def _strip_frontmatter(text):
+    """Drop a leading --- ... --- block, returning the body."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            nl = text.find("\n", end + 1)
+            return (text[nl + 1:] if nl != -1 else "").strip()
+    return text
+
+
+def _fm_field(raw, key):
+    m = re.search(rf"^{key}:\s*(.+)$", raw, re.MULTILINE)
+    return m.group(1).strip().strip('"') if m else ""
+
+
+def _sender_name(frm):
+    """'Google <google-noreply@google.com>' -> 'Google'; else the raw value."""
+    m = re.match(r'\s*"?([^"<]+?)"?\s*<', frm)
+    return (m.group(1).strip() if m else frm).strip()
+
+
+def inbox_items():
+    """List inbox items as dicts. For emails, subject (from frontmatter) is the
+    at-a-glance headline — no AI needed. source/from carried for context."""
+    items = []
+    for f in inbox_files():
+        raw = f.read_text().strip()
+        body = _strip_frontmatter(raw)
+        src = _fm_field(raw, "source")
+        subject = _fm_field(raw, "subject")
+        sender = _sender_name(_fm_field(raw, "from"))
+        first = next((ln for ln in body.splitlines() if ln.strip()), "")
+        headline = subject or first
+        preview = headline if len(headline) <= 100 else headline[:97] + "…"
+        items.append({
+            "file": f.name, "text": body, "preview": preview, "source": src,
+            "subject": subject, "from": sender,
+        })
+    return items
+
+
+def route_targets_payload():
+    """Everything the pickers need: projects, hierarchy targets, calendars, areas."""
+    return {
+        "projects": get_project_names(),
+        "route_targets": list_route_targets(),
+        "calendars": CALENDARS,
+        "areas": [a.name for a in get_project_areas()],
+    }
+
+
+def ni_note(file):
+    content = file.read_text().strip()
+    slug = slug_from_name(file)
+    notes_path.mkdir(parents=True, exist_ok=True)
+    dest = notes_path / f"{slug}.md"
+    dest.write_text(
+        f"---\ncreated: {datetime.now().strftime('%Y-%m-%d')}\ntags: []\nstatus: seed\n---\n\n{content}\n"
+    )
+    file.unlink()
+    return {"ok": True, "msg": f"notes/{slug}.md"}
+
+
+def ni_shopping(file, list_name):
+    payload = capture_payload(file)
+    shopping_path.mkdir(parents=True, exist_ok=True)
+    list_file = shopping_path / f"{list_name}.md"
+    if not list_file.exists():
+        list_file.write_text(f"# {list_name.capitalize()}\n\n")
+    with list_file.open("a") as f:
+        f.write(f"- [ ] {payload}\n")
+    file.unlink()
+    return {"ok": True, "msg": list_name}
+
+
+def ni_improvement(file):
+    if not system_improvements_path.exists():
+        return {"ok": False, "msg": "system-improvements.md missing"}
+    content = file.read_text().strip()
+    first_line = content.splitlines()[0] if content else ""
+    if not first_line:
+        return {"ok": False, "msg": "empty capture"}
+    text = system_improvements_path.read_text()
+    lines = text.splitlines()
+    open_idx = next((i for i, ln in enumerate(lines) if ln.strip() == "## Open ideas"), None)
+    if open_idx is None:
+        return {"ok": False, "msg": "no '## Open ideas' section"}
+    end_idx = next((i for i in range(open_idx + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    insert_idx = end_idx
+    while insert_idx > open_idx + 1 and lines[insert_idx - 1].strip() == "":
+        insert_idx -= 1
+    lines.insert(insert_idx, f"- {first_line}")
+    system_improvements_path.write_text("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
+    file.unlink()
+    return {"ok": True, "msg": "system improvements"}
+
+
+def ni_task(file, project):
+    payload = capture_payload(file) or file.stem
+    project_file = next((f for f in project_path.rglob("project.md") if f.parent.name == project), None)
+    if not project_file:
+        return {"ok": False, "msg": f"project '{project}' not found"}
+    with project_file.open("a") as f:
+        f.write(f"\n- [ ] {payload}")
+    file.unlink()
+    return {"ok": True, "msg": f"task → {project}"}
+
+
+def ni_paste_project(file, target):
+    dest_dir = project_path / target
+    if not dest_dir.is_dir():
+        return {"ok": False, "msg": f"not a directory: {target}"}
+    file.rename(dest_dir / file.name)
+    return {"ok": True, "msg": f"{target}/{file.name}"}
+
+
+def ni_new_project(file, name, area="ideas"):
+    from new import slugify
+    slug = slugify(name)
+    if not slug:
+        return {"ok": False, "msg": "name required"}
+    content = file.read_text().strip()
+    area = area or "ideas"
+    area_dir = project_path / area
+    area_dir.mkdir(parents=True, exist_ok=True)
+    project_dir = area_dir / slug
+    if project_dir.exists():
+        return {"ok": False, "msg": f"already exists: {area}/{slug}"}
+    project_dir.mkdir()
+    title = " ".join(w.capitalize() for w in slug.split("-"))
+    today = datetime.now().strftime("%Y-%m-%d")
+    (project_dir / "project.md").write_text(
+        f"---\ncreated: {today}\ndeadline: \nstatus: on-hold\ncompleted: \nabandoned: \n"
+        f"sleeping: \nlast_reviewed: \narea: {area}\ntags: []\n---\n\n# {title}\n\n## Idea\n\n{content}\n"
+    )
+    file.unlink()
+    return {"ok": True, "msg": f"new project: {area}/{slug}"}
+
+
+def ni_calendar(file, calendar, event_text=""):
+    first_line = (event_text or capture_payload(file) or "").strip()
+    if not first_line:
+        return {"ok": False, "msg": "empty event"}
+    text = normalize_duration(convert_military_time(first_line))
+    result = subprocess.run(["gcalcli", "quick", "--calendar", calendar, text],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return {"ok": False, "msg": "gcalcli failed — kept in inbox"}
+    file.unlink()
+    return {"ok": True, "msg": calendar}
+
+
+# ── AI coarse pruning → see ai.py ───────────────────────────────────────────
+#
+# AI's only inbox jobs: flag noise + summarize long items. Routing stays 100%
+# human (slick UI), because AI-guessed routing proved unreliable and not better.
+
+import ai
+
+
+def prune_items():
+    """Flag noise + summarize each inbox item via the local model (prompt: ai.py)."""
+    items = inbox_items()
+    if not items:
+        return {"items": []}
+    valid = {it["file"] for it in items}
+    out = []
+    for s in ai.prune_inbox(items):
+        f = (s.get("file") or "").strip().strip("[]").strip()
+        if f not in valid:
+            continue
+        out.append({
+            "file": f,
+            "noise": bool(s.get("noise")),
+            "confidence": s.get("confidence", 0),
+            "summary": (s.get("summary") or "")[:120],
+        })
+    return {"items": out}
+
+
+TRASH = Path.home() / "kb" / ".trash"
+
+
+def _trash_file(file):
+    """Move to kb/.trash/ instead of deleting — recoverable until the AI filter is trusted."""
+    TRASH.mkdir(parents=True, exist_ok=True)
+    dest = TRASH / file.name
+    if dest.exists():
+        dest = TRASH / f"{file.stem}-{datetime.now().strftime('%H%M%S')}{file.suffix}"
+    file.rename(dest)
+    return dest
+
+
+def prune_noise(dry_run=False):
+    """AI spam-filter: move items flagged noise to trash (recoverable). Idempotent.
+
+    This is the auto-filter — "streams heavy, output light": run it after ingest so
+    obvious spam never reaches the human. Trash keeps it recoverable while trust builds.
+    """
+    trashed, kept = [], 0
+    for it in prune_items().get("items", []):
+        f = inbox_path / it["file"]
+        if it.get("noise") and f.exists():
+            if not dry_run:
+                _trash_file(f)
+            trashed.append({"file": it["file"], "from": it.get("from", ""),
+                            "summary": it.get("summary", "")})
+        else:
+            kept += 1
+    return {"trashed": trashed, "kept": kept, "dry_run": dry_run}
+
+
+def ni_route(filename, dest, value="", area=""):
+    file = inbox_path / filename
+    if not file.exists():
+        return {"ok": False, "msg": "file gone"}
+    if dest == "note":         return ni_note(file)
+    if dest == "grocery":      return ni_shopping(file, "grocery")
+    if dest == "household":    return ni_shopping(file, "household")
+    if dest == "improvement":  return ni_improvement(file)
+    if dest == "skip":         return {"ok": True, "msg": "skipped"}
+    if dest == "delete":       _trash_file(file); return {"ok": True, "msg": "trashed"}
+    if dest == "task":         return ni_task(file, value)
+    if dest == "project":      return ni_paste_project(file, value)
+    if dest == "newproject":   return ni_new_project(file, value, area)
+    if dest == "calendar":     return ni_calendar(file, value)
+    return {"ok": False, "msg": f"unknown dest: {dest}"}
+
+
 def try_ingest_email():
     """If kb-capture is configured, sync + ingest before triage. Silent if not."""
     maildir_env = os.environ.get("CL_INGEST_MAILDIR", "")
@@ -459,6 +704,37 @@ def try_ingest_email():
 
 
 def main():
+    parser = argparse.ArgumentParser(prog="cl inbox", add_help=False)
+    parser.add_argument("--list", action="store_true", help="emit inbox items as JSON")
+    parser.add_argument("--targets", action="store_true", help="emit picker targets as JSON")
+    parser.add_argument("--prune", action="store_true",
+                        help="AI coarse-prune: flag noise + summarize, as JSON (routing stays human)")
+    parser.add_argument("--prune-noise", action="store_true",
+                        help="AI spam-filter: move noise items to trash (recoverable); emits JSON")
+    parser.add_argument("--dry-run", action="store_true", help="with --prune-noise: preview only")
+    parser.add_argument("--route", nargs=2, metavar=("FILE", "DEST"),
+                        help="non-interactively route FILE to DEST; emits JSON")
+    parser.add_argument("--value", default="", help="selection for picker routes (project/calendar/target/name)")
+    parser.add_argument("--area", default="", help="area for newproject route")
+    args, _ = parser.parse_known_args()
+
+    if args.list:
+        print(json.dumps({"items": inbox_items()}))
+        return
+    if args.targets:
+        print(json.dumps(route_targets_payload()))
+        return
+    if args.prune:
+        print(json.dumps(prune_items()))
+        return
+    if getattr(args, "prune_noise", False):
+        print(json.dumps(prune_noise(dry_run=args.dry_run)))
+        return
+    if args.route:
+        filename, dest = args.route
+        print(json.dumps(ni_route(filename, dest, args.value, args.area)))
+        return
+
     try_ingest_email()
 
     files = sorted([

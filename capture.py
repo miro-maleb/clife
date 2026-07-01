@@ -388,6 +388,8 @@ def main():
     parser = argparse.ArgumentParser(prog="lo capture", add_help=False)
     parser.add_argument("--voice", "-v", action="store_true")
     parser.add_argument("--journal", "-j", action="store_true")
+    parser.add_argument("--text", default=None,
+                        help="non-interactive: capture this string and exit (web/automation)")
     parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args()
 
@@ -397,7 +399,23 @@ def main():
   lo capture --voice    voice capture — say 'break'/'brake' between items, Ctrl+C to finish
                         (pending offline recordings are processed automatically on next use)
   lo capture --journal  capture directly to today's journal (with either mode)
+  lo capture --text STR non-interactive: capture STR and exit (web/automation)
 """)
+        return
+
+    if args.text is not None:
+        text = args.text.strip()
+        if not text:
+            print("(empty — nothing captured)")
+            return
+        inbox_path.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        if args.journal:
+            append_journal(text)
+            print("→ journal")
+        else:
+            path = write_inbox(text, stamp)
+            print(f"→ inbox/{path.name}")
         return
 
     # Auto-drain pending offline recordings on any capture invocation (Termux only)
