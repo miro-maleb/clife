@@ -1,0 +1,48 @@
+# ai-rss — personal AI newspaper (qwen-on-tower scrapes + curates the web)
+# Edit columns/queries freely; this is the editorial brief.
+
+model: qwen3.6-96k:latest          # tower 3090; long context for multi-article reads
+ollama_host: http://127.0.0.1:11434
+num_ctx: 16384                     # context window for select/write calls
+
+search:
+  results_per_query: 8
+  region: wt-wt                    # no region bias
+  timelimit: w                     # past week (d/w/m/y or null)
+  sleep_between: 1.5               # politeness / rate-limit cushion (seconds)
+
+select:
+  per_column: 4                    # final stories that make the issue, per column
+
+write:
+  max_article_chars: 6000          # truncate cleaned article text fed to the writer
+  fetch_timeout: 20
+
+# Where the finished issue lands. Dry runs ignore this and write to ./out/.
+deliver:
+  outbox: ~/kb/outbox
+
+columns:
+  - name: Local AI & Open Models
+    queries:
+      - "new open weights LLM model release"
+      - "ollama llama.cpp vllm update"
+      - "local AI agents MCP tools"
+      - "consumer GPU LLM inference"
+  - name: AI & the World
+    queries:
+      - "AI policy regulation news"
+      - "AI impact society jobs"
+  - name: World & Politics
+    queries:
+      - "major world news developments"
+      - "geopolitics this week"
+  - name: Dharma
+    queries:
+      - "Buddhism Zen news teacher"
+      - "Dzogchen Tibetan Buddhism"
+      - "new Buddhist book or essay"
+  - name: The Contemplative-Literary World
+    queries:
+      - "literary translation contemplative essay"
+      - "new literary fiction craft essay"
