@@ -62,7 +62,7 @@ def build(days=WINDOW):
     history = pool.review_history()  # all-time, so streak/totals are complete
     daily, weekly = [], []
     for sys_slug, meta, sys_status in load_blocks():
-        if sys_status not in ("active", ""):
+        if sys_status != "active":   # matches cl week — retired systems drop off
             continue
         cadence = meta.get("cadence", "")
         if cadence not in ("daily", "weekly"):
