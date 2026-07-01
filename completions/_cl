@@ -32,6 +32,7 @@ _cl() {
     "pool:scheduling pool — one-off items awaiting placement"
     "agenda:today's anchor — gcal + system blocks"
     "checkin:daily review — verify what was scheduled got done/missed"
+    "habits:habit dashboard — per-block streaks + done/missed history"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
@@ -135,6 +136,12 @@ _cl() {
           "--json[emit JSON for surfaces]" \
           "--mark[record a verdict]:title: :status:(done missed)" \
           "--date[operate on YYYY-MM-DD]:date:"
+        ;;
+      habits)
+        _values "habits options" \
+          "--dump[print the dashboard]" \
+          "--json[emit JSON for surfaces]" \
+          "--days[window width in days]:days:"
         ;;
       view)
         local -a views

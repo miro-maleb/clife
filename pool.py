@@ -374,6 +374,25 @@ def delete_review_mark(date, title):
         conn.execute("DELETE FROM review_mark WHERE date=? AND title=?", (date, title))
 
 
+def review_history(since=None, conn=None):
+    """All verdicts, grouped title → {date: status}. `since` (YYYY-MM-DD) bounds
+    the low end. The table is small (a few marks/day), so a full scan is cheap."""
+    own = conn is None
+    conn = conn or connect()
+    try:
+        q, params = "SELECT title, date, status FROM review_mark", []
+        if since:
+            q += " WHERE date >= ?"
+            params.append(since)
+        out = {}
+        for r in conn.execute(q, params).fetchall():
+            out.setdefault(r["title"], {})[r["date"]] = r["status"]
+        return out
+    finally:
+        if own:
+            conn.close()
+
+
 def review_streak(title, conn=None):
     """Habit stat for one block/title: total dones and current consecutive-day
     streak counting back from its most recent recorded day. Cheap GROUP-free scan."""

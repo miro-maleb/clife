@@ -13,6 +13,7 @@ COMMANDS = {
     "pool":        "pool",
     "agenda":      "agenda",
     "checkin":     "checkin",
+    "habits":      "habits",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -59,6 +60,8 @@ HELP = """
   cl checkin                  daily review — verify what was scheduled got done/missed
   cl checkin --dump|--json    print / emit today's plan + verdicts
   cl checkin --mark TITLE done|missed  record a verdict (missed pool items return to pool)
+  cl habits                   habit dashboard — per-block streaks + done/missed history
+  cl habits --dump|--json [--days N]   print / emit the dashboard
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)
