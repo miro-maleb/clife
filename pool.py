@@ -37,7 +37,7 @@ from rich.console import Console
 console = Console()
 
 DB_DIR = Path(os.environ.get("CLIFE_DATA_DIR", Path.home() / ".local" / "share" / "clife"))
-DB_PATH = DB_DIR / "pool.db"
+DB_PATH = DB_DIR / "calendar-pool.db"
 
 # item lifecycle: pooled → placed → done  (or → dropped; placed → pooled on miss)
 OPEN_STATUSES = ("pooled", "placed")

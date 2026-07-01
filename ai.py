@@ -56,6 +56,48 @@ Return ONLY JSON:
     return _generate_json(prompt).get("items", [])
 
 
+# ── inbox → calendar pool ────────────────────────────────────────────────────
+#
+# Coarse structuring only (per the AI-role rule): turn a freeform capture into a
+# tidy pool item. The human still confirms/edits and decides when to schedule it.
+
+def pool_item_from_text(text, areas=None):
+    """Structure a freeform capture ("call jonah re podcast fri") into a pool item.
+
+    text: the capture. areas: optional list of valid area tags to pick from.
+    Returns {"title","area","est_minutes"} — {} on failure (caller falls back to raw text).
+    """
+    area_hint = ""
+    if areas:
+        area_hint = (
+            "\nPick `area` from this list if one clearly fits, else \"\":\n"
+            + ", ".join(areas)
+        )
+    prompt = f"""/no_think
+Turn ONE freeform personal capture into a schedulable to-do item.
+
+Capture: {text[:400]}
+
+- title: a short imperative task, <= 8 words, no dates/times in it. Clean up
+  dictation artifacts. E.g. "call jonah re podcast fri" -> "Call Jonah re: podcast".
+- area: one short lowercase tag for life-area, or "" if unclear.{area_hint}
+- est_minutes: rough integer minutes to DO the task (not when). Quick call ~15,
+  errand ~30, focused work ~60-90. Default 30 if you truly can't tell.
+
+Return ONLY JSON:
+{{"title": "<title>", "area": "<area or empty>", "est_minutes": <integer>}}"""
+    out = _generate_json(prompt)
+    if not isinstance(out, dict) or not out.get("title"):
+        return {}
+    try:
+        est = int(out.get("est_minutes") or 30)
+    except (TypeError, ValueError):
+        est = 30
+    return {"title": str(out["title"]).strip(),
+            "area": (str(out.get("area") or "").strip() or None),
+            "est_minutes": max(5, est)}
+
+
 # ── (room for more calls: draft_reply(), propose_blocks(), weekly_review(), … ) ──
 
 

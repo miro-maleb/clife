@@ -15,6 +15,9 @@ from rich.rule import Rule
 
 from kb_utils import capture_payload
 
+import ai
+import pool
+
 console = Console()
 
 notes_path = Path.home() / "kb" / "notes"
@@ -29,6 +32,7 @@ HOTKEYS = (
     "[grey50][[/grey50][steel_blue1]n[/steel_blue1][grey50]][/grey50] note  "
     "[grey50][[/grey50][steel_blue1]t[/steel_blue1][grey50]][/grey50] task  "
     "[grey50][[/grey50][steel_blue1]c[/steel_blue1][grey50]][/grey50] calendar  "
+    "[grey50][[/grey50][steel_blue1]o[/steel_blue1][grey50]][/grey50] pool  "
     "[grey50][[/grey50][steel_blue1]p[/steel_blue1][grey50]][/grey50] new project  "
     "[grey50][[/grey50][steel_blue1]v[/steel_blue1][grey50]][/grey50] → project  "
     "[grey50][[/grey50][steel_blue1]g[/steel_blue1][grey50]][/grey50] grocery  "
@@ -195,6 +199,55 @@ def route_calendar(file):
         console.print(f"[dark_sea_green4]  → {calendar}[/dark_sea_green4]")
     else:
         console.print("[indian_red]  gcalcli failed — file kept in inbox[/indian_red]")
+
+
+def route_pool(file):
+    """Send this capture to the calendar pool as a one-off item awaiting placement.
+
+    AI does coarse structuring (title / area / est_minutes); the human confirms or
+    edits before it lands. The item shows up next time you run the scheduler.
+    """
+    text = capture_payload(file) or file.stem
+    console.print(f"\n  [grey50]→ calendar pool:[/grey50] [tan]{text}[/tan]")
+    console.print("  [grey50]structuring…[/grey50]")
+    areas = [a.name for a in get_project_areas()]
+    fields = ai.pool_item_from_text(text, areas=areas) or {}
+    title = fields.get("title") or text
+    area = fields.get("area")
+    est = fields.get("est_minutes") or 30
+
+    console.print(f"  [grey50]title:[/grey50] [tan]{title}[/tan]")
+    console.print(f"  [grey50]area: [/grey50] {area or '—'}   [grey50]est:[/grey50] {est}m")
+    console.print("  [grey50]add?[/grey50] [grey50][[/grey50][steel_blue1]y[/steel_blue1][grey50]/[/grey50][grey70]e[/grey70][grey50]dit/[/grey50][grey70]n[/grey70][grey50]][/grey50] ", end="")
+    key = getch()
+    console.print()
+    if key == "n":
+        console.print("[rosy_brown]  → cancelled[/rosy_brown]")
+        return
+    if key == "e":
+        restore_terminal()
+        console.print("  [grey50]title:[/grey50] ", end="")
+        try:
+            title = input().strip() or title
+        except EOFError:
+            pass
+        console.print("  [grey50]area (blank = none):[/grey50] ", end="")
+        try:
+            a = input().strip()
+            area = a or area
+        except EOFError:
+            pass
+        console.print(f"  [grey50]est minutes [{est}]:[/grey50] ", end="")
+        try:
+            e = input().strip()
+            est = pool.parse_minutes(e, default=est) or est
+        except EOFError:
+            pass
+
+    notes = text if text.strip() != title.strip() else None
+    pool.add_item(title, area=area, est_minutes=est, notes=notes)
+    file.unlink()
+    console.print(f"[dark_sea_green4]  → calendar pool[/dark_sea_green4] [grey50]({est}m{', ' + area if area else ''})[/grey50]")
 
 
 def route_note(file):
@@ -409,6 +462,9 @@ def process_file(file, index, total):
         if key == "c":
             route_calendar(file)
             return True
+        elif key == "o":
+            route_pool(file)
+            return True
         elif key == "n":
             route_note(file)
             return True
@@ -606,12 +662,24 @@ def ni_calendar(file, calendar, event_text=""):
     return {"ok": True, "msg": calendar}
 
 
+def ni_pool(file, value="", area=""):
+    """Web/automation counterpart of route_pool. `value` overrides the AI title;
+    `area` overrides the AI area. Empty → AI structures the raw capture."""
+    text = capture_payload(file) or file.stem
+    fields = ai.pool_item_from_text(text, areas=[a.name for a in get_project_areas()]) or {}
+    title = (value or fields.get("title") or text).strip()
+    a = (area or fields.get("area") or "").strip() or None
+    est = fields.get("est_minutes") or 30
+    notes = text if text.strip() != title else None
+    pool.add_item(title, area=a, est_minutes=est, notes=notes)
+    file.unlink()
+    return {"ok": True, "msg": f"pool: {title}"}
+
+
 # ── AI coarse pruning → see ai.py ───────────────────────────────────────────
 #
 # AI's only inbox jobs: flag noise + summarize long items. Routing stays 100%
 # human (slick UI), because AI-guessed routing proved unreliable and not better.
-
-import ai
 
 
 def prune_items():
@@ -680,6 +748,7 @@ def ni_route(filename, dest, value="", area=""):
     if dest == "project":      return ni_paste_project(file, value)
     if dest == "newproject":   return ni_new_project(file, value, area)
     if dest == "calendar":     return ni_calendar(file, value)
+    if dest == "pool":         return ni_pool(file, value, area)
     return {"ok": False, "msg": f"unknown dest: {dest}"}
 
 
