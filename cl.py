@@ -59,7 +59,7 @@ HELP = """
   cl agenda --date YYYY-MM-DD operate on a specific date
   cl checkin                  daily review — verify what was scheduled got done/missed
   cl checkin --dump|--json    print / emit today's plan + verdicts
-  cl checkin --mark TITLE done|missed  record a verdict (missed pool items return to pool)
+  cl checkin --mark TITLE done|partial|missed  record a verdict (missed pool items return to pool)
   cl habits                   habit dashboard — per-block streaks + done/missed history
   cl habits --dump|--json [--days N]   print / emit the dashboard
   cl new                      scaffold area / project / sub-project (interactive or with flags)

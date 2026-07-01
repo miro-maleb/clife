@@ -28,16 +28,18 @@ console = Console()
 WINDOW = 14
 
 
+_RANK = {"done": 3, "partial": 2, "missed": 1}   # best verdict wins a mixed day
+
+
 def _merge_instances(name, instances, history):
     """Fold a block's instance titles ('X', 'X #1', 'X #2', …) into one
-    date → status map. done wins over missed on a day with mixed instances."""
+    date → status map. On a day with mixed instances the best verdict wins
+    (done > partial > missed)."""
     titles = [name] + [f"{name} #{i}" for i in range(1, (instances or 1) + 1)]
     merged = {}
     for t in titles:
         for d, s in history.get(t, {}).items():
-            if merged.get(d) == "done":
-                continue
-            if s == "done" or d not in merged:
+            if _RANK.get(s, 0) > _RANK.get(merged.get(d), 0):
                 merged[d] = s
     return merged
 
@@ -45,13 +47,13 @@ def _merge_instances(name, instances, history):
 def _streak_and_counts(merged):
     items = sorted(merged.items())  # by date asc
     done = sum(1 for _, s in items if s == "done")
+    partial = sum(1 for _, s in items if s == "partial")
     streak = 0
-    for _, s in reversed(items):
-        if s == "done":
-            streak += 1
-        else:
+    for _, s in reversed(items):   # newest → oldest; missed breaks, else continues
+        if s == "missed":
             break
-    return streak, done, len(items)
+        streak += 1
+    return streak, done, partial, len(items)
 
 
 def build(days=WINDOW):
@@ -75,13 +77,14 @@ def build(days=WINDOW):
         except (ValueError, TypeError):
             instances = 1
         merged = _merge_instances(name, instances, history)
-        streak, done, marked = _streak_and_counts(merged)
+        streak, done, partial, marked = _streak_and_counts(merged)
         row = {
             "block": name,
             "system": sys_slug,
             "cadence": cadence,
             "streak": streak,
             "done": done,
+            "partial": partial,
             "marked": marked,
             "strip": [{"date": d, "status": merged.get(d)} for d in dates],
         }
@@ -99,7 +102,8 @@ def build(days=WINDOW):
 # ── surfaces ─────────────────────────────────────────────────────────────────
 
 def _cell(status):
-    return {"done": "[green]■[/green]", "missed": "[red]■[/red]"}.get(status, "[grey30]·[/grey30]")
+    return {"done": "[green]■[/green]", "partial": "[yellow]■[/yellow]",
+            "missed": "[red]■[/red]"}.get(status, "[grey30]·[/grey30]")
 
 
 def dump(days=WINDOW):

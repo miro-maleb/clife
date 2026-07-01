@@ -134,7 +134,8 @@ _cl() {
         _values "checkin options" \
           "--dump[print today's plan + verdicts]" \
           "--json[emit JSON for surfaces]" \
-          "--mark[record a verdict]:title: :status:(done missed)" \
+          "--full[with --json: include the whole day, not just commitments]" \
+          "--mark[record a verdict]:title: :status:(done partial missed)" \
           "--date[operate on YYYY-MM-DD]:date:"
         ;;
       habits)

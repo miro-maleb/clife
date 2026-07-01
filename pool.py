@@ -43,8 +43,10 @@ DB_PATH = DB_DIR / "calendar-pool.db"
 OPEN_STATUSES = ("pooled", "placed")
 ALL_STATUSES = ("pooled", "placed", "done", "dropped")
 
-# daily-review verdicts (what gcal SAID was scheduled → what actually happened)
-REVIEW_STATUSES = ("done", "missed")
+# daily-review verdicts (what gcal SAID was scheduled → what actually happened).
+# done/partial continue a habit streak; missed breaks it. (no 'skip' — retired.)
+REVIEW_STATUSES = ("done", "partial", "missed")
+STREAK_OK = ("done", "partial")
 
 # Calendar a one-off lands on when it has none of its own (daily-life bucket).
 DEFAULT_CALENDAR = os.environ.get("CLIFE_POOL_CALENDAR", "Miro-Personal")
@@ -404,13 +406,13 @@ def review_streak(title, conn=None):
             (title,),
         ).fetchall()
         done = sum(1 for r in rows if r["status"] == "done")
+        partial = sum(1 for r in rows if r["status"] == "partial")
         streak = 0
-        for r in rows:
-            if r["status"] == "done":
-                streak += 1
-            else:
+        for r in rows:  # newest → oldest; missed breaks, done/partial continue
+            if r["status"] == "missed":
                 break
-        return {"done": done, "streak": streak, "marked": len(rows)}
+            streak += 1
+        return {"done": done, "partial": partial, "streak": streak, "marked": len(rows)}
     finally:
         if own:
             conn.close()
