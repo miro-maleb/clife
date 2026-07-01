@@ -38,6 +38,7 @@ from textual.widgets import Input
 
 from week import (
     DAYS,
+    EXCLUDE_CALENDARS,
     delete_event_by_title,
     expected_count,
     fetch_events,
@@ -56,10 +57,9 @@ from week import (
 )
 
 
-# Calendars to skip in the right-pane display. The Sydney calendar tracks her
-# travel/whereabouts (useful as background context but not events I act on).
-# Edit this set if you want to silence other calendars from the bank view.
-EXCLUDE_CALENDARS = {"Sydney"}
+# EXCLUDE_CALENDARS now lives in week.py (canonical, shared by every surface) so
+# the web view and the TUI can't drift. It hides Sydney's calendars — both the
+# shared "Sydney" one and her personal "sydneyslavitt@gmail.com".
 
 # Per-calendar event color (Rich color). Falls back to white for unknown cals.
 CALENDAR_COLORS = {

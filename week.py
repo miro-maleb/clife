@@ -35,6 +35,12 @@ STATE = KB / "_state"
 SKIPS_FILE = STATE / "skips.yaml"
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
+# Calendars never shown in cl week (Miro's planner): Sydney's own calendars are
+# noise for his planning. NB the two distinct names — "Sydney" (shared) AND
+# "sydneyslavitt@gmail.com" (her personal). Missing the second is the bug that
+# leaked her invites into the week view. Canonical here; imported by every surface.
+EXCLUDE_CALENDARS = {"Sydney", "sydneyslavitt@gmail.com"}
+
 
 def parse_frontmatter(path):
     """Minimal YAML-ish parser: scalars and `[a, b, c]` lists. No nesting."""
@@ -316,6 +322,83 @@ def dump(offset_weeks=0):
         console.print()
 
     console.print(f"[bold]Total:[/bold] {placed_total} scheduled · {unplaced_total} to place\n")
+
+
+def build_view(offset_weeks=0):
+    """Assemble the full week view model for surfaces (web / TUI-agnostic).
+
+    Fetches every non-excluded calendar once, computes the routine bank
+    (daily/weekly with found/expected), pulls the calendar pool, and lays out
+    the seven days with their events. Same data the TUI renders — no Rich, no
+    curses, just a dict ready for JSON.
+    """
+    import pool
+
+    monday, sunday = week_range(offset_weeks=offset_weeks)
+    blocks = load_blocks()
+    active = [(s, m, st) for s, m, st in blocks if st == "active"]
+    skips = week_skip_counts(monday, sunday)
+
+    cals = [c for c in list_calendars() if c not in EXCLUDE_CALENDARS]
+    events_by_cal = {c: fetch_events(c, monday, sunday) for c in cals}
+
+    daily, weekly = [], []
+    for sys_slug, meta, _ in active:
+        block_name = meta.get("block", "?")
+        cal = meta.get("calendar", "")
+        expected_raw = expected_count(meta)
+        if expected_raw == 0:
+            continue
+        expected = max(0, expected_raw - skips.get(block_name, 0))
+        try:
+            instances = int(meta.get("instances", 1) or 1)
+        except (ValueError, TypeError):
+            instances = 1
+        events = events_by_cal.get(cal, [])
+        if instances <= 1:
+            found = sum(1 for _, _, _, t in events if t == block_name)
+        else:
+            titles = {t for _, _, _, t in events}
+            found = sum(1 for i in range(1, instances + 1) if f"{block_name} #{i}" in titles)
+        entry = {
+            "block": block_name, "system": sys_slug,
+            "found": found, "expected": expected,
+            "calendar": cal, "duration": meta.get("duration", ""),
+            "default_start": meta.get("default_start", ""),
+            "days": meta.get("days") or DAYS,
+            "cadence": meta.get("cadence", ""),
+        }
+        (daily if meta.get("cadence") == "daily" else weekly).append(entry)
+
+    daily.sort(key=lambda e: (e["found"] >= e["expected"], e["block"]))
+    weekly.sort(key=lambda e: (e["found"] >= e["expected"], e["block"]))
+
+    days = []
+    for i in range(7):
+        d = monday + timedelta(days=i)
+        ds = d.strftime("%Y-%m-%d")
+        day_events = []
+        for cal, evs in events_by_cal.items():
+            for edate, stime, etime, title in evs:
+                if edate == ds:
+                    day_events.append({
+                        "start_time": stime, "end_time": etime, "title": title,
+                        "all_day": not stime, "calendar": cal,
+                    })
+        day_events.sort(key=lambda e: (0 if e["all_day"] else 1, e["start_time"] or ""))
+        days.append({
+            "date": ds, "weekday": DAYS[d.weekday()],
+            "label": f"{DAYS[d.weekday()].upper()} {d.month}/{d.day}",
+            "events": day_events,
+        })
+
+    return {
+        "week": {"monday": monday.isoformat(), "sunday": sunday.isoformat(),
+                 "offset": offset_weeks},
+        "bank": {"daily": daily, "weekly": weekly},
+        "pool": pool.list_items(status="pooled"),
+        "days": days,
+    }
 
 
 def find_block(block_name):
@@ -600,6 +683,7 @@ def main():
                         help="operate on next week instead of current")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dump", action="store_true", help="print this week's bank, headless")
+    group.add_argument("--json", action="store_true", help="emit the full week view model as JSON (surfaces)")
     group.add_argument("--place", nargs=3, metavar=("BLOCK", "DAY", "TIME"),
                        help="schedule BLOCK on DAY at TIME (e.g. writing-block mon 10:10)")
     group.add_argument("--skip", nargs="+", metavar="ARG",
@@ -610,6 +694,10 @@ def main():
 
     if args.dump:
         dump(offset_weeks=offset)
+        return
+    if args.json:
+        import json
+        print(json.dumps(build_view(offset_weeks=offset)))
         return
     if args.place:
         place(*args.place, offset_weeks=offset)
