@@ -12,6 +12,7 @@ COMMANDS = {
     "week":        "week",
     "pool":        "pool",
     "agenda":      "agenda",
+    "checkin":     "checkin",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -55,6 +56,9 @@ HELP = """
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless
   cl agenda --date YYYY-MM-DD operate on a specific date
+  cl checkin                  daily review — verify what was scheduled got done/missed
+  cl checkin --dump|--json    print / emit today's plan + verdicts
+  cl checkin --mark TITLE done|missed  record a verdict (missed pool items return to pool)
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)

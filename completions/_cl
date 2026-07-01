@@ -31,6 +31,7 @@ _cl() {
     "week:weekly planner"
     "pool:scheduling pool — one-off items awaiting placement"
     "agenda:today's anchor — gcal + system blocks"
+    "checkin:daily review — verify what was scheduled got done/missed"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
@@ -126,6 +127,13 @@ _cl() {
       agenda)
         _values "agenda options" \
           "--dump[print today, headless]" \
+          "--date[operate on YYYY-MM-DD]:date:"
+        ;;
+      checkin)
+        _values "checkin options" \
+          "--dump[print today's plan + verdicts]" \
+          "--json[emit JSON for surfaces]" \
+          "--mark[record a verdict]:title: :status:(done missed)" \
           "--date[operate on YYYY-MM-DD]:date:"
         ;;
       view)

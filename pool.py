@@ -43,6 +43,9 @@ DB_PATH = DB_DIR / "calendar-pool.db"
 OPEN_STATUSES = ("pooled", "placed")
 ALL_STATUSES = ("pooled", "placed", "done", "dropped")
 
+# daily-review verdicts (what gcal SAID was scheduled → what actually happened)
+REVIEW_STATUSES = ("done", "missed")
+
 # Calendar a one-off lands on when it has none of its own (daily-life bucket).
 DEFAULT_CALENDAR = os.environ.get("CLIFE_POOL_CALENDAR", "Miro-Personal")
 
@@ -74,9 +77,28 @@ CREATE TABLE IF NOT EXISTS placement (
     created_at TEXT NOT NULL
 );
 
+-- Daily review: one verdict per scheduled thing per day. gcal is the source of
+-- truth for WHAT was scheduled; this records whether it got done. Keyed by
+-- (date, title) — which doubles as the habit key, since a routine-block event's
+-- title is the block name, so streaks fall out of a GROUP BY title.
+CREATE TABLE IF NOT EXISTS review_mark (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    date         TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    calendar     TEXT,
+    kind         TEXT,           -- pool | block | event
+    status       TEXT NOT NULL,  -- done | missed
+    placement_id INTEGER,        -- set when this maps to a pool placement
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    UNIQUE(date, title)
+);
+
 CREATE INDEX IF NOT EXISTS idx_item_status   ON pool_item(status);
 CREATE INDEX IF NOT EXISTS idx_place_item    ON placement(item_id);
 CREATE INDEX IF NOT EXISTS idx_place_date    ON placement(date);
+CREATE INDEX IF NOT EXISTS idx_review_date   ON review_mark(date);
+CREATE INDEX IF NOT EXISTS idx_review_title  ON review_mark(title);
 """
 
 
@@ -274,6 +296,105 @@ def item_placements(conn, item_id):
         "SELECT * FROM placement WHERE item_id=? ORDER BY date, start", (item_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def placement_for_title(conn, date, title):
+    """The most recent placement whose gcal event would carry `title` on `date`.
+
+    `cl pool schedule` writes the gcal event with title == pool_item.title, so a
+    gcal event on the review page maps back to its placement by (date, title).
+    Returns the placement dict (with the item's title merged in) or None.
+    """
+    row = conn.execute(
+        """SELECT p.*, i.title AS title
+             FROM placement p JOIN pool_item i ON i.id = p.item_id
+            WHERE p.date = ? AND i.title = ?
+            ORDER BY p.id DESC LIMIT 1""",
+        (date, title),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def reset_placement(pid):
+    """Undo a review verdict: placement → planned, its item → placed. Used when a
+    done/missed mark is toggled back off."""
+    with connect() as conn:
+        pl = get_placement(conn, pid)
+        if not pl:
+            raise ValueError(f"no placement #{pid}")
+        ts = now()
+        conn.execute("UPDATE placement SET status='planned' WHERE id=?", (pid,))
+        conn.execute("UPDATE pool_item SET status='placed', updated_at=? WHERE id=?",
+                     (ts, pl["item_id"]))
+        return get_item(conn, pl["item_id"])
+
+
+# ── review marks (daily-review verdicts) ────────────────────────────────────
+
+def get_review_mark(conn, date, title):
+    row = conn.execute(
+        "SELECT * FROM review_mark WHERE date=? AND title=?", (date, title)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def review_marks_for_date(date, conn=None):
+    """All verdicts recorded on `date`, keyed by title."""
+    own = conn is None
+    conn = conn or connect()
+    try:
+        rows = conn.execute("SELECT * FROM review_mark WHERE date=?", (date,)).fetchall()
+        return {r["title"]: dict(r) for r in rows}
+    finally:
+        if own:
+            conn.close()
+
+
+def upsert_review_mark(date, title, status, calendar=None, kind=None, placement_id=None):
+    """Record (or replace) the verdict for one scheduled thing on one day."""
+    if status not in REVIEW_STATUSES:
+        raise ValueError(f"bad review status: {status}")
+    ts = now()
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO review_mark
+                 (date, title, calendar, kind, status, placement_id, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(date, title) DO UPDATE SET
+                 status=excluded.status, calendar=excluded.calendar,
+                 kind=excluded.kind, placement_id=excluded.placement_id,
+                 updated_at=excluded.updated_at""",
+            (date, title, calendar, kind, status, placement_id, ts, ts),
+        )
+        return get_review_mark(conn, date, title)
+
+
+def delete_review_mark(date, title):
+    with connect() as conn:
+        conn.execute("DELETE FROM review_mark WHERE date=? AND title=?", (date, title))
+
+
+def review_streak(title, conn=None):
+    """Habit stat for one block/title: total dones and current consecutive-day
+    streak counting back from its most recent recorded day. Cheap GROUP-free scan."""
+    own = conn is None
+    conn = conn or connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, status FROM review_mark WHERE title=? ORDER BY date DESC",
+            (title,),
+        ).fetchall()
+        done = sum(1 for r in rows if r["status"] == "done")
+        streak = 0
+        for r in rows:
+            if r["status"] == "done":
+                streak += 1
+            else:
+                break
+        return {"done": done, "streak": streak, "marked": len(rows)}
+    finally:
+        if own:
+            conn.close()
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
