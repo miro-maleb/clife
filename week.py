@@ -681,6 +681,8 @@ def main():
     parser = argparse.ArgumentParser(prog="cl week")
     parser.add_argument("--next", dest="next_week", action="store_true",
                         help="operate on next week instead of current")
+    parser.add_argument("--offset", type=int, default=None,
+                        help="operate N weeks from now (negative = past); overrides --next")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dump", action="store_true", help="print this week's bank, headless")
     group.add_argument("--json", action="store_true", help="emit the full week view model as JSON (surfaces)")
@@ -690,7 +692,7 @@ def main():
                        help="--skip BLOCK DAY [REASON…] — log a skip; deletes matching gcal event if any")
     args = parser.parse_args()
 
-    offset = 1 if args.next_week else 0
+    offset = args.offset if args.offset is not None else (1 if args.next_week else 0)
 
     if args.dump:
         dump(offset_weeks=offset)

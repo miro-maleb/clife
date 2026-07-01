@@ -83,7 +83,8 @@ _cl() {
           _values "pool subcommand" \
             "add[add a one-off item]" \
             "list[list pool items]" \
-            "place[place an item into a slot]" \
+            "place[record a placement (no gcal write)]" \
+            "schedule[place an item AND write the gcal event]" \
             "done[mark a placement done]" \
             "return[return a missed placement to the pool]" \
             "drop[drop an item]" \

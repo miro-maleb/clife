@@ -49,7 +49,8 @@ HELP = """
   cl pool                     scheduling pool — one-off items awaiting placement
   cl pool add TITLE [...]     add a one-off item (--area --project --est 90m --deadline)
   cl pool list [--json]       list pooled/placed items (--all, --status, --area)
-  cl pool place ITEM DATE [TIME]  place an item into a slot
+  cl pool place ITEM DATE [TIME]  record a placement (no gcal write)
+  cl pool schedule ITEM DATE TIME place an item AND write the gcal event
   cl pool done|return|drop ID resolve a placement / item
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless

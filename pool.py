@@ -43,6 +43,9 @@ DB_PATH = DB_DIR / "calendar-pool.db"
 OPEN_STATUSES = ("pooled", "placed")
 ALL_STATUSES = ("pooled", "placed", "done", "dropped")
 
+# Calendar a one-off lands on when it has none of its own (daily-life bucket).
+DEFAULT_CALENDAR = os.environ.get("CLIFE_POOL_CALENDAR", "Miro-Personal")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pool_item (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,6 +182,48 @@ def place_item(item_id, date, start=None, end=None, gcal_id=None):
         return get_placement(conn, cur.lastrowid)
 
 
+def _end_time(start, minutes):
+    """'14:00' + 90 → '15:30'. Returns None if start is falsy/malformed."""
+    m = re.match(r"^(\d{1,2}):(\d{2})$", start or "")
+    if not m:
+        return None
+    total = int(m.group(1)) * 60 + int(m.group(2)) + int(minutes or 0)
+    total = min(total, 23 * 60 + 59)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def schedule_item(item_id, date, start, calendar=None):
+    """Place a pool item AND write the real gcal event (fork #1: it lands on the
+    actual calendar). Records a placement; item → placed. Returns the placement.
+
+    gcalcli add doesn't hand back an event id, so gcal_id stays NULL — the
+    placement row still tracks date/time/status for the daily-review loop.
+    """
+    import subprocess
+
+    with connect() as conn:
+        item = get_item(conn, item_id)
+    if not item:
+        raise ValueError(f"no pool item #{item_id}")
+    if item["status"] == "dropped":
+        raise ValueError(f"item #{item_id} is dropped")
+    if not re.match(r"^\d{1,2}:\d{2}$", start or ""):
+        raise ValueError(f"bad time: {start} (use HH:MM)")
+
+    cal = calendar or item.get("calendar") or DEFAULT_CALENDAR
+    dur = item.get("est_minutes") or 30
+    end = _end_time(start, dur)
+    cmd = ["gcalcli", "add", "--calendar", cal, "--title", item["title"],
+           "--when", f"{date} {start}", "--duration", str(dur), "--noprompt"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        raise ValueError("gcalcli not installed")
+    if r.returncode != 0:
+        raise ValueError(f"gcalcli add failed: {r.stderr.strip()}")
+    return place_item(item_id, date, start=start, end=end)
+
+
 def get_placement(conn, pid):
     row = conn.execute("SELECT * FROM placement WHERE id = ?", (pid,)).fetchone()
     return dict(row) if row else None
@@ -290,6 +335,16 @@ def cmd_place(a):
                   f"[grey50](placement #{pl['id']})[/grey50]")
 
 
+def cmd_schedule(a):
+    try:
+        pl = schedule_item(a.item, a.date, a.time, calendar=a.calendar)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    console.print(f"[dark_sea_green4]  → scheduled[/dark_sea_green4] item #{a.item} @ "
+                  f"{pl['date']} {pl['start']}–{pl['end']} [grey50](→ gcal)[/grey50]")
+
+
 def cmd_done(a):
     try:
         it = complete_placement(a.placement)
@@ -372,6 +427,13 @@ def main():
     p.add_argument("--end", help="HH:MM end")
     p.add_argument("--gcal-id", dest="gcal_id", help="gcal event id if pushed")
     p.set_defaults(func=cmd_place)
+
+    p = sub.add_parser("schedule", help="place an item AND write the gcal event")
+    p.add_argument("item", type=int)
+    p.add_argument("date", help="YYYY-MM-DD")
+    p.add_argument("time", help="HH:MM start")
+    p.add_argument("--calendar", help="override calendar (default: item's, else Miro-Personal)")
+    p.set_defaults(func=cmd_schedule)
 
     p = sub.add_parser("done", help="mark a placement done")
     p.add_argument("placement", type=int)
