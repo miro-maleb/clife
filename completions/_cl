@@ -29,6 +29,7 @@ _cl() {
     "tree:bird's-eye view of areas/projects"
     "show:overview for area / project / sub-project"
     "week:weekly planner"
+    "pool:scheduling pool — one-off items awaiting placement"
     "agenda:today's anchor — gcal + system blocks"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
@@ -76,6 +77,40 @@ _cl() {
         _values "week options" \
           "--regenerate[regenerate this week's plan]" \
           "--overwrite[regenerate this week's plan]"
+        ;;
+      pool)
+        if (( CURRENT == 3 )); then
+          _values "pool subcommand" \
+            "add[add a one-off item]" \
+            "list[list pool items]" \
+            "place[place an item into a slot]" \
+            "done[mark a placement done]" \
+            "return[return a missed placement to the pool]" \
+            "drop[drop an item]" \
+            "show[show one item + its placements]"
+        else
+          case "$words[3]" in
+            add)
+              _values "pool add options" \
+                "--area[area]:area:" \
+                "--project[project]:project:" \
+                "--est[estimated duration: 90, 90m, 2h]:est:" \
+                "--deadline[YYYY-MM-DD]:deadline:" \
+                "--priority[priority int]:priority:" \
+                "--calendar[gcal calendar]:calendar:" \
+                "--source[kb path it came from]:source:" \
+                "--note[freeform note]:note:"
+              ;;
+            list)
+              _values "pool list options" \
+                "--status[filter to one status]:status:(pooled placed done dropped)" \
+                "--all[include done + dropped]" \
+                "--area[area]:area:" \
+                "--project[project]:project:" \
+                "--json[emit JSON for surfaces]"
+              ;;
+          esac
+        fi
         ;;
       agenda)
         _values "agenda options" \

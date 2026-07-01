@@ -10,6 +10,7 @@ COMMANDS = {
     "capture":     "capture",
     "ingest":      "ingest",
     "week":        "week",
+    "pool":        "pool",
     "agenda":      "agenda",
     "inbox":       "inbox",
     "projects":    "projects",
@@ -45,6 +46,11 @@ HELP = """
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
   cl show PATH                overview for an area / project / sub-project (dir or .md file)
   cl week                     weekly planner
+  cl pool                     scheduling pool — one-off items awaiting placement
+  cl pool add TITLE [...]     add a one-off item (--area --project --est 90m --deadline)
+  cl pool list [--json]       list pooled/placed items (--all, --status, --area)
+  cl pool place ITEM DATE [TIME]  place an item into a slot
+  cl pool done|return|drop ID resolve a placement / item
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless
   cl agenda --date YYYY-MM-DD operate on a specific date
