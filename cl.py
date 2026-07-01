@@ -31,7 +31,7 @@ HELP = """
   cl capture --voice          voice capture — say 'break' between items, Ctrl+C to finish
   cl capture --journal        capture directly to today's journal (text or voice)
   cl ingest [--dry-run]       pull new email from kb-capture maildir → inbox
-  cl inbox [--tui]            route inbox files — j/n/t/p/v/g/h/s/d
+  cl inbox [--tui]            route inbox files — c(calendar→pool)/n/t/p/v/g/h/i/s/d
   cl notes                    flat fzf browser over every note
   cl notes --orphans          only orphan notes (no project home, no inbound link)
   cl notes --stale            only notes unmodified > 90 days

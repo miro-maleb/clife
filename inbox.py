@@ -32,7 +32,6 @@ HOTKEYS = (
     "[grey50][[/grey50][steel_blue1]n[/steel_blue1][grey50]][/grey50] note  "
     "[grey50][[/grey50][steel_blue1]t[/steel_blue1][grey50]][/grey50] task  "
     "[grey50][[/grey50][steel_blue1]c[/steel_blue1][grey50]][/grey50] calendar  "
-    "[grey50][[/grey50][steel_blue1]o[/steel_blue1][grey50]][/grey50] pool  "
     "[grey50][[/grey50][steel_blue1]p[/steel_blue1][grey50]][/grey50] new project  "
     "[grey50][[/grey50][steel_blue1]v[/steel_blue1][grey50]][/grey50] → project  "
     "[grey50][[/grey50][steel_blue1]g[/steel_blue1][grey50]][/grey50] grocery  "
@@ -171,38 +170,12 @@ def restore_terminal():
     termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def route_calendar(file):
-    first_line = capture_payload(file)
-    console.print(f"\n  [grey50]adding to calendar:[/grey50] [tan]{first_line}[/tan]")
-    console.print("  [grey50]confirm?[/grey50] [grey50][[/grey50][steel_blue1]y[/steel_blue1][grey50]/[/grey50][grey70]e[/grey70][grey50]dit/[/grey50][grey70]n[/grey70][grey50]][/grey50] ", end="")
-    key = getch()
-    console.print()
-    if key == "n":
-        console.print("[rosy_brown]  → cancelled[/rosy_brown]")
-        return
-    if key == "e":
-        restore_terminal()
-        console.print("  [grey50]event text:[/grey50] ", end="")
-        try:
-            first_line = input().strip() or first_line
-        except EOFError:
-            pass
-    print()
-    calendar = select_calendar_fzf()
-    if not calendar:
-        console.print("[rosy_brown]  → cancelled[/rosy_brown]")
-        return
-    event_text = normalize_duration(convert_military_time(first_line))
-    result = subprocess.run(["gcalcli", "quick", "--calendar", calendar, event_text])
-    if result.returncode == 0:
-        file.unlink()
-        console.print(f"[dark_sea_green4]  → {calendar}[/dark_sea_green4]")
-    else:
-        console.print("[indian_red]  gcalcli failed — file kept in inbox[/indian_red]")
-
-
 def route_pool(file):
-    """Send this capture to the calendar pool as a one-off item awaiting placement.
+    """[c] calendar → send this capture to the calendar pool as a one-off item.
+
+    Replaces the old quick-gcal "calendar" route (which committed straight to
+    Google Calendar and lost untimed tasks). Everything calendar-bound now lands
+    in the pool; the week planner places it on the real calendar deliberately.
 
     AI does coarse structuring (title / area / est_minutes); the human confirms or
     edits before it lands. The item shows up next time you run the scheduler.
@@ -460,9 +433,6 @@ def process_file(file, index, total):
     while True:
         key = getch()
         if key == "c":
-            route_calendar(file)
-            return True
-        elif key == "o":
             route_pool(file)
             return True
         elif key == "n":
@@ -649,19 +619,6 @@ def ni_new_project(file, name, area="ideas"):
     return {"ok": True, "msg": f"new project: {area}/{slug}"}
 
 
-def ni_calendar(file, calendar, event_text=""):
-    first_line = (event_text or capture_payload(file) or "").strip()
-    if not first_line:
-        return {"ok": False, "msg": "empty event"}
-    text = normalize_duration(convert_military_time(first_line))
-    result = subprocess.run(["gcalcli", "quick", "--calendar", calendar, text],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        return {"ok": False, "msg": "gcalcli failed — kept in inbox"}
-    file.unlink()
-    return {"ok": True, "msg": calendar}
-
-
 def ni_pool(file, value="", area=""):
     """Web/automation counterpart of route_pool. `value` overrides the AI title;
     `area` overrides the AI area. Empty → AI structures the raw capture."""
@@ -747,8 +704,7 @@ def ni_route(filename, dest, value="", area=""):
     if dest == "task":         return ni_task(file, value)
     if dest == "project":      return ni_paste_project(file, value)
     if dest == "newproject":   return ni_new_project(file, value, area)
-    if dest == "calendar":     return ni_calendar(file, value)
-    if dest == "pool":         return ni_pool(file, value, area)
+    if dest in ("calendar", "pool"):  return ni_pool(file, value, area)
     return {"ok": False, "msg": f"unknown dest: {dest}"}
 
 
