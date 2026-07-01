@@ -21,7 +21,7 @@ from datetime import date as _date, timedelta
 from rich.console import Console
 
 import pool
-from week import load_blocks
+from week import is_habit, load_blocks
 
 console = Console()
 
@@ -66,6 +66,8 @@ def build(days=WINDOW):
             continue
         cadence = meta.get("cadence", "")
         if cadence not in ("daily", "weekly"):
+            continue
+        if not is_habit(meta):   # calendar anchor (lunch/dinner), not a tracked habit
             continue
         name = meta["block"]
         try:

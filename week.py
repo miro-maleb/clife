@@ -96,6 +96,20 @@ def load_blocks():
     return out
 
 
+def is_habit(meta):
+    """Is this block a tracked habit, or just a calendar anchor?
+
+    Blocks are habits by default; set `habit: false` in a block's frontmatter to
+    keep it on the calendar (still placed by `cl week`) but out of the daily
+    review and the habit dashboard — for anchors like lunch/dinner that you don't
+    build a streak on. Frontmatter scalars are strings, so accept string falsies.
+    """
+    v = meta.get("habit", True)
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "no", "0", "off")
+    return bool(v)
+
+
 def expected_count(meta):
     """How many gcal slots this block should occupy this week."""
     cadence = meta.get("cadence", "")

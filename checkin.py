@@ -30,7 +30,7 @@ from rich.console import Console
 
 import pool
 from agenda import active_calendars, block_from_title, fetch_day_events
-from week import DAYS
+from week import DAYS, is_habit
 
 console = Console()
 
@@ -44,9 +44,10 @@ def _classify(conn, date_str, ev):
     sys_slug, meta, inst = block_from_title(title)
     if pl:
         kind = "pool"
-    elif meta:
+    elif meta and is_habit(meta):
         kind = "block"
     else:
+        # plain gcal event OR a non-habit anchor (lunch/dinner) — neither reviewed
         kind = "event"
     mark = pool.get_review_mark(conn, date_str, title)
     return {
@@ -83,7 +84,7 @@ def apply_mark(date_str, title, status):
         pl = pool.placement_for_title(conn, date_str, title)
         existing = pool.get_review_mark(conn, date_str, title)
         sys_slug, meta, _inst = block_from_title(title)
-    kind = "pool" if pl else ("block" if meta else "event")
+    kind = "pool" if pl else ("block" if meta and is_habit(meta) else "event")
     pid = pl["id"] if pl else None
 
     # re-applying the same verdict clears it
