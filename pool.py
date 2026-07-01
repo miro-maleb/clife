@@ -192,12 +192,13 @@ def _end_time(start, minutes):
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-def schedule_item(item_id, date, start, calendar=None):
+def schedule_item(item_id, date, start, calendar=None, duration=None):
     """Place a pool item AND write the real gcal event (fork #1: it lands on the
     actual calendar). Records a placement; item → placed. Returns the placement.
 
-    gcalcli add doesn't hand back an event id, so gcal_id stays NULL — the
-    placement row still tracks date/time/status for the daily-review loop.
+    duration (minutes) overrides the item's est_minutes when set. gcalcli add
+    doesn't hand back an event id, so gcal_id stays NULL — the placement row
+    still tracks date/time/status for the daily-review loop.
     """
     import subprocess
 
@@ -211,7 +212,7 @@ def schedule_item(item_id, date, start, calendar=None):
         raise ValueError(f"bad time: {start} (use HH:MM)")
 
     cal = calendar or item.get("calendar") or DEFAULT_CALENDAR
-    dur = item.get("est_minutes") or 30
+    dur = duration or item.get("est_minutes") or 30
     end = _end_time(start, dur)
     cmd = ["gcalcli", "add", "--calendar", cal, "--title", item["title"],
            "--when", f"{date} {start}", "--duration", str(dur), "--noprompt"]
@@ -336,8 +337,9 @@ def cmd_place(a):
 
 
 def cmd_schedule(a):
+    dur = parse_minutes(a.duration, default=None) if a.duration else None
     try:
-        pl = schedule_item(a.item, a.date, a.time, calendar=a.calendar)
+        pl = schedule_item(a.item, a.date, a.time, calendar=a.calendar, duration=dur)
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
@@ -433,6 +435,7 @@ def main():
     p.add_argument("date", help="YYYY-MM-DD")
     p.add_argument("time", help="HH:MM start")
     p.add_argument("--calendar", help="override calendar (default: item's, else Miro-Personal)")
+    p.add_argument("--duration", help="override duration: 90, 90m, or 2h (default: est_minutes)")
     p.set_defaults(func=cmd_schedule)
 
     p = sub.add_parser("done", help="mark a placement done")

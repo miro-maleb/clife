@@ -364,6 +364,7 @@ def build_view(offset_weeks=0):
             "block": block_name, "system": sys_slug,
             "found": found, "expected": expected,
             "calendar": cal, "duration": meta.get("duration", ""),
+            "duration_min": parse_duration_minutes(meta.get("duration", "")) or 0,
             "default_start": meta.get("default_start", ""),
             "days": meta.get("days") or DAYS,
             "cadence": meta.get("cadence", ""),
@@ -470,8 +471,11 @@ def pick_title(meta, block_name, target_date, existing_events):
     return block_name
 
 
-def place_event(block_name, day_arg, time_arg, offset_weeks=0):
-    """Programmatic place. Returns dict {ok, msg, title?, calendar?, when?, duration?}."""
+def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
+    """Programmatic place. Returns dict {ok, msg, title?, calendar?, when?, duration?}.
+
+    duration_override (minutes) wins over the block's frontmatter duration when set.
+    """
     sys_slug, meta = find_block(block_name)
     if not meta:
         return {"ok": False, "msg": f"unknown block: {block_name}"}
@@ -480,7 +484,7 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0):
     if not cal:
         return {"ok": False, "msg": f"{block_name} has no calendar set"}
 
-    duration_min = parse_duration_minutes(meta.get("duration", ""))
+    duration_min = duration_override or parse_duration_minutes(meta.get("duration", ""))
     if not duration_min:
         return {"ok": False, "msg": f"{block_name} has no parseable duration"}
 
@@ -532,9 +536,10 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0):
     }
 
 
-def place(block_name, day_arg, time_arg, offset_weeks=0):
+def place(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
     """CLI wrapper: prints result, exits with non-zero on failure."""
-    result = place_event(block_name, day_arg, time_arg, offset_weeks=offset_weeks)
+    result = place_event(block_name, day_arg, time_arg, offset_weeks=offset_weeks,
+                         duration_override=duration_override)
     if result["ok"]:
         console.print(f"[dark_sea_green4]  → {result['msg']}[/dark_sea_green4]")
     else:
@@ -688,6 +693,8 @@ def main():
     group.add_argument("--json", action="store_true", help="emit the full week view model as JSON (surfaces)")
     group.add_argument("--place", nargs=3, metavar=("BLOCK", "DAY", "TIME"),
                        help="schedule BLOCK on DAY at TIME (e.g. writing-block mon 10:10)")
+    parser.add_argument("--duration", type=int, default=None,
+                        help="with --place: override the block's duration (minutes)")
     group.add_argument("--skip", nargs="+", metavar="ARG",
                        help="--skip BLOCK DAY [REASON…] — log a skip; deletes matching gcal event if any")
     args = parser.parse_args()
@@ -702,7 +709,7 @@ def main():
         print(json.dumps(build_view(offset_weeks=offset)))
         return
     if args.place:
-        place(*args.place, offset_weeks=offset)
+        place(*args.place, offset_weeks=offset, duration_override=args.duration)
         return
     if args.skip:
         if len(args.skip) < 2:
