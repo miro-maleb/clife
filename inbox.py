@@ -101,53 +101,6 @@ def select_project_fzf(project_names):
     return None
 
 
-CALENDARS = ["Miro-Personal", "Professional", "Spiritual Practice", "Sydney", "Travel", "Retreats"]
-
-
-def convert_military_time(text):
-    """Convert 4-digit military time to 12h format, rounding to nearest 5 min for Google Quick Add."""
-    def replace(m):
-        h, mins = int(m.group(1)), int(m.group(2))
-        if not (0 <= h <= 23 and 0 <= mins <= 59):
-            return m.group(0)
-        mins = round(mins / 5) * 5
-        if mins == 60:
-            mins, h = 0, h + 1
-        suffix = "am" if h < 12 else "pm"
-        h12 = h % 12 or 12
-        return f"{h12}:{mins:02d}{suffix}" if mins else f"{h12}{suffix}"
-    return re.sub(r'\b([01]\d|2[0-3])([0-5]\d)\b', replace, text)
-
-
-def normalize_duration(text):
-    """Normalize duration shorthands and default to 1 hour if none present."""
-    def expand(m):
-        val, unit = m.group(1), m.group(2).lower()
-        if unit == "h":
-            n = float(val)
-            return f"for {int(n * 60)} minutes" if n % 1 else f"for {int(n)} hour{'s' if n != 1 else ''}"
-        return f"for {val} minutes"
-    # normalize "for 2h" / "for 30m" first, then bare "2h" / "30m"
-    text = re.sub(r'\bfor\s+(\d+(?:\.\d+)?)\s*(h|m)\b', expand, text, flags=re.IGNORECASE)
-    text, n = re.subn(r'\b(\d+(?:\.\d+)?)\s*(h|m)\b', expand, text, flags=re.IGNORECASE)
-    if n == 0 and not re.search(r'\bfor\s+\d', text, re.IGNORECASE):
-        text += " for 1 hour"
-    return text
-
-
-def select_calendar_fzf():
-    result = subprocess.run(
-        ["fzf", "--prompt=  calendar: ", "--height=40%", "--reverse", "--no-info",
-         "--header=enter to accept  esc to cancel"],
-        input="\n".join(CALENDARS),
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        return result.stdout.strip()
-    return None
-
-
 def select_area_fzf(areas):
     result = subprocess.run(
         ["fzf", "--prompt=  area: ", "--height=40%", "--reverse", "--no-info"],
@@ -522,11 +475,10 @@ def inbox_items():
 
 
 def route_targets_payload():
-    """Everything the pickers need: projects, hierarchy targets, calendars, areas."""
+    """Everything the pickers need: projects, hierarchy targets, areas."""
     return {
         "projects": get_project_names(),
         "route_targets": list_route_targets(),
-        "calendars": CALENDARS,
         "areas": [a.name for a in get_project_areas()],
     }
 
