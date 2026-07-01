@@ -69,7 +69,8 @@ _cl() {
           "--on-hold[on-hold projects]" \
           "--complete[complete projects]" \
           "--abandoned[abandoned projects]" \
-          "--all[all projects]"
+          "--all[all projects]" \
+          "--json[emit projects as JSON for surfaces]"
         ;;
       week)
         _values "week options" \

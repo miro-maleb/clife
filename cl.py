@@ -40,6 +40,7 @@ HELP = """
   cl projects [--tui]         project review — active + on-hold (default)
   cl projects --sleeping      show sleeping projects
   cl projects --active|--on-hold|--complete|--abandoned|--all
+  cl projects --json          emit active + on-hold projects as JSON (surfaces / hot bar)
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
   cl show PATH                overview for an area / project / sub-project (dir or .md file)

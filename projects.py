@@ -356,6 +356,8 @@ def main(statuses=None, force=False):
     parser.add_argument("--all",       action="store_true")
     parser.add_argument("--force",     action="store_true",
                         help="don't skip recently-reviewed projects")
+    parser.add_argument("--json",      action="store_true",
+                        help="emit projects as JSON (for surfaces / the hot bar)")
     args, _ = parser.parse_known_args()
     force = force or args.force
 
@@ -373,6 +375,28 @@ def main(statuses=None, force=False):
         if args.archived:  statuses.add("archived")
     else:
         statuses = DEFAULT_STATUSES
+
+    if args.json:
+        import json as _json
+        # The hot bar wants the live set; default to active + on-hold unless the
+        # caller narrowed it, and never skip on review-freshness.
+        if not any([args.active, args.on_hold, args.sleeping, args.complete,
+                    args.abandoned, args.archived, args.all]):
+            statuses = {"active", "on-hold"}
+        out = []
+        for md in get_all_projects(statuses, force=True):
+            content = md.read_text()
+            out.append({
+                "name": md.parent.name,
+                "area": get_top_folder(md),
+                "status": get_status(content),
+                "goal": (get_goal(content) or "").strip(),
+                "open_tasks": open_task_count(md),
+                "path": str(md),
+                "dir": str(md.parent),
+            })
+        print(_json.dumps({"projects": out}))
+        return
 
     items = get_all_projects(statuses, force=force)
 
