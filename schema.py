@@ -110,6 +110,33 @@ SCHEMAS = {
 }
 
 
+def identity_issues(typ, path, meta):
+    """Report-only: identity fields that disagree with the file's location.
+    A block/system/goal/orientation names itself in frontmatter AND lives at a
+    path that encodes the same slug; when they drift (folder `weekly-robotics`
+    but `system: robotics`) joins get slippery. Which side is authoritative
+    varies (blocks key streaks off the `block:` field, the planner keys systems
+    off the folder), so the linter only surfaces these — it never auto-rewrites
+    a name that might be a join key. Returns [(key, expected, actual)]."""
+    out = []
+
+    def chk(key, expected):
+        actual = meta.get(key)
+        if actual and actual != expected:
+            out.append((key, expected, actual))
+
+    if typ == "system":
+        chk("system", path.parent.name)                 # systems/<slug>/system.md
+    elif typ == "block":
+        chk("block", path.stem)                          # …/blocks/<block>.md
+        chk("parent", path.parent.parent.name)           # owning system folder
+    elif typ == "goal":
+        chk("goal", path.stem)                           # goals/<year>/<slug>.md
+    elif typ == "orientation":
+        chk("orientation", path.stem)                    # orientations/<slug>.md
+    return out
+
+
 def classify(path: Path):
     """Map a kb file to its schema type, or None if outside lint scope. A
     special "template" type gets lenient checks (placeholder values), and

@@ -40,6 +40,7 @@ KB = week.KB
 REPORT_PATH = Path.home() / ".local" / "share" / "clife" / "lint-report.json"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+)(:)(.*)$")
+_BLOCK_ITEM = re.compile(r"^\s+-\s+")
 
 # Files/dirs we never descend into.
 SKIP_PARTS = {".git", ".trash", "__pycache__", "node_modules", "venv", ".venv"}
@@ -106,13 +107,16 @@ def check_file(path: Path):
     seen_keys = set()
     changed = False
 
-    for line in fmlines:
+    for i, line in enumerate(fmlines):
         m = KEY_RE.match(line)
         if not m:
             new_lines.append(line)
             continue
         indent, key, colon, rest = m.groups()
         val = rest.strip()
+        # a key whose value is empty but whose next line is `- item` is a
+        # block-style list header, NOT a bare/empty list — never "fix" it to []
+        next_is_item = (i + 1 < len(fmlines)) and bool(_BLOCK_ITEM.match(fmlines[i + 1]))
 
         # 1) legacy kebab key → canonical snake (universal)
         if key in schema.KEY_ALIASES:
@@ -152,8 +156,8 @@ def check_file(path: Path):
             if v not in spec["status"] and " | " not in v:
                 issues.append(("bad-status", f"{rel}: status: {v}"))
 
-        # 6) bare list key → []  (fixable)
-        if spec and key in spec.get("lists", set()) and val == "":
+        # 6) bare list key → []  (fixable) — but not a block-list header
+        if spec and key in spec.get("lists", set()) and val == "" and not next_is_item:
             val, rest = "[]", " []"
             issues.append(("bare-list", f"{rel}: {key}"))
             changed = True
@@ -171,6 +175,11 @@ def check_file(path: Path):
         missing = spec["required"] - seen_keys
         for k in sorted(missing):
             issues.append(("missing-required", f"{rel}: {k}"))
+
+    # 9) identity fields must match the file's location (report-only)
+    if not lenient:
+        for key, expected, actual in schema.identity_issues(typ, path, fm.read(path)):
+            issues.append(("identity-mismatch", f"{rel}: {key}: {actual} ≠ {expected} (from path)"))
 
     fixed = None
     if changed:
@@ -235,9 +244,9 @@ def main():
         return
 
     # severity order: blocking first, cosmetic last
-    order = ["no-frontmatter", "missing-required", "bad-status", "placeholder-value",
-             "unknown-key", "bad-date", "legacy-key", "inline-comment", "bare-list",
-             "status-remap", "unknown-key (allowed)"]
+    order = ["no-frontmatter", "missing-required", "identity-mismatch", "bad-status",
+             "placeholder-value", "unknown-key", "bad-date", "legacy-key",
+             "inline-comment", "bare-list", "status-remap", "unknown-key (allowed)"]
     cats = sorted(by_cat, key=lambda c: (order.index(c) if c in order else 99, c))
     if not total:
         console.print(f"[green]✓ clean[/green] — {report['files']} files, no frontmatter drift.")
