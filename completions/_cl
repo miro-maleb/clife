@@ -304,6 +304,7 @@ _cl() {
       lint)
         _values "lint options" \
           "--fix[apply safe mechanical fixes in place]" \
+          "--snapshot[write timestamped report to state file (weekly timer)]" \
           "--json[emit JSON report]" \
           "--type[restrict to one schema type]:type:(area project sub-project system block goal orientation)"
         ;;

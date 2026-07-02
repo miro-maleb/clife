@@ -19,8 +19,10 @@ human. Fixes are byte-targeted (frontmatter only; body untouched).
 
 import argparse
 import json
+import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -32,6 +34,10 @@ import week
 console = Console()
 
 KB = week.KB
+# Persistent snapshot of the latest read-only scan — written by the weekly timer
+# (`cl lint --snapshot`) and read by the Surface maintenance page as the "latest
+# scan before fixing." Tower-local state, not git-synced (like the pool DB).
+REPORT_PATH = Path.home() / ".local" / "share" / "clife" / "lint-report.json"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+)(:)(.*)$")
 
@@ -174,33 +180,58 @@ def check_file(path: Path):
     return issues, fixed
 
 
+def scan(paths=None, type_filter=None, fix=False):
+    """Run the linter and return (report_dict, n_fixed). When fix=True, applies
+    the safe rewrites in place. The report is the machine model both --json and
+    the snapshot share."""
+    from collections import defaultdict
+    by_cat = defaultdict(list)
+    n_files = 0
+    n_fixed = 0
+    for f in iter_files(paths):
+        if type_filter and schema.classify(f) != type_filter:
+            continue
+        n_files += 1
+        issues, fixed = check_file(f)
+        for cat, detail in issues:
+            by_cat[cat].append(detail)
+        if fixed is not None and fix:
+            f.write_text(fixed)
+            n_fixed += 1
+    total = sum(len(v) for v in by_cat.values())
+    report = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "files": n_files, "issues": total, "fixed": n_fixed,
+        "by_category": {k: v for k, v in by_cat.items()},
+    }
+    return report, n_fixed
+
+
 def main():
     ap = argparse.ArgumentParser(prog="cl lint", description="kb frontmatter linter")
     ap.add_argument("paths", nargs="*", help="limit to these files/dirs")
     ap.add_argument("--fix", action="store_true", help="apply safe fixes in place")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--type", help="restrict to one schema type")
+    ap.add_argument("--snapshot", action="store_true",
+                    help="read-only scan → write the timestamped report to "
+                         f"{REPORT_PATH} (for the weekly timer / maintenance page)")
     args = ap.parse_args()
 
-    from collections import defaultdict
-    by_cat = defaultdict(list)
-    n_files = 0
-    n_fixed = 0
-    for f in iter_files(args.paths):
-        if args.type and schema.classify(f) != args.type:
-            continue
-        n_files += 1
-        issues, fixed = check_file(f)
-        for cat, detail in issues:
-            by_cat[cat].append(detail)
-        if fixed is not None and args.fix:
-            f.write_text(fixed)
-            n_fixed += 1
+    # A snapshot is always read-only — it captures drift *before* any fix.
+    report, n_fixed = scan(args.paths, args.type, fix=args.fix and not args.snapshot)
+    total = report["issues"]
+    by_cat = report["by_category"]
 
-    total = sum(len(v) for v in by_cat.values())
+    if args.snapshot:
+        report["trigger"] = os.environ.get("CLIFE_LINT_TRIGGER", "manual")
+        REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        REPORT_PATH.write_text(json.dumps(report))
+        console.print(f"[green]✓[/green] snapshot written — {report['files']} files, "
+                      f"{total} issue(s) → {REPORT_PATH}")
+        return
     if args.json:
-        print(json.dumps({"files": n_files, "issues": total, "fixed": n_fixed,
-                          "by_category": {k: v for k, v in by_cat.items()}}))
+        print(json.dumps(report))
         return
 
     # severity order: blocking first, cosmetic last
@@ -209,7 +240,7 @@ def main():
              "status-remap", "unknown-key (allowed)"]
     cats = sorted(by_cat, key=lambda c: (order.index(c) if c in order else 99, c))
     if not total:
-        console.print(f"[green]✓ clean[/green] — {n_files} files, no frontmatter drift.")
+        console.print(f"[green]✓ clean[/green] — {report['files']} files, no frontmatter drift.")
         return
     for cat in cats:
         items = by_cat[cat]
@@ -223,7 +254,7 @@ def main():
         console.print(f"[green]fixed {n_fixed} file(s).[/green]  {total} issue(s) seen; "
                       "remaining need a human.")
     else:
-        console.print(f"[grey50]{n_files} files · {total} issue(s). "
+        console.print(f"[grey50]{report['files']} files · {total} issue(s). "
                       "Re-run with --fix for the mechanical ones.[/grey50]")
 
 
