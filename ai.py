@@ -129,49 +129,97 @@ def _resolve_when(phrase, today):
     return ""
 
 
+def _int(v, default):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_title(t):
+    """Deterministic tidy: strip any day/time phrase the model left dangling on
+    the title, then sentence-case it. (The model is inconsistent about removing
+    them; a regex is reliable.)"""
+    import re as _re
+    t = (t or "").strip()
+    day = r"(next\s+)?(mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(day)?"
+    tod = r"(morning|afternoon|evening|night)"
+    for pat in (rf"\s+{day}(\s+{tod})?\s*$", r"\s+(today|tonight|tomorrow|tmrw)\s*$",
+                r"\s+(for\s+)?\d+\s*(mins?|minutes?|hrs?|hours?)\s*$",
+                r"\s+(at\s+)?\d{1,2}(:\d{2})?\s*(am|pm)?\s*$"):
+        t = _re.sub(pat, "", t, flags=_re.I).strip()
+    return (t[:1].upper() + t[1:]) if t else t
+
+
 def event_from_text(text, today=None):
     """Structure a freeform capture into a schedulable item so a surface can route
-    it: dated → the calendar, undated → the pool. The MODEL only lifts fields out
-    of the text; the date is resolved deterministically here (`today` = a date,
-    defaults to now). Returns {title, date, time, duration_min, est_minutes} with
-    date/time "" when absent.
+    it: dated → the calendar, undated → the pool.
+
+    Two focused model calls beat one do-everything prompt for a small local model:
+    (1) a yes/no classifier — does the note name a day? — then (2) a branch-specific
+    extractor. The model never does date math: the "dated" branch only lifts the
+    day PHRASE, which we resolve deterministically here (`today` = a date).
+    Returns {title, date, time, duration_min, est_minutes}; date/time "" when absent.
     """
     import datetime
     import re as _re
     today = today or datetime.date.today()
-    prompt = f"""/no_think
-Extract fields from ONE freeform personal capture. Do NOT invent anything that
-isn't there — especially do not guess a day.
+    text = (text or "").strip()
+    if not text:
+        return {}
 
-Capture: {text[:400]}
+    # ── 1) classify: is a day/date named? ──
+    gate = _generate_json(f"""/no_think
+Does this note name a specific day or date to do the thing on? A weekday
+("friday"), "today"/"tomorrow", or an explicit date = yes. No day mentioned = no.
 
-- title: short imperative title, <= 8 words, NO day/time words in it. Clean up
-  dictation. "lunch w sarah fri 1pm" -> "Lunch with Sarah".
-- when: the day EXACTLY as written if one is named ("friday", "tomorrow",
-  "next tue"), else "". Do not resolve it to a date; do not invent one.
+Note: {text[:400]}
+
+Return ONLY JSON: {{"dated": true or false}}""")
+    dated = bool(isinstance(gate, dict) and gate.get("dated"))
+
+    if dated:
+        # ── 2a) extract a dated item (phrase only; we resolve the date) ──
+        out = _generate_json(f"""/no_think
+This note names a day. Extract its parts. Do NOT compute a date; copy the day phrase.
+
+Note: {text[:400]}
+
+- title: short imperative title, <= 8 words, NO day/time words in it.
+- when: the day phrase EXACTLY as written ("friday", "tomorrow", "next tue").
 - time: "HH:MM" (24h) if a clock time is named, else "".
-- duration_min: integer minutes if stated ("for an hour" -> 60), else 0.
-- est_minutes: rough minutes to DO it (quick call ~15, errand ~30, focused ~60-90). Default 30.
+- duration_min: integer minutes if a length is stated, else 0.
 
 Return ONLY JSON:
-{{"title":"<t>","when":"<phrase or empty>","time":"<HH:MM or empty>","duration_min":<int>,"est_minutes":<int>}}"""
-    out = _generate_json(prompt)
+{{"title":"<t>","when":"<phrase>","time":"<HH:MM or empty>","duration_min":<int>}}""")
+        if not isinstance(out, dict) or not out.get("title"):
+            return {}
+        time = str(out.get("time") or "").strip()
+        if not _re.match(r"^\d{1,2}:\d{2}$", time):
+            time = ""
+        return {
+            "title": _clean_title(out["title"]),
+            "date": _resolve_when(out.get("when"), today),
+            "time": time,
+            "duration_min": max(0, _int(out.get("duration_min"), 0)),
+            "est_minutes": 30,
+        }
+
+    # ── 2b) extract an undated item (→ pool) ──
+    out = _generate_json(f"""/no_think
+This note has no day/date. Turn it into a to-do.
+
+Note: {text[:400]}
+
+- title: short imperative title, <= 8 words. Clean up dictation.
+- est_minutes: rough minutes to DO it (quick call ~15, errand ~30, focused ~60-90). Default 30.
+
+Return ONLY JSON: {{"title":"<t>","est_minutes":<int>}}""")
     if not isinstance(out, dict) or not out.get("title"):
         return {}
-    time = str(out.get("time") or "").strip()
-    if not _re.match(r"^\d{1,2}:\d{2}$", time):
-        time = ""
-
-    def _int(v, d):
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return d
     return {
-        "title": str(out["title"]).strip(),
-        "date": _resolve_when(out.get("when"), today),
-        "time": time,
-        "duration_min": max(0, _int(out.get("duration_min"), 0)),
+        "title": _clean_title(out["title"]),
+        "date": "", "time": "", "duration_min": 0,
         "est_minutes": max(5, _int(out.get("est_minutes"), 30)),
     }
 
