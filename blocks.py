@@ -19,7 +19,7 @@ hand-editing frontmatter.
 
 Field opts (new/set): --calendar NAME, --cadence daily|weekly, --days mon,tue
 (or 'all' to clear → every day), --duration 30m|2h, --start HH:MM, --instances N,
---habit true|false, --when TEXT, --name NEW-SLUG (rename), --parent SYSTEM (re-home).
+--habit true|false, --name NEW-SLUG (rename), --parent SYSTEM (re-home).
 
 Block name == file stem == gcal title key; renaming resets its streak (the
 review DB is keyed by title). All block names are globally unique.
@@ -48,7 +48,7 @@ DAYS = week.DAYS
 # appended after these. `habit` is only written when False (anchor); tracked is
 # the default, so we keep those files clean by omitting it.
 FIELD_ORDER = ["block", "parent", "calendar", "cadence", "habit",
-               "days", "duration", "instances", "default_start", "preferred_when"]
+               "days", "duration", "instances", "default_start"]
 
 CADENCES = ("daily", "weekly")
 DEFAULT_CALENDAR = "Miro-Personal"
@@ -106,7 +106,7 @@ def block_path(meta):
     return SYSTEMS / meta["parent"] / "blocks" / (meta["block"] + ".md")
 
 
-def default_body(slug, when=""):
+def default_body(slug):
     title = slug.replace("-", " ").title()
     return (f"# {title}\n\n"
             "## What this block is\n\n"
@@ -191,7 +191,6 @@ def block_dict(sys_slug, meta, sys_status):
         "duration_min": week.parse_duration_minutes(meta.get("duration", "")) or 0,
         "instances": int(meta.get("instances", 1) or 1),
         "default_start": meta.get("default_start", ""),
-        "preferred_when": meta.get("preferred_when", ""),
     }
 
 
@@ -248,8 +247,6 @@ def apply_fields(meta, args):
         meta["duration"] = args.duration
     if args.start is not None:
         meta["default_start"] = args.start
-    if args.when is not None:
-        meta["preferred_when"] = args.when
     if args.instances is not None:
         meta["instances"] = str(args.instances)
     if args.parent is not None:
@@ -341,7 +338,7 @@ def cmd_show(args):
         return
     console.print(f"[bold]{bd['block']}[/bold]  ({bd['system']}, {st})")
     for k in ("calendar", "cadence", "days", "duration", "default_start",
-              "instances", "preferred_when"):
+              "instances"):
         v = bd[k]
         console.print(f"  {k:15} {(', '.join(v) if isinstance(v, list) else v) or '—'}")
     console.print(f"  {'kind':15} {'habit (tracked)' if bd['habit'] else 'anchor'}")
@@ -361,8 +358,6 @@ def cmd_new(args):
     }
     if args.start:
         meta["default_start"] = args.start
-    if args.when:
-        meta["preferred_when"] = args.when
     if args.days and args.cadence == "daily":
         d = args.days.strip().lower()
         if d not in ("", "all", "every", "everyday", "daily"):
@@ -377,7 +372,7 @@ def cmd_new(args):
     if path.exists():
         _fail(f"{path} already exists", args.json)
         return
-    write_block(path, meta, default_body(meta["block"], args.when or ""))
+    write_block(path, meta, default_body(meta["block"]))
     _sync_system_bullet(meta["parent"], meta["block"], add=True)
     _ok({"created": meta["block"], "path": str(path)},
         f"created {meta['block']} → {path}", args.json)
@@ -535,7 +530,6 @@ def build_parser():
         sp.add_argument("--start", help="HH:MM default start")
         sp.add_argument("--instances", type=int)
         sp.add_argument("--habit", help="true|false (false = calendar anchor)")
-        sp.add_argument("--when", help="preferred_when hint")
 
     lp = sub.add_parser("list")
     lp.add_argument("--json", action="store_true")

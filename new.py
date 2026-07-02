@@ -333,7 +333,6 @@ def create_system(name):
         f"duration: \n"
         f"instances: 1\n"
         f'default_start: ""\n'
-        f"preferred_when: \n"
         f"---\n\n"
         f"# {title_of(name)} — {block_name}\n\n"
         f"## What this block is\n\n"
