@@ -137,6 +137,7 @@ _cl() {
             "done[mark a placement done]" \
             "return[return a missed placement to the pool]" \
             "drop[drop an item]" \
+            "stage[soft-assign an item to a target day]" \
             "show[show one item + its placements]"
         else
           case "$words[3]" in
@@ -163,6 +164,11 @@ _cl() {
               _values "pool schedule options" \
                 "--calendar[override calendar]:calendar:" \
                 "--duration[override duration: 90, 90m, 2h]:duration:"
+              ;;
+            stage)
+              _values "pool stage options" \
+                "--clear[remove the staged day]" \
+                "--json[emit JSON for surfaces]"
               ;;
           esac
         fi

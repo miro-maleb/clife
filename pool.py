@@ -65,7 +65,10 @@ CREATE TABLE IF NOT EXISTS pool_item (
     status      TEXT NOT NULL DEFAULT 'pooled',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    notes       TEXT
+    notes       TEXT,
+    staged_for  TEXT   -- soft target day (YYYY-MM-DD): the day planner highlights
+                       -- the item on that day and greys it on others; NULL = unstaged.
+                       -- Advisory only — committing to the calendar is still schedule_item.
 );
 
 CREATE TABLE IF NOT EXISTS placement (
@@ -125,6 +128,9 @@ def _migrate(conn):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(review_mark)")}
     if "note" not in cols:
         conn.execute("ALTER TABLE review_mark ADD COLUMN note TEXT")
+    icols = {r["name"] for r in conn.execute("PRAGMA table_info(pool_item)")}
+    if "staged_for" not in icols:
+        conn.execute("ALTER TABLE pool_item ADD COLUMN staged_for TEXT")
 
 
 def parse_minutes(s, default=60):
@@ -256,6 +262,24 @@ def schedule_item(item_id, date, start, calendar=None, duration=None):
     if r.returncode != 0:
         raise ValueError(f"gcalcli add failed: {r.stderr.strip()}")
     return place_item(item_id, date, start=start, end=end)
+
+
+def stage_item(item_id, date):
+    """Soft-assign a pooled item to a target day (or clear it, date=None).
+
+    Staging is purely advisory: it drives the day planner's highlight-vs-grey
+    (an item staged for Tuesday shows highlighted on Tuesday, greyed but still
+    selectable on other days). The item stays `pooled` until it's actually
+    committed to the calendar via schedule_item. Returns the updated item.
+    """
+    if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        raise ValueError(f"bad date: {date} (use YYYY-MM-DD)")
+    with connect() as conn:
+        if not get_item(conn, item_id):
+            raise ValueError(f"no pool item #{item_id}")
+        conn.execute("UPDATE pool_item SET staged_for=?, updated_at=? WHERE id=?",
+                     (date or None, now(), item_id))
+        return get_item(conn, item_id)
 
 
 def get_placement(conn, pid):
@@ -542,6 +566,25 @@ def cmd_drop(a):
     console.print(f"[grey42]  ✗ dropped[/grey42] {it['title']}")
 
 
+def cmd_stage(a):
+    date = None if a.clear else a.date
+    if not a.clear and not a.date:
+        console.print("[red]stage needs a DATE (or --clear)[/red]")
+        sys.exit(1)
+    try:
+        it = stage_item(a.item, date)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    if a.json:
+        print(json.dumps({"item": it}))
+        return
+    if it["staged_for"]:
+        console.print(f"[dark_sea_green4]  → staged[/dark_sea_green4] item #{a.item} for {it['staged_for']}")
+    else:
+        console.print(f"[grey50]  → unstaged[/grey50] item #{a.item}")
+
+
 def cmd_show(a):
     with connect() as conn:
         it = get_item(conn, a.item)
@@ -614,6 +657,13 @@ def main():
     p = sub.add_parser("drop", help="drop an item without doing it")
     p.add_argument("item", type=int)
     p.set_defaults(func=cmd_drop)
+
+    p = sub.add_parser("stage", help="soft-assign an item to a target day (day-planner highlight)")
+    p.add_argument("item", type=int)
+    p.add_argument("date", nargs="?", help="YYYY-MM-DD target day")
+    p.add_argument("--clear", action="store_true", help="remove the staged day")
+    p.add_argument("--json", action="store_true", help="emit JSON for surfaces")
+    p.set_defaults(func=cmd_stage)
 
     p = sub.add_parser("show", help="show one item + its placements")
     p.add_argument("item", type=int)
