@@ -550,6 +550,66 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override
     }
 
 
+def fill_day(day_arg, offset_weeks=0):
+    """Auto-place every still-unplaced *daily* block that runs on `day_arg`, at
+    its `default_start`. The day-planner's "schedule defaults" button — it lays
+    down the routine skeleton in one shot so the user only hand-places the
+    exceptions. Returns {ok, date?, placed:[…], skipped:[{block,reason}], msg}.
+
+    Only daily blocks with a well-formed `default_start` are auto-placed; a
+    daily block without one needs a human to pick the time, so it's reported as
+    skipped rather than guessed. Collision / already-placed is handled by
+    place_event (via pick_title), and surfaces here as a skip reason.
+    """
+    monday, sunday = week_range(offset_weeks=offset_weeks)
+    date = parse_day(day_arg, monday)
+    if not date:
+        return {"ok": False, "msg": f"bad day: {day_arg} (use mon|tue|…|sun or YYYY-MM-DD)",
+                "placed": [], "skipped": []}
+    weekday = DAYS[date.weekday()]
+
+    placed, skipped = [], []
+    for sys_slug, meta, st in load_blocks():
+        if st != "active" or meta.get("cadence") != "daily":
+            continue
+        name = meta.get("block", "?")
+        days = meta.get("days") or DAYS
+        if weekday not in days:
+            continue
+        start = (meta.get("default_start") or "").strip()
+        if not re.match(r"^\d{1,2}:\d{2}$", start):
+            skipped.append({"block": name, "reason": "no default_start — place by hand"})
+            continue
+        res = place_event(name, date.strftime("%Y-%m-%d"), start, offset_weeks=offset_weeks)
+        if res["ok"]:
+            placed.append({"block": name, "title": res["title"], "when": res["when"]})
+        else:
+            skipped.append({"block": name, "reason": res["msg"]})
+
+    n = len(placed)
+    msg = f"placed {n} default{'' if n == 1 else 's'} on {date}" if n else f"nothing to place on {date}"
+    return {"ok": True, "date": date.isoformat(), "placed": placed, "skipped": skipped, "msg": msg}
+
+
+def fill(day_arg, offset_weeks=0, as_json=False):
+    """CLI wrapper for fill_day: prints per-block result + a summary last line."""
+    r = fill_day(day_arg, offset_weeks=offset_weeks)
+    if as_json:
+        import json
+        print(json.dumps(r))
+        if not r["ok"]:
+            sys.exit(1)
+        return
+    if not r["ok"]:
+        console.print(f"[red]{r['msg']}[/red]")
+        sys.exit(1)
+    for p in r["placed"]:
+        console.print(f"[dark_sea_green4]  → {p['title']} · {p['when']}[/dark_sea_green4]")
+    for s in r["skipped"]:
+        console.print(f"[grey50]  · skipped {s['block']}: {s['reason']}[/grey50]")
+    console.print(r["msg"])
+
+
 def place(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
     """CLI wrapper: prints result, exits with non-zero on failure."""
     result = place_event(block_name, day_arg, time_arg, offset_weeks=offset_weeks,
@@ -711,10 +771,17 @@ def main():
                         help="with --place: override the block's duration (minutes)")
     group.add_argument("--skip", nargs="+", metavar="ARG",
                        help="--skip BLOCK DAY [REASON…] — log a skip; deletes matching gcal event if any")
+    # Outside the group so it can pair with --json (the day-planner surface reads
+    # the structured result); --fill wins if combined with another mode.
+    parser.add_argument("--fill", metavar="DAY",
+                        help="auto-place every unplaced daily block that runs on DAY at its default_start")
     args = parser.parse_args()
 
     offset = args.offset if args.offset is not None else (1 if args.next_week else 0)
 
+    if args.fill:
+        fill(args.fill, offset_weeks=offset, as_json=args.json)
+        return
     if args.dump:
         dump(offset_weeks=offset)
         return

@@ -124,6 +124,7 @@ _cl() {
           "--offset[operate N weeks from now]:offset:" \
           "--place[schedule BLOCK DAY TIME]:block:" \
           "--skip[log a skip: BLOCK DAY REASON]:block:" \
+          "--fill[auto-place a day's unplaced daily blocks at their default_start]:day:(mon tue wed thu fri sat sun)" \
           "--duration[with --place: override block duration in minutes]:minutes:"
         ;;
       pool)
