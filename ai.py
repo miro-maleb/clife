@@ -98,6 +98,84 @@ Return ONLY JSON:
             "est_minutes": max(5, est)}
 
 
+_WEEKDAYS = {"monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1,
+             "wednesday": 2, "wed": 2, "thursday": 3, "thu": 3, "thurs": 3,
+             "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6}
+
+
+def _resolve_when(phrase, today):
+    """Deterministically turn a day PHRASE ("friday", "tomorrow", "") into a
+    date, anchored on `today` (a date). Returns YYYY-MM-DD or "". Local models
+    are bad at date math, so we do it here and only trust the model to lift the
+    phrase out of the text (or return "" when there's no day)."""
+    import datetime
+    p = (phrase or "").strip().lower()
+    if not p:
+        return ""
+    if p in ("today", "tonight", "tonite"):
+        return today.isoformat()
+    if p in ("tomorrow", "tmrw", "tmr"):
+        return (today + datetime.timedelta(days=1)).isoformat()
+    nxt = p.startswith("next ")
+    key = p[5:].strip() if nxt else p
+    key = key.split()[0] if key else key
+    if key in _WEEKDAYS:
+        delta = (_WEEKDAYS[key] - today.weekday()) % 7
+        if delta == 0 and nxt:      # "next friday" when today is friday → +7
+            delta = 7
+        if nxt and delta < 7:       # "next X" means the following week's X
+            delta += 7 if delta == 0 else 0
+        return (today + datetime.timedelta(days=delta)).isoformat()
+    return ""
+
+
+def event_from_text(text, today=None):
+    """Structure a freeform capture into a schedulable item so a surface can route
+    it: dated → the calendar, undated → the pool. The MODEL only lifts fields out
+    of the text; the date is resolved deterministically here (`today` = a date,
+    defaults to now). Returns {title, date, time, duration_min, est_minutes} with
+    date/time "" when absent.
+    """
+    import datetime
+    import re as _re
+    today = today or datetime.date.today()
+    prompt = f"""/no_think
+Extract fields from ONE freeform personal capture. Do NOT invent anything that
+isn't there — especially do not guess a day.
+
+Capture: {text[:400]}
+
+- title: short imperative title, <= 8 words, NO day/time words in it. Clean up
+  dictation. "lunch w sarah fri 1pm" -> "Lunch with Sarah".
+- when: the day EXACTLY as written if one is named ("friday", "tomorrow",
+  "next tue"), else "". Do not resolve it to a date; do not invent one.
+- time: "HH:MM" (24h) if a clock time is named, else "".
+- duration_min: integer minutes if stated ("for an hour" -> 60), else 0.
+- est_minutes: rough minutes to DO it (quick call ~15, errand ~30, focused ~60-90). Default 30.
+
+Return ONLY JSON:
+{{"title":"<t>","when":"<phrase or empty>","time":"<HH:MM or empty>","duration_min":<int>,"est_minutes":<int>}}"""
+    out = _generate_json(prompt)
+    if not isinstance(out, dict) or not out.get("title"):
+        return {}
+    time = str(out.get("time") or "").strip()
+    if not _re.match(r"^\d{1,2}:\d{2}$", time):
+        time = ""
+
+    def _int(v, d):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return d
+    return {
+        "title": str(out["title"]).strip(),
+        "date": _resolve_when(out.get("when"), today),
+        "time": time,
+        "duration_min": max(0, _int(out.get("duration_min"), 0)),
+        "est_minutes": max(5, _int(out.get("est_minutes"), 30)),
+    }
+
+
 # ── (room for more calls: draft_reply(), propose_blocks(), weekly_review(), … ) ──
 
 

@@ -489,12 +489,33 @@ def _fmt_item_line(it):
 def cmd_add(a):
     est = parse_minutes(a.est)
     if est is None:
+        if getattr(a, "json", False):
+            print(json.dumps({"ok": False, "error": f"bad --est: {a.est}"}))
+            return
         console.print(f"[red]bad --est: {a.est} (use 90, 90m, or 2h)[/red]")
         sys.exit(1)
     it = add_item(a.title, area=a.area, project=a.project, source_path=a.source,
                   est_minutes=est, calendar=a.calendar, priority=a.priority,
                   deadline=a.deadline, notes=a.note)
+    if getattr(a, "json", False):
+        print(json.dumps({"ok": True, "item": it}))
+        return
     console.print("[dark_sea_green4]  → pooled[/dark_sea_green4] " + _fmt_item_line(it))
+
+
+def cmd_suggest(a):
+    """AI-structure a freeform capture ("lunch fri 1pm") into a schedulable item.
+    Parse only — the caller confirms + decides pool vs calendar."""
+    import ai
+    ev = ai.event_from_text(a.text)
+    if a.json:
+        print(json.dumps(ev))
+        return
+    if not ev:
+        console.print("[yellow]couldn't parse[/yellow]")
+        return
+    when = (ev["date"] + (" " + ev["time"] if ev["time"] else "")) or "no date → pool"
+    console.print(f"[bold]{ev['title']}[/bold]  [grey50]{when} · ~{ev['est_minutes']}m[/grey50]")
 
 
 def cmd_list(a):
@@ -619,7 +640,13 @@ def main():
     p.add_argument("--priority", type=int, default=0)
     p.add_argument("--deadline", help="YYYY-MM-DD")
     p.add_argument("--note")
+    p.add_argument("--json", action="store_true", help="emit the created item as JSON")
     p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("suggest", help="AI-structure a freeform capture into a schedulable item")
+    p.add_argument("text")
+    p.add_argument("--json", action="store_true", help="emit the parsed item as JSON")
+    p.set_defaults(func=cmd_suggest)
 
     p = sub.add_parser("list", help="list pool items")
     p.add_argument("--status", help="filter to one status (pooled/placed/done/dropped)")

@@ -60,6 +60,7 @@ HELP = """
   cl pool schedule ITEM DATE TIME place an item AND write the gcal event (--duration to override est)
   cl pool done|return|drop ID resolve a placement / item
   cl pool stage ITEM [DATE]   soft-assign an item to a target day (--clear); day planner highlights it there
+  cl pool suggest "TEXT"      AI-structure a freeform capture → schedulable item (--json); powers Surface "New +"
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless
   cl agenda --date YYYY-MM-DD operate on a specific date
