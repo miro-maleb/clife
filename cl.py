@@ -14,6 +14,7 @@ COMMANDS = {
     "agenda":      "agenda",
     "checkin":     "checkin",
     "habits":      "habits",
+    "blocks":      "blocks",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -62,6 +63,13 @@ HELP = """
   cl checkin --mark TITLE done|partial|missed  record a verdict (missed pool items return to pool)
   cl habits                   habit dashboard — per-block streaks + done/missed history
   cl habits --dump|--json [--days N]   print / emit the dashboard
+  cl blocks [list]            routine block editor — list every daily/weekly block
+  cl blocks show BLOCK        one block's settings + the goals/orientations it feeds
+  cl blocks new --block SLUG --parent SYSTEM --cadence daily|weekly [--days --duration --start …]
+  cl blocks set BLOCK [--calendar --cadence --days --duration --start --instances --habit --when --name --parent]
+  cl blocks rm BLOCK [--force]   delete a block
+  cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]   edit a system's feeding chain
+  cl blocks meta|calendars    pickers — systems/goals/orientations, or writable calendars
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)

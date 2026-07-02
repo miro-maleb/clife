@@ -18,6 +18,7 @@ Commands:
 | `cl projects` | active project pulse |
 | `cl review` | full review |
 | `cl week` | weekly planner |
+| `cl blocks` | routine block editor — daily/weekly block CRUD + feeding chain |
 | `cl notes` | notes browser |
 | `cl new-project` | scaffold a new project |
 | `cl show` | overview for an area / project / sub-project |
