@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import re
 import shutil
 import sys
 import tty
@@ -11,11 +13,15 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
+import fm
+
 console = Console()
 
 KB = Path.home() / "kb"
 project_path = KB / "projects"
 archive_path = KB / "archive"
+goals_path = KB / "goals"
+orientations_path = KB / "orientations"
 
 # Top-level dirs whose projects don't belong in routine review.
 # - infrastructure: clife, life-os — system tooling, not goal-oriented projects.
@@ -345,7 +351,293 @@ def review_item(md_file, index, total):
             return False
 
 
+# ── JSON-first project editor (`cl projects list|show|set|new|archive`) ───────
+# Sits alongside the review TUI: mirrors `cl systems`/`cl goals` so Surface can
+# render a Projects tab + the universal /ed/{kind}/{slug} modal over the same
+# area/goals/orientations feeding chain projects already carry. Writes go through
+# fm.set_fields (byte-preserving) so project bodies + untouched keys survive.
+
+EDITOR_CMDS = {"list", "show", "set", "new", "archive"}
+PROJECT_STATUSES = ["active", "on-hold", "sleeping", "complete", "abandoned",
+                    "archived", "superseded", "pending"]
+FIELD_ORDER = ["created", "deadline", "status", "completed", "abandoned",
+               "sleeping", "last_reviewed", "area", "goals", "orientations", "tags"]
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _csv(s):
+    return [x.strip() for x in (s or "").split(",") if x.strip()]
+
+
+def known_goals():
+    out = []
+    if goals_path.exists():
+        for f in sorted(goals_path.rglob("*.md")):
+            if f.name == "README.md":
+                continue
+            out.append(fm.read(f).get("goal") or f.stem)
+    return out
+
+
+def known_orientations():
+    out = []
+    if orientations_path.exists():
+        for f in sorted(orientations_path.glob("*.md")):
+            if f.name == "README.md":
+                continue
+            out.append(fm.read(f).get("orientation") or f.stem)
+    return out
+
+
+def known_areas():
+    if not project_path.exists():
+        return []
+    return sorted(d.name for d in project_path.iterdir()
+                  if d.is_dir() and (d / "area.md").exists())
+
+
+def find_project(slug):
+    """Locate a project.md by its folder name (unique across the tree)."""
+    for md in project_path.rglob("project.md"):
+        if md.parent.name == slug:
+            return md
+    return None
+
+
+def _project_title(content, slug):
+    for line in content.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return slug.replace("-", " ").title()
+
+
+def project_row(md):
+    content = md.read_text()
+    meta = fm.read(md)
+    return {
+        "slug": md.parent.name,
+        "title": _project_title(content, md.parent.name),
+        "area": get_top_folder(md),
+        "status": meta.get("status") or "unknown",
+        "goal": get_goal(content),
+        "deadline": meta.get("deadline") or "",
+        "goals": meta.get("goals") or [],
+        "orientations": meta.get("orientations") or [],
+        "tags": meta.get("tags") or [],
+        "open_tasks": open_task_count(md),
+        "reviewed_days": days_since_reviewed(content),
+        "created": meta.get("created") or "",
+        "path": str(md),
+        "dir": str(md.parent),
+    }
+
+
+def _all_project_rows():
+    rows = [project_row(md) for md in project_path.rglob("project.md")]
+    rows.sort(key=lambda r: (r["area"], STATUS_ORDER.get(r["status"], 99), r["slug"]))
+    return rows
+
+
+def _validate_refs(goals, orients, as_json):
+    kg, ko = set(known_goals()), set(known_orientations())
+    errs = []
+    bad_g = [g for g in (goals or []) if g not in kg]
+    bad_o = [o for o in (orients or []) if o not in ko]
+    if bad_g:
+        errs.append(f"unknown goals {bad_g}")
+    if bad_o:
+        errs.append(f"unknown orientations {bad_o}")
+    return errs
+
+
+def _ok(payload, msg, as_json):
+    if as_json:
+        print(json.dumps({"ok": True, **payload}))
+    else:
+        console.print(f"[green]✓[/green] {msg}")
+
+
+def _fail(msg, as_json):
+    if as_json:
+        print(json.dumps({"ok": False, "error": msg}))
+    else:
+        console.print(f"[red]✗[/red] {msg}")
+    sys.exit(0 if as_json else 1)
+
+
+def cmd_list(args):
+    rows = _all_project_rows()
+    if args.json:
+        print(json.dumps({"projects": rows, "areas": known_areas(),
+                          "goals": known_goals(), "orientations": known_orientations(),
+                          "statuses": PROJECT_STATUSES}))
+        return
+    area = None
+    for r in rows:
+        if r["area"] != area:
+            area = r["area"]
+            console.print(f"\n[bold]{area}[/bold]")
+        badge = "" if r["status"] == "active" else f" [dim]({r['status']})[/dim]"
+        console.print(f"  {r['slug']:32}{badge}  {r['open_tasks']} open")
+
+
+def cmd_show(args):
+    md = find_project(args.slug)
+    if not md:
+        _fail(f"no project named '{args.slug}'", args.json)
+        return
+    row = project_row(md)
+    if args.json:
+        print(json.dumps(row))
+        return
+    console.print(f"[bold]{row['title']}[/bold]  ({row['status']})  [dim]{row['area']}[/dim]")
+    if row["goal"]:
+        console.print(f"  goal           {row['goal']}")
+    console.print(f"  open tasks     {row['open_tasks']}")
+    console.print(f"  goals          {', '.join(row['goals']) or '—'}")
+    console.print(f"  orientations   {', '.join(row['orientations']) or '—'}")
+    console.print(f"  deadline       {row['deadline'] or '—'}")
+
+
+def cmd_set(args):
+    md = find_project(args.slug)
+    if not md:
+        _fail(f"no project named '{args.slug}'", args.json)
+        return
+    updates = {}
+    if args.deadline is not None:
+        if args.deadline and not DATE_RE.match(args.deadline):
+            _fail(f"deadline '{args.deadline}' must be YYYY-MM-DD", args.json)
+            return
+        updates["deadline"] = args.deadline
+    if args.goals is not None:
+        updates["goals"] = _csv(args.goals)
+    if args.orientations is not None:
+        updates["orientations"] = _csv(args.orientations)
+    if args.tags is not None:
+        updates["tags"] = _csv(args.tags)
+    if args.status is not None:
+        if args.status not in PROJECT_STATUSES:
+            _fail(f"status '{args.status}' not one of {PROJECT_STATUSES}", args.json)
+            return
+        updates["status"] = args.status
+        today = datetime.now().strftime("%Y-%m-%d")
+        if args.status == "complete":
+            updates["completed"] = today
+        elif args.status == "abandoned":
+            updates["abandoned"] = today
+        elif args.status == "sleeping":
+            updates["sleeping"] = today
+    if args.reviewed:
+        updates["last_reviewed"] = datetime.now().strftime("%Y-%m-%d")
+    if not updates:
+        _fail("nothing to change", args.json)
+        return
+    errs = _validate_refs(updates.get("goals"), updates.get("orientations"), args.json)
+    if errs:
+        _fail("; ".join(errs), args.json)
+        return
+    # Drop no-op writes so re-saving an unchanged form doesn't churn the file
+    # (e.g. flip a bare `deadline: ` into `deadline: ""`). The Surface form posts
+    # every field on every save, so this keeps git quiet unless something moved.
+    cur = fm.read(md)
+
+    def _same(k, v):
+        c = cur.get(k)
+        return (c or []) == v if isinstance(v, list) else (c or "") == (v or "")
+    updates = {k: v for k, v in updates.items() if not _same(k, v)}
+    if not updates:
+        _ok({"updated": args.slug, "path": str(md), "noop": True}, "no changes", args.json)
+        return
+    fm.set_fields(md, updates)
+    _ok({"updated": args.slug, "path": str(md)}, f"updated {args.slug}", args.json)
+
+
+def cmd_new(args):
+    slug = args.project
+    if not SLUG_RE.match(slug or ""):
+        _fail(f"project '{slug}' must be lowercase-kebab (a-z0-9-)", args.json)
+        return
+    if args.area not in known_areas():
+        _fail(f"unknown area '{args.area}' (have: {', '.join(known_areas())})", args.json)
+        return
+    if find_project(slug):
+        _fail(f"project '{slug}' already exists", args.json)
+        return
+    goals = _csv(args.goals)
+    orients = _csv(args.orientations)
+    errs = _validate_refs(goals, orients, args.json)
+    if errs:
+        _fail("; ".join(errs), args.json)
+        return
+    d = project_path / args.area / slug
+    if d.exists():
+        _fail(f"path already exists: {d}", args.json)
+        return
+    meta = {"created": datetime.now().strftime("%Y-%m-%d"),
+            "status": args.status or "active", "area": args.area,
+            "goals": goals, "orientations": orients, "tags": _csv(args.tags)}
+    title = args.title or slug.replace("-", " ").title()
+    body = (f"# {title}\n\n## Goal\n\n## Tasks\n\n- [ ] \n\n## Notes / Links\n")
+    d.mkdir(parents=True)
+    p = d / "project.md"
+    p.write_text(fm.render(meta, FIELD_ORDER) + "\n\n" + body)
+    _ok({"created": slug, "path": str(p)}, f"created project {slug} in {args.area}", args.json)
+
+
+def cmd_archive(args):
+    md = find_project(args.slug)
+    if not md:
+        _fail(f"no project named '{args.slug}'", args.json)
+        return
+    dest = archive_path / md.parent.relative_to(project_path)
+    if dest.exists():
+        _fail(f"archive target exists: {dest}", args.json)
+        return
+    dest = archive_project(md)          # flips status → archived, moves the dir
+    if dest is None:
+        _fail("archive failed", args.json)
+        return
+    _ok({"archived": args.slug, "path": str(dest)},
+        f"archived {args.slug} → {dest.relative_to(KB)}", args.json)
+
+
+def _editor_parser():
+    p = argparse.ArgumentParser(prog="cl projects")
+    sub = p.add_subparsers(dest="cmd")
+
+    lp = sub.add_parser("list"); lp.add_argument("--json", action="store_true")
+    shp = sub.add_parser("show"); shp.add_argument("slug"); shp.add_argument("--json", action="store_true")
+
+    stp = sub.add_parser("set")
+    stp.add_argument("slug")
+    stp.add_argument("--status"); stp.add_argument("--deadline")
+    stp.add_argument("--goals"); stp.add_argument("--orientations"); stp.add_argument("--tags")
+    stp.add_argument("--reviewed", action="store_true")
+    stp.add_argument("--json", action="store_true")
+
+    np = sub.add_parser("new")
+    np.add_argument("--project", required=True); np.add_argument("--area", required=True)
+    np.add_argument("--status"); np.add_argument("--goals"); np.add_argument("--orientations")
+    np.add_argument("--tags"); np.add_argument("--title")
+    np.add_argument("--json", action="store_true")
+
+    ap = sub.add_parser("archive"); ap.add_argument("slug"); ap.add_argument("--json", action="store_true")
+    return p
+
+
+def editor_main(argv):
+    args = _editor_parser().parse_args(argv)
+    {"list": cmd_list, "show": cmd_show, "set": cmd_set,
+     "new": cmd_new, "archive": cmd_archive}[args.cmd](args)
+
+
 def main(statuses=None, force=False):
+    argv = sys.argv[1:]
+    if argv and argv[0] in EDITOR_CMDS:
+        editor_main(argv)
+        return
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--active",    action="store_true")
     parser.add_argument("--on-hold",   action="store_true", dest="on_hold")

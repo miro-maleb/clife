@@ -49,6 +49,11 @@ HELP = """
   cl projects --sleeping      show sleeping projects
   cl projects --active|--on-hold|--complete|--abandoned|--all
   cl projects --json          emit active + on-hold projects as JSON (surfaces / hot bar)
+  cl projects list [--json]   project editor — every project, grouped by area
+  cl projects show SLUG [--json]   one project's fields (status, goals, tasks, staleness)
+  cl projects set SLUG [--status --deadline --goals --orientations --tags --reviewed]
+  cl projects new --project SLUG --area AREA [--status --goals --orientations --tags --title]
+  cl projects archive SLUG    move a project to ~/kb/archive (status → archived)
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
   cl show PATH                overview for an area / project / sub-project (dir or .md file)

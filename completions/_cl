@@ -106,15 +106,55 @@ _cl() {
           "--dry-run[preview without writing or marking seen]"
         ;;
       projects)
-        _values "projects options" \
-          "--tui[use TUI]" \
-          "--sleeping[sleeping projects]" \
-          "--active[active projects]" \
-          "--on-hold[on-hold projects]" \
-          "--complete[complete projects]" \
-          "--abandoned[abandoned projects]" \
-          "--all[all projects]" \
-          "--json[emit projects as JSON for surfaces]"
+        if (( CURRENT == 3 )); then
+          # review flags (bare `cl projects`) OR an editor subcommand
+          _values "projects subcommand / review flags" \
+            "list[JSON-first list of every project (editor)]" \
+            "show[one project's fields]" \
+            "set[edit status/deadline/tags/goals/orientations]" \
+            "new[scaffold a project into an area]" \
+            "archive[move a project to ~/kb/archive]" \
+            "--tui[use TUI]" \
+            "--sleeping[sleeping projects]" \
+            "--active[active projects]" \
+            "--on-hold[on-hold projects]" \
+            "--complete[complete projects]" \
+            "--abandoned[abandoned projects]" \
+            "--all[all projects]" \
+            "--json[emit active + on-hold projects as JSON (hot bar)]"
+        else
+          case "$words[3]" in
+            show|archive) _cl_projects ;;
+            set)
+              if (( CURRENT == 4 )); then
+                _cl_projects
+              else
+                _values "set options" \
+                  "--status[lifecycle status]:status:(active on-hold sleeping complete abandoned archived superseded pending)" \
+                  "--deadline[YYYY-MM-DD]:deadline:" \
+                  "--goals[comma list of goal slugs]:goals:" \
+                  "--orientations[comma list of orientation slugs]:orientations:" \
+                  "--tags[comma list]:tags:" \
+                  "--reviewed[stamp last_reviewed = today]" \
+                  "--json[emit JSON]"
+              fi
+              ;;
+            new)
+              _values "new options" \
+                "--project[project slug]:slug:" \
+                "--area[owning area]:area:_cl_areas" \
+                "--status[lifecycle status]:status:(active on-hold sleeping complete abandoned archived superseded pending)" \
+                "--goals[comma list of goal slugs]:goals:" \
+                "--orientations[comma list of orientation slugs]:orientations:" \
+                "--tags[comma list]:tags:" \
+                "--title[heading title]:title:" \
+                "--json[emit JSON]"
+              ;;
+            list)
+              _values "list options" "--json[emit JSON for surfaces]"
+              ;;
+          esac
+        fi
         ;;
       week)
         _values "week options" \
