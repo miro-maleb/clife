@@ -1,7 +1,8 @@
 """agenda.py — `cl agenda` — daily anchor surface.
 
-Today's gcal events + system-block status. Mark blocks done / partial / skipped;
-log entries land in ~/kb/systems/_logs/<system>/<block>.yaml (per project schema).
+Today's gcal events + system-block status. Mark blocks done / partial / missed;
+verdicts land in the pool DB (review_mark) — the same store the daily review
+(`cl checkin`) and habit dashboard (`cl habits`) read.
 
   cl agenda                       launch TUI
   cl agenda --dump                print today's items + status, headless
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+import pool
 from tui_common import ACCENT, BODY, MUTED, EMPTY
 from week import (
     DAYS,
@@ -35,119 +37,47 @@ from week import (
 console = Console()
 
 KB = Path.home() / "kb"
-LOGS = KB / "systems" / "_logs"
-STATUSES = ("done", "partial", "skip")
+STATUSES = ("done", "partial", "missed")
 
 
-# ── Per-block log file ──────────────────────────────────────────────────────
+# ── Per-block status (pool DB, review_mark) ─────────────────────────────────
+# Keyed by block name — the same store the daily review + habit dashboard read.
+# These keep the old function names/signatures so agenda_tui stays untouched; the
+# retired `_logs/*.yaml` artifact is gone. `system_slug` is accepted but ignored
+# (block names are globally unique, which is the DB key).
 
 
-def log_path(system_slug: str, block_name: str) -> Path:
-    return LOGS / system_slug / f"{block_name}.yaml"
-
-
-def read_log(system_slug: str, block_name: str) -> list[dict]:
-    """Parse the per-block log YAML. Same shape as cl week's load_skips."""
-    path = log_path(system_slug, block_name)
-    if not path.exists():
-        return []
-    entries = []
-    current = None
-    for line in path.read_text().splitlines():
-        if line.startswith("- "):
-            if current is not None:
-                entries.append(current)
-            current = {}
-            kv = line[2:]
-            if ":" in kv:
-                k, _, v = kv.partition(":")
-                current[k.strip()] = v.strip().strip('"')
-        elif line.startswith("  ") and ":" in line and current is not None:
-            k, _, v = line.strip().partition(":")
-            current[k.strip()] = v.strip().strip('"')
-    if current is not None:
-        entries.append(current)
-    return entries
-
-
-def _serialize(entries: list[dict]) -> str:
-    out = []
-    for e in entries:
-        out.append(f"- date: {e['date']}")
-        out.append(f"  status: {e['status']}")
-        note = e.get("note", "")
-        safe = note.replace('"', "'")
-        out.append(f'  note: "{safe}"')
-    return "\n".join(out) + "\n" if out else ""
+def status_on(system_slug: str, block_name: str, date_str: str) -> dict | None:
+    """This block's verdict on date_str as {status, note}, or None."""
+    with pool.connect() as conn:
+        row = pool.get_review_mark(conn, date_str, block_name)
+    if not row:
+        return None
+    return {"status": row["status"], "note": row["note"] or ""}
 
 
 def append_log(system_slug: str, block_name: str, status: str,
                date_str: str, note: str = "") -> None:
-    """Append one entry. Status must be one of done | partial | skip."""
+    """Record a verdict (done | partial | missed). 'skip' is a scheduling action
+    — the event gets deleted, so it's not a habit verdict and isn't stored."""
+    if status == "skip":
+        return
     if status not in STATUSES:
         raise ValueError(f"bad status: {status}")
-    path = log_path(system_slug, block_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    safe = note.replace('"', "'")
-    entry = (
-        f"- date: {date_str}\n"
-        f"  status: {status}\n"
-        f'  note: "{safe}"\n'
-    )
-    with path.open("a") as f:
-        f.write(entry)
+    pool.upsert_review_mark(date_str, block_name, status, kind="block",
+                            note=note or None)
 
 
 def remove_last_entry(system_slug: str, block_name: str, date_str: str) -> bool:
-    """Remove the most recent log entry on date_str. Returns True if removed.
-
-    Used when toggling a status off (e.g. user marked done by mistake).
-    """
-    path = log_path(system_slug, block_name)
-    if not path.exists():
-        return False
-    entries = read_log(system_slug, block_name)
-    target_idx = None
-    for i, e in enumerate(entries):
-        if e.get("date") == date_str:
-            target_idx = i  # keep last match
-    if target_idx is None:
-        return False
-    entries.pop(target_idx)
-    if entries:
-        path.write_text(_serialize(entries))
-    else:
-        path.unlink()
+    """Clear this block's verdict on date_str (toggle-off / replace)."""
+    pool.delete_review_mark(date_str, block_name)
     return True
 
 
 def update_last_note(system_slug: str, block_name: str, date_str: str,
                      note: str) -> bool:
-    """Edit the note on the most recent entry for this block on date_str.
-
-    Returns True if updated. Used by the comment key (`c`) — only meaningful
-    when there's already a status entry on that date.
-    """
-    path = log_path(system_slug, block_name)
-    if not path.exists():
-        return False
-    entries = read_log(system_slug, block_name)
-    target_idx = None
-    for i, e in enumerate(entries):
-        if e.get("date") == date_str:
-            target_idx = i
-    if target_idx is None:
-        return False
-    entries[target_idx]["note"] = note
-    path.write_text(_serialize(entries))
-    return True
-
-
-def status_on(system_slug: str, block_name: str, date_str: str) -> dict | None:
-    """Most recent log entry on date_str for this block, or None."""
-    entries = read_log(system_slug, block_name)
-    matches = [e for e in entries if e.get("date") == date_str]
-    return matches[-1] if matches else None
+    """Edit the comment on an existing verdict (agenda's `c` key)."""
+    return pool.set_review_note(date_str, block_name, note)
 
 
 # ── Title → block resolution ────────────────────────────────────────────────
@@ -229,7 +159,7 @@ _MARKERS = {
     None:      "[ ]",
     "done":    "[x]",
     "partial": "[~]",
-    "skip":    "[—]",
+    "missed":  "[/]",
 }
 
 
@@ -266,7 +196,7 @@ def dump(target_date: _date) -> None:
             )
         console.print()
 
-    done = partial = skipped = pending = 0
+    done = partial = missed = pending = 0
     for r in timed:
         if not now_marked and r["start"] >= now_str:
             console.print(_now_line(now_str))
@@ -283,8 +213,8 @@ def dump(target_date: _date) -> None:
         title = r["title"]
         if st == "done":
             title_md = f"[strike {EMPTY}]{title}[/strike {EMPTY}]"
-        elif st == "skip":
-            title_md = f"[{EMPTY}]{title}[/{EMPTY}]"
+        elif st == "missed":
+            title_md = f"[{EMPTY}]{title}[/{EMPTY}] [{EMPTY}](missed)[/{EMPTY}]"
         elif st == "partial":
             title_md = f"[strike {MUTED}]{title}[/strike {MUTED}] [{EMPTY}](partial)[/{EMPTY}]"
         else:
@@ -302,19 +232,19 @@ def dump(target_date: _date) -> None:
                 done += 1
             elif st == "partial":
                 partial += 1
-            elif st == "skip":
-                skipped += 1
+            elif st == "missed":
+                missed += 1
             else:
                 pending += 1
 
     if not now_marked:
         console.print(_now_line(now_str))
 
-    total_blocks = done + partial + skipped + pending
+    total_blocks = done + partial + missed + pending
     console.print()
     console.print(
         f"  [bold {ACCENT}]{done}/{total_blocks}[/bold {ACCENT}] [{BODY}]done[/{BODY}]"
-        f"  [{MUTED}]·  {partial} partial  ·  {skipped} skipped  ·  {pending} pending[/{MUTED}]\n"
+        f"  [{MUTED}]·  {partial} partial  ·  {missed} missed  ·  {pending} pending[/{MUTED}]\n"
     )
 
 
@@ -324,7 +254,7 @@ def dump(target_date: _date) -> None:
 _HTML_ICON = {
     "done":    ("✓", "#3ba55d"),
     "partial": ("◐", "#d8a13a"),
-    "skip":    ("–", "#8a8f98"),
+    "missed":  ("✗", "#d9503c"),
     None:      ("○", "#6f7682"),
 }
 
@@ -362,7 +292,7 @@ def render_html(target_date: _date) -> str:
             f'<span style="font-size:12px;color:#6f7682">({esc(r["calendar"])})</span></div>'
         )
 
-    done = partial = skipped = pending = 0
+    done = partial = missed = pending = 0
     for r in timed:
         st = (r["status"] or {}).get("status") if r["status"] else None
         is_block = r["is_block"]
@@ -372,11 +302,13 @@ def render_html(target_date: _date) -> str:
             icon, color = _HTML_ICON.get(st, _HTML_ICON[None])
             if st == "done":   done += 1
             elif st == "partial": partial += 1
-            elif st == "skip": skipped += 1
+            elif st == "missed": missed += 1
             else: pending += 1
             title_style = "color:#e6e8eb"
-            if st in ("done", "skip"):
+            if st == "done":
                 title_style = "color:#6f7682;text-decoration:line-through"
+            elif st == "missed":
+                title_style = "color:#8a8f98"
             elif st == "partial":
                 title_style = "color:#b9bdc6;text-decoration:line-through"
             tag = f'<span style="font-size:12px;color:#6f7682">· {esc(r["system"])}</span>'
@@ -400,11 +332,11 @@ def render_html(target_date: _date) -> str:
         if note:
             out.append(f'<div style="margin:0 0 4px 122px;color:#6f7682;font-size:12px">{esc(note)}</div>')
 
-    total = done + partial + skipped + pending
+    total = done + partial + missed + pending
     out.append(
         f'<div style="margin-top:12px;font-size:13px;color:#8a8f98">'
         f'<b style="color:#e6e8eb">{done}/{total}</b> done · {partial} partial · '
-        f'{skipped} skipped · {pending} pending</div>'
+        f'{missed} missed · {pending} pending</div>'
     )
     out.append("</div>")
     return "".join(out)
@@ -428,7 +360,7 @@ def main() -> None:
     parser.add_argument("--month", default=None, metavar="YYYY-MM",
                         help="emit a month's events grouped by day as JSON (one range fetch)")
     parser.add_argument("--mark", nargs=2, metavar=("BLOCK", "STATUS"),
-                        help="toggle a block's status (done|partial|skip) for the date; "
+                        help="toggle a block's status (done|partial|missed) for the date; "
                              "emits JSON result (for web/widget surfaces)")
     parser.add_argument("--watch", action="store_true",
                         help="loop --dump, refresh every 60s (legacy non-interactive pane)")

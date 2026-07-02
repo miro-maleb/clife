@@ -89,8 +89,9 @@ CREATE TABLE IF NOT EXISTS review_mark (
     title        TEXT NOT NULL,
     calendar     TEXT,
     kind         TEXT,           -- pool | block | event
-    status       TEXT NOT NULL,  -- done | missed
+    status       TEXT NOT NULL,  -- done | partial | missed
     placement_id INTEGER,        -- set when this maps to a pool placement
+    note         TEXT,           -- optional per-verdict comment (from the agenda TUI)
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
     UNIQUE(date, title)
@@ -115,7 +116,15 @@ def connect():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """Idempotent column adds for DBs created before a schema bump."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(review_mark)")}
+    if "note" not in cols:
+        conn.execute("ALTER TABLE review_mark ADD COLUMN note TEXT")
 
 
 def parse_minutes(s, default=60):
@@ -352,23 +361,36 @@ def review_marks_for_date(date, conn=None):
             conn.close()
 
 
-def upsert_review_mark(date, title, status, calendar=None, kind=None, placement_id=None):
-    """Record (or replace) the verdict for one scheduled thing on one day."""
+def upsert_review_mark(date, title, status, calendar=None, kind=None,
+                       placement_id=None, note=None):
+    """Record (or replace) the verdict for one scheduled thing on one day. A None
+    `note` preserves any existing comment rather than clearing it."""
     if status not in REVIEW_STATUSES:
         raise ValueError(f"bad review status: {status}")
     ts = now()
     with connect() as conn:
         conn.execute(
             """INSERT INTO review_mark
-                 (date, title, calendar, kind, status, placement_id, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?)
+                 (date, title, calendar, kind, status, placement_id, note, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(date, title) DO UPDATE SET
                  status=excluded.status, calendar=excluded.calendar,
                  kind=excluded.kind, placement_id=excluded.placement_id,
+                 note=COALESCE(excluded.note, note),
                  updated_at=excluded.updated_at""",
-            (date, title, calendar, kind, status, placement_id, ts, ts),
+            (date, title, calendar, kind, status, placement_id, note, ts, ts),
         )
         return get_review_mark(conn, date, title)
+
+
+def set_review_note(date, title, note):
+    """Update just the comment on an existing verdict. Returns True if a row matched."""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE review_mark SET note=?, updated_at=? WHERE date=? AND title=?",
+            (note, now(), date, title),
+        )
+        return cur.rowcount > 0
 
 
 def delete_review_mark(date, title):

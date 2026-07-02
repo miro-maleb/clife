@@ -40,8 +40,6 @@ from agenda import (
     append_log,
     block_from_title,
     fetch_day_events,
-    log_path,
-    read_log,
     remove_last_entry,
     status_on,
     update_last_note,
