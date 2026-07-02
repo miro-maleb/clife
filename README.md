@@ -19,6 +19,9 @@ Commands:
 | `cl review` | full review |
 | `cl week` | weekly planner |
 | `cl blocks` | routine block editor — daily/weekly block CRUD + feeding chain |
+| `cl systems` | system editor — status + feeding chain CRUD |
+| `cl goals` | goal editor — year/status/marker/orientations CRUD |
+| `cl orientations` | orientation editor — status CRUD |
 | `cl notes` | notes browser |
 | `cl new-project` | scaffold a new project |
 | `cl show` | overview for an area / project / sub-project |

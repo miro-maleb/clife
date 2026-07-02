@@ -36,6 +36,24 @@ _cl_systems() {
   _describe "systems" sys
 }
 
+_cl_goals() {
+  local -a gl
+  local d
+  for d in $HOME/kb/goals/*/*.md(N); do
+    gl+=("${${d##*/}%.md}")
+  done
+  _describe "goals" gl
+}
+
+_cl_orientations() {
+  local -a orl
+  local d
+  for d in $HOME/kb/orientations/*.md(N); do
+    orl+=("${${d##*/}%.md}")
+  done
+  _describe "orientations" orl
+}
+
 _cl() {
   local commands=(
     "capture:quick text or voice capture → inbox"
@@ -52,6 +70,9 @@ _cl() {
     "checkin:daily review — verify what was scheduled got done/missed"
     "habits:habit dashboard — per-block streaks + done/missed history"
     "blocks:routine block editor — daily/weekly block CRUD"
+    "systems:system editor — status + feeding chain CRUD"
+    "goals:goal editor — year/status/marker/orientations CRUD"
+    "orientations:orientation editor — status CRUD"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
@@ -181,7 +202,7 @@ _cl() {
                 "--days[comma list or all]:days:" "--duration[e.g. 30m]:dur:" \
                 "--start[HH:MM]:start:" "--instances[count]:n:" \
                 "--calendar[gcal name]:cal:" "--habit[true|false]:habit:(true false)" \
-                "--when[preferred_when]:when:" "--json[emit JSON]"
+                "--json[emit JSON]"
               ;;
             set)
               if (( CURRENT == 4 )); then
@@ -193,7 +214,87 @@ _cl() {
                   "--days[comma list or all]:days:" "--duration[e.g. 30m]:dur:" \
                   "--start[HH:MM]:start:" "--instances[count]:n:" \
                   "--calendar[gcal name]:cal:" "--habit[true|false]:habit:(true false)" \
-                  "--when[preferred_when]:when:" "--json[emit JSON]"
+                  "--json[emit JSON]"
+              fi
+              ;;
+          esac
+        fi
+        ;;
+      systems)
+        if (( CURRENT == 3 )); then
+          _values "systems subcommand" \
+            "list[list every system]" "show[one system + blocks]" \
+            "new[create a system]" "set[edit a system]" "rm[delete a system]"
+        else
+          case "$words[3]" in
+            show|rm) _cl_systems ;;
+            new)
+              _values "new options" \
+                "--system[system slug]:slug:" "--status[status]:status:" \
+                "--goals[comma list]:goals:" "--orientations[comma list]:orients:" \
+                "--json[emit JSON]"
+              ;;
+            set)
+              if (( CURRENT == 4 )); then
+                _cl_systems
+              else
+                _values "set options" \
+                  "--status[status]:status:" "--goals[comma list]:goals:" \
+                  "--orientations[comma list]:orients:" \
+                  "--superseded-by[system slug]:slug:" "--superseded-on[YYYY-MM-DD]:date:" \
+                  "--json[emit JSON]"
+              fi
+              ;;
+          esac
+        fi
+        ;;
+      goals)
+        if (( CURRENT == 3 )); then
+          _values "goals subcommand" \
+            "list[list every goal]" "show[one goal]" \
+            "new[create a goal]" "set[edit a goal]" "rm[delete a goal]"
+        else
+          case "$words[3]" in
+            show|rm) _cl_goals ;;
+            new)
+              _values "new options" \
+                "--goal[goal slug]:slug:" "--year[YYYY]:year:" \
+                "--status[status]:status:" "--marker[success marker]:marker:" \
+                "--orientations[comma list]:orients:" "--json[emit JSON]"
+              ;;
+            set)
+              if (( CURRENT == 4 )); then
+                _cl_goals
+              else
+                _values "set options" \
+                  "--name[rename]:slug:" "--year[YYYY]:year:" \
+                  "--status[status]:status:" "--marker[success marker]:marker:" \
+                  "--orientations[comma list]:orients:" "--json[emit JSON]"
+              fi
+              ;;
+          esac
+        fi
+        ;;
+      orientations)
+        if (( CURRENT == 3 )); then
+          _values "orientations subcommand" \
+            "list[list every orientation]" "show[one orientation]" \
+            "new[create an orientation]" "set[edit an orientation]" "rm[delete an orientation]"
+        else
+          case "$words[3]" in
+            show|rm) _cl_orientations ;;
+            new)
+              _values "new options" \
+                "--name[orientation slug]:slug:" "--status[status]:status:" \
+                "--json[emit JSON]"
+              ;;
+            set)
+              if (( CURRENT == 4 )); then
+                _cl_orientations
+              else
+                _values "set options" \
+                  "--name[rename]:slug:" "--status[status]:status:" \
+                  "--json[emit JSON]"
               fi
               ;;
           esac

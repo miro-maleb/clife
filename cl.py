@@ -15,6 +15,9 @@ COMMANDS = {
     "checkin":     "checkin",
     "habits":      "habits",
     "blocks":      "blocks",
+    "systems":     "systems",
+    "goals":       "goals",
+    "orientations": "orientations",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -70,6 +73,14 @@ HELP = """
   cl blocks rm BLOCK [--force]   delete a block
   cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]   edit a system's feeding chain
   cl blocks meta|calendars    pickers — systems/goals/orientations, or writable calendars
+  cl systems [list]           system editor — status + feeding chain; new/set/rm
+  cl systems new --system SLUG [--status --goals a,b --orientations x,y]
+  cl systems set SLUG [--status --goals --orientations --superseded-by --superseded-on]
+  cl goals [list]             goal editor — year/status/marker/orientations
+  cl goals new --goal SLUG --year YYYY [--status --marker "…" --orientations a,b]
+  cl goals set SLUG [--name --year --status --marker --orientations]
+  cl orientations [list]      orientation editor — status; new/set/rm
+  cl orientations new --name SLUG [--status]   ·  cl orientations set NAME [--name --status]
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)
