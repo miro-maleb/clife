@@ -15,6 +15,7 @@ import email
 import email.policy
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -190,6 +191,24 @@ def unique_inbox_path(stamp):
         i += 1
 
 
+def notify_inbox(count, subjects):
+    """Fire a Surface push for newly-ingested email (i.e. inbox items NOT written
+    by the user — email is the only not-self channel). Best-effort: the sender
+    lives in the Surface push-venv (which has the crypto libs); if it's missing or
+    fails, ingest carries on silently."""
+    base = Path.home() / "hearth" / "surface"
+    py, sender = base / "push-venv" / "bin" / "python", base / "push_send.py"
+    if not (py.exists() and sender.exists()):
+        return
+    body = subjects[0] if (count == 1 and subjects) else f"{count} new emails"
+    try:
+        subprocess.run([str(py), str(sender), "--title", "New in inbox",
+                        "--body", body, "--url", "/inbox"],
+                       capture_output=True, timeout=30)
+    except Exception:
+        pass
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     maildir = load_maildir()
@@ -223,6 +242,7 @@ def main():
         return
 
     n_ok, n_err = 0, 0
+    new_subjects = []
     for f in unseen:
         try:
             with f.open("rb") as fp:
@@ -231,14 +251,14 @@ def main():
             md = message_to_inbox_md(msg, captured)
             stamp = captured.strftime("%Y-%m-%d-%H%M%S")
             out = unique_inbox_path(stamp)
+            subject = msg.get("Subject", "<no subject>")[:60]
             if dry_run:
-                subject = msg.get("Subject", "<no subject>")[:60]
                 console.print(f"  [yellow]dry-run[/yellow]  {subject}  →  {out.name}")
             else:
                 out.write_text(md)
                 mark_seen(f)
-                subject = msg.get("Subject", "<no subject>")[:60]
                 console.print(f"  [green]✓[/green]  {subject}  →  {out.name}")
+                new_subjects.append(subject)
             n_ok += 1
         except Exception as e:
             console.print(f"  [red]✗[/red]  {f.name}  {e}")
@@ -249,6 +269,8 @@ def main():
         console.print(f"  [grey70]dry run — {n_ok} would be ingested, {n_err} errors[/grey70]")
     else:
         console.print(f"  [grey70]ingested {n_ok}, errors {n_err}[/grey70]")
+        if new_subjects:
+            notify_inbox(len(new_subjects), new_subjects)
     console.print()
 
 
