@@ -18,6 +18,7 @@ COMMANDS = {
     "systems":     "systems",
     "goals":       "goals",
     "orientations": "orientations",
+    "lint":        "lint",
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
@@ -81,6 +82,8 @@ HELP = """
   cl goals set SLUG [--name --year --status --marker --orientations]
   cl orientations [list]      orientation editor — status; new/set/rm
   cl orientations new --name SLUG [--status]   ·  cl orientations set NAME [--name --status]
+  cl lint [PATH…]             check kb frontmatter against the canonical schema
+  cl lint --fix               apply the safe mechanical fixes (kebab keys, bare lists, …)
   cl new                      scaffold area / project / sub-project (interactive or with flags)
   cl new --area NAME          create a new area
   cl new --project NAME       create a new project (fzf prompts for area)

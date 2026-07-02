@@ -73,6 +73,7 @@ _cl() {
     "systems:system editor — status + feeding chain CRUD"
     "goals:goal editor — year/status/marker/orientations CRUD"
     "orientations:orientation editor — status CRUD"
+    "lint:check kb frontmatter against the canonical schema"
     "new:scaffold area / project / sub-project"
     "new-project:create a new project (alias)"
     "dashboard:persistent dashboard"
@@ -299,6 +300,12 @@ _cl() {
               ;;
           esac
         fi
+        ;;
+      lint)
+        _values "lint options" \
+          "--fix[apply safe mechanical fixes in place]" \
+          "--json[emit JSON report]" \
+          "--type[restrict to one schema type]:type:(area project sub-project system block goal orientation)"
         ;;
       view)
         local -a views
