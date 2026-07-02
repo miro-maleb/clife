@@ -610,6 +610,44 @@ def fill(day_arg, offset_weeks=0, as_json=False):
     console.print(r["msg"])
 
 
+def unplace_event(block_name, day_arg, offset_weeks=0):
+    """Remove a placed block's gcal event for a day WITHOUT logging a skip.
+
+    Different intent from skip(): a skip means "I'm intentionally not doing this"
+    (and dents the week's expected count); an unplace means "wrong slot / put it
+    back in the tray to re-place." The block simply returns to the day planner's
+    "to place" list. Returns {ok, msg, removed_title?}.
+    """
+    sys_slug, meta = find_block(block_name)
+    if not meta:
+        return {"ok": False, "msg": f"unknown block: {block_name}"}
+    cal = meta.get("calendar")
+    if not cal:
+        return {"ok": False, "msg": f"{block_name} has no calendar set"}
+    monday, _ = week_range(offset_weeks=offset_weeks)
+    date = parse_day(day_arg, monday)
+    if not date:
+        return {"ok": False, "msg": f"bad day: {day_arg}"}
+    events = fetch_events(cal, date, date)
+    title = find_event_on_date(events, block_name, date)
+    if not title:
+        return {"ok": False, "msg": f"{block_name} not scheduled on {date}"}
+    if not delete_event_by_title(cal, title, date):
+        return {"ok": False, "msg": f"failed to remove {title} from gcal"}
+    return {"ok": True, "msg": f"unplaced {title} from {date}", "removed_title": title}
+
+
+def move_event(block_name, day_arg, new_time, offset_weeks=0, duration_override=None):
+    """Retime (and optionally re-duration) a placed block: delete the existing
+    gcal event on that day and re-add it at new_time. Returns place_event's
+    result. If the block wasn't actually placed, just places it fresh."""
+    r = unplace_event(block_name, day_arg, offset_weeks=offset_weeks)
+    if not r["ok"] and "not scheduled" not in r["msg"]:
+        return r
+    return place_event(block_name, day_arg, new_time, offset_weeks=offset_weeks,
+                       duration_override=duration_override)
+
+
 def place(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
     """CLI wrapper: prints result, exits with non-zero on failure."""
     result = place_event(block_name, day_arg, time_arg, offset_weeks=offset_weeks,
@@ -771,6 +809,10 @@ def main():
                         help="with --place: override the block's duration (minutes)")
     group.add_argument("--skip", nargs="+", metavar="ARG",
                        help="--skip BLOCK DAY [REASON…] — log a skip; deletes matching gcal event if any")
+    group.add_argument("--move", nargs=3, metavar=("BLOCK", "DAY", "TIME"),
+                       help="retime a placed block (delete + re-add); pair with --duration to resize")
+    group.add_argument("--unplace", nargs=2, metavar=("BLOCK", "DAY"),
+                       help="remove a placed block's event without logging a skip (back to the tray)")
     # Outside the group so it can pair with --json (the day-planner surface reads
     # the structured result); --fill wins if combined with another mode.
     parser.add_argument("--fill", metavar="DAY",
@@ -791,6 +833,22 @@ def main():
         return
     if args.place:
         place(*args.place, offset_weeks=offset, duration_override=args.duration)
+        return
+    if args.move:
+        r = move_event(*args.move, offset_weeks=offset, duration_override=args.duration)
+        if r["ok"]:
+            console.print(f"[dark_sea_green4]  → {r['msg']}[/dark_sea_green4]")
+        else:
+            console.print(f"[red]{r['msg']}[/red]")
+            sys.exit(1)
+        return
+    if args.unplace:
+        r = unplace_event(*args.unplace, offset_weeks=offset)
+        if r["ok"]:
+            console.print(f"[dark_sea_green4]  → {r['msg']}[/dark_sea_green4]")
+        else:
+            console.print(f"[red]{r['msg']}[/red]")
+            sys.exit(1)
         return
     if args.skip:
         if len(args.skip) < 2:

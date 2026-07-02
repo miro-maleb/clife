@@ -125,7 +125,9 @@ _cl() {
           "--place[schedule BLOCK DAY TIME]:block:" \
           "--skip[log a skip: BLOCK DAY REASON]:block:" \
           "--fill[auto-place a day's unplaced daily blocks at their default_start]:day:(mon tue wed thu fri sat sun)" \
-          "--duration[with --place: override block duration in minutes]:minutes:"
+          "--move[retime a placed block: BLOCK DAY TIME]:block:" \
+          "--unplace[remove a placed block's event, back to the tray: BLOCK DAY]:block:" \
+          "--duration[with --place/--move: override block duration in minutes]:minutes:"
         ;;
       pool)
         if (( CURRENT == 3 )); then
