@@ -98,6 +98,32 @@ Return ONLY JSON:
             "est_minutes": max(5, est)}
 
 
+def title_from_text(text):
+    """Suggest a filename slug (+ title) for a captured note headed to notes/.
+    Returns {"slug","title"} — {} on failure so the caller falls back to the
+    inbox timestamp. Keeps the AI coarse: it names the file, the human/editor
+    can always rename later."""
+    import re as _re
+    prompt = f"""/no_think
+Name a personal note file from its content.
+
+Note:
+{text[:600]}
+
+- title: a concise topic title, <= 8 words, sentence case, no quotes or dates.
+- slug: lowercase-kebab (a-z, 0-9, hyphens only) from the title, <= 6 words.
+
+Return ONLY JSON:
+{{"title": "<title>", "slug": "<slug>"}}"""
+    out = _generate_json(prompt)
+    if not isinstance(out, dict) or not out.get("slug"):
+        return {}
+    slug = _re.sub(r"-{2,}", "-", _re.sub(r"[^a-z0-9-]+", "-", str(out["slug"]).lower())).strip("-")
+    if not slug:
+        return {}
+    return {"slug": slug, "title": str(out.get("title") or "").strip()}
+
+
 _WEEKDAYS = {"monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1,
              "wednesday": 2, "wed": 2, "thursday": 3, "thu": 3, "thurs": 3,
              "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6}

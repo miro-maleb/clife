@@ -176,19 +176,50 @@ def route_pool(file):
     console.print(f"[dark_sea_green4]  → calendar pool[/dark_sea_green4] [grey50]({est}m{', ' + area if area else ''})[/grey50]")
 
 
-def route_note(file):
-    content = file.read_text().strip()
-    slug = slug_from_name(file)
+def _note_slugify(s):
+    import re
+    return re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", s.lower())).strip("-")
+
+
+def _unique_note_slug(slug):
+    """Avoid clobbering an existing note of the same name."""
+    if not (notes_path / f"{slug}.md").exists():
+        return slug
+    n = 2
+    while (notes_path / f"{slug}-{n}.md").exists():
+        n += 1
+    return f"{slug}-{n}"
+
+
+def _write_note(slug, content):
     notes_path.mkdir(parents=True, exist_ok=True)
     dest = notes_path / f"{slug}.md"
-    dest.write_text(f"""---
-created: {datetime.now().strftime('%Y-%m-%d')}
-tags: []
-status: seed
----
+    dest.write_text(
+        f"---\ncreated: {datetime.now().strftime('%Y-%m-%d')}\ntags: []\nstatus: seed\n---\n\n{content}\n"
+    )
+    return dest
 
-{content}
-""")
+
+def route_note(file):
+    """[n] → notes/. The AI suggests a filename from the content (so the note
+    doesn't land as a timestamp); the human accepts it or types their own."""
+    content = file.read_text().strip()
+    payload = capture_payload(file) or content
+    console.print("  [grey50]titling…[/grey50]")
+    sug = ai.title_from_text(payload) or {}
+    slug = sug.get("slug") or slug_from_name(file)
+    if sug.get("title"):
+        console.print(f"  [grey50]title:[/grey50] [tan]{sug['title']}[/tan]")
+    console.print(f"  [grey50]name:[/grey50] [tan]{slug}[/tan]  [grey50][enter = ok, or type a name][/grey50] ", end="")
+    restore_terminal()
+    try:
+        typed = input().strip()
+    except EOFError:
+        typed = ""
+    if typed:
+        slug = _note_slugify(typed) or slug
+    slug = _unique_note_slug(slug)
+    _write_note(slug, content)
     file.unlink()
     console.print(f"[dark_sea_green4]  → saved to notes/{slug}.md[/dark_sea_green4]")
 
@@ -484,13 +515,13 @@ def route_targets_payload():
 
 
 def ni_note(file):
+    """Surface's non-interactive note route: auto-apply the AI-suggested filename
+    (rename later in the editor if needed); fall back to the timestamp slug."""
     content = file.read_text().strip()
-    slug = slug_from_name(file)
-    notes_path.mkdir(parents=True, exist_ok=True)
-    dest = notes_path / f"{slug}.md"
-    dest.write_text(
-        f"---\ncreated: {datetime.now().strftime('%Y-%m-%d')}\ntags: []\nstatus: seed\n---\n\n{content}\n"
-    )
+    payload = capture_payload(file) or content
+    slug = (ai.title_from_text(payload) or {}).get("slug") or slug_from_name(file)
+    slug = _unique_note_slug(slug)
+    _write_note(slug, content)
     file.unlink()
     return {"ok": True, "msg": f"notes/{slug}.md"}
 
