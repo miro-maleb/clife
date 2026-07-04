@@ -30,7 +30,7 @@ from rich.console import Console
 
 import pool
 from agenda import active_calendars, block_from_title, fetch_day_events
-from week import DAYS, is_habit
+from week import DAYS, is_habit, load_blocks
 
 console = Console()
 
@@ -62,17 +62,51 @@ def _classify(conn, date_str, ev):
     }
 
 
+def _habit_blocks_for(date_str):
+    """Today's applicable DAILY habit blocks, straight from the definitions — so
+    the review is a real daily checklist, not just whatever landed on the calendar.
+    (Weekly blocks stay placement-driven + live in the weekly review.)"""
+    weekday = DAYS[_date.fromisoformat(date_str).weekday()]
+    out = []
+    for sys_slug, meta, sys_status in load_blocks():
+        if sys_status != "active" or meta.get("cadence") != "daily" or not is_habit(meta):
+            continue
+        days = meta.get("days")
+        if days and weekday not in days:          # block only runs on certain weekdays
+            continue
+        out.append((sys_slug, meta))
+    return out
+
+
 def rows_for(date_str, full=False):
     """The day's scheduled things, classified + overlaid with any recorded verdict.
 
-    full=False (the review): only markable commitments — habit blocks (→ streaks)
-    and pool one-offs (→ done | back-to-pool). full=True (the agenda): every row,
-    including all-day + plain gcal events + non-habit anchors, for schedule context
-    (those come back markable=False)."""
+    full=False (the review): the day's markable commitments — pool one-offs
+    (→ done | back-to-pool) and habit blocks (→ streaks) — PLUS today's applicable
+    daily habit blocks that weren't placed on the calendar, so the review is a true
+    daily habit checklist (tick a habit → logs the streak, no scheduling needed).
+    full=True (the agenda): every gcal row for schedule context, unchanged."""
     events = fetch_day_events(_date.fromisoformat(date_str))
     with pool.connect() as conn:
         rows = [_classify(conn, date_str, ev) for ev in events]
-    return rows if full else [r for r in rows if r["markable"]]
+        if full:
+            return rows
+        rows = [r for r in rows if r["markable"]]
+        placed = {r["title"] for r in rows if r["kind"] == "block"}
+        for sys_slug, meta in _habit_blocks_for(date_str):
+            name = meta["block"]
+            if name in placed:                    # already on the calendar today
+                continue
+            mark = pool.get_review_mark(conn, date_str, name)
+            start = meta.get("default_start") or ""
+            rows.append({
+                "title": name, "start": start, "end": "", "calendar": meta.get("calendar", ""),
+                "all_day": not start, "kind": "block", "markable": True, "is_block": True,
+                "system": sys_slug, "placement_id": None,
+                "status": mark["status"] if mark else None,
+            })
+    rows.sort(key=lambda r: (bool(r["all_day"]), r["start"] or ""))
+    return rows
 
 
 def apply_mark(date_str, title, status):
