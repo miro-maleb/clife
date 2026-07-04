@@ -365,6 +365,7 @@ def build_view(offset_weeks=0):
 
     cals = [c for c in list_calendars() if c not in EXCLUDE_CALENDARS]
     events_by_cal = {c: fetch_events(c, monday, sunday) for c in cals}
+    tdays = travel_days(monday, sunday)   # dates on the Travel calendar → paused habits skip
 
     daily, weekly = [], []
     for sys_slug, meta, _ in active:
@@ -392,6 +393,7 @@ def build_view(offset_weeks=0):
             "default_start": meta.get("default_start", ""),
             "days": meta.get("days") or DAYS,
             "cadence": meta.get("cadence", ""),
+            "travel": meta.get("travel", ""),   # "pause" = skip on Travel-calendar days
         }
         (daily if meta.get("cadence") == "daily" else weekly).append(entry)
 
@@ -415,6 +417,7 @@ def build_view(offset_weeks=0):
             "date": ds, "weekday": DAYS[d.weekday()],
             "label": f"{DAYS[d.weekday()].upper()} {d.month}/{d.day}",
             "events": day_events,
+            "travel": ds in tdays,
         })
 
     return {
@@ -577,6 +580,7 @@ def fill_day(day_arg, offset_weeks=0):
         return {"ok": False, "msg": f"bad day: {day_arg} (use mon|tue|…|sun or YYYY-MM-DD)",
                 "placed": [], "skipped": []}
     weekday = DAYS[date.weekday()]
+    is_travel = date.isoformat() in travel_days(date, date)
 
     placed, skipped = [], []
     for sys_slug, meta, st in load_blocks():
@@ -585,6 +589,9 @@ def fill_day(day_arg, offset_weeks=0):
         name = meta.get("block", "?")
         days = meta.get("days") or DAYS
         if weekday not in days:
+            continue
+        if is_travel and meta.get("travel") == "pause":   # don't auto-schedule paused habits on a trip
+            skipped.append({"block": name, "reason": "paused — traveling", "travel": True})
             continue
         start = (meta.get("default_start") or "").strip()
         if not re.match(r"^\d{1,2}:\d{2}$", start):
