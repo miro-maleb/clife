@@ -7,6 +7,7 @@ TERMUX = "com.termux" in os.environ.get("PREFIX", "")
 TUI_COMMANDS = {"inbox", "notes", "projects", "capture", "review"}
 
 COMMANDS = {
+    "init":        "onboard",
     "capture":     "capture",
     "ingest":      "ingest",
     "week":        "week",
@@ -33,6 +34,9 @@ COMMANDS = {
 
 HELP = """
   cl — CLIfe
+
+  cl init                     welcome + guided setup (connect + populate your system)
+  cl init --status            print the readiness report (add --json for machines)
 
   cl capture                  quick text capture — one line per item → inbox
   cl capture --voice          voice capture — say 'break' between items, Ctrl+C to finish

@@ -56,6 +56,7 @@ _cl_orientations() {
 
 _cl() {
   local commands=(
+    "init:welcome + guided setup (connect + populate)"
     "capture:quick text or voice capture → inbox"
     "ingest:pull new email from capture maildir → inbox"
     "inbox:route inbox files"
@@ -84,6 +85,11 @@ _cl() {
     _describe "cl commands" commands
   else
     case "$words[2]" in
+      init)
+        _values "init options" \
+          "--status[print the readiness report, no prompts]" \
+          "--json[with --status: emit JSON]"
+        ;;
       capture)
         _values "capture options" \
           "--voice[voice capture]" \

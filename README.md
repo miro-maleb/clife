@@ -12,6 +12,7 @@ Commands:
 
 | | |
 |---|---|
+| `cl init` | welcome + guided setup (connect + populate your system) |
 | `cl capture` | text or voice → inbox |
 | `cl ingest` | pull email from kb-capture maildir → inbox |
 | `cl inbox` | route inbox items with hotkeys |
