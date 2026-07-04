@@ -94,7 +94,7 @@ SCHEMAS = {
     "block": dict(
         required={"block", "parent", "calendar", "cadence"},
         known={"block", "parent", "calendar", "cadence", "habit", "days",
-               "duration", "instances", "default_start"},
+               "duration", "instances", "default_start", "travel"},
         status=None, dates=set(), lists={"days"}),
     "goal": dict(
         required={"goal", "year", "status"},

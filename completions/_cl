@@ -253,6 +253,7 @@ _cl() {
                 "--days[comma list or all]:days:" "--duration[e.g. 30m]:dur:" \
                 "--start[HH:MM]:start:" "--instances[count]:n:" \
                 "--calendar[gcal name]:cal:" "--habit[true|false]:habit:(true false)" \
+                "--travel[pause|keep on Travel days]:travel:(pause keep)" \
                 "--json[emit JSON]"
               ;;
             set)
@@ -265,6 +266,7 @@ _cl() {
                   "--days[comma list or all]:days:" "--duration[e.g. 30m]:dur:" \
                   "--start[HH:MM]:start:" "--instances[count]:n:" \
                   "--calendar[gcal name]:cal:" "--habit[true|false]:habit:(true false)" \
+                  "--travel[pause|keep on Travel days]:travel:(pause keep)" \
                   "--json[emit JSON]"
               fi
               ;;

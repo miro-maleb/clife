@@ -48,7 +48,7 @@ DAYS = week.DAYS
 # appended after these. `habit` is only written when False (anchor); tracked is
 # the default, so we keep those files clean by omitting it.
 FIELD_ORDER = ["block", "parent", "calendar", "cadence", "habit",
-               "days", "duration", "instances", "default_start"]
+               "days", "duration", "instances", "default_start", "travel"]
 
 CADENCES = ("daily", "weekly")
 DEFAULT_CALENDAR = "Miro-Personal"
@@ -191,6 +191,7 @@ def block_dict(sys_slug, meta, sys_status):
         "duration_min": week.parse_duration_minutes(meta.get("duration", "")) or 0,
         "instances": int(meta.get("instances", 1) or 1),
         "default_start": meta.get("default_start", ""),
+        "travel": meta.get("travel", ""),   # "pause" = skip on Travel-calendar days
     }
 
 
@@ -262,6 +263,11 @@ def apply_fields(meta, args):
             meta["habit"] = "false"         # anchor — kept out of habit tracking
         else:
             meta.pop("habit", None)         # tracked is the default; keep file clean
+    if args.travel is not None:
+        if args.travel.strip().lower() in ("pause", "skip"):
+            meta["travel"] = "pause"
+        else:                                    # keep/none/"" → clear (keep is the default)
+            meta.pop("travel", None)
     if args.name is not None:
         meta["block"] = args.name
     return meta.get("block")
@@ -530,6 +536,7 @@ def build_parser():
         sp.add_argument("--start", help="HH:MM default start")
         sp.add_argument("--instances", type=int)
         sp.add_argument("--habit", help="true|false (false = calendar anchor)")
+        sp.add_argument("--travel", help="pause|keep — pause = skip this habit on Travel-calendar days")
 
     lp = sub.add_parser("list")
     lp.add_argument("--json", action="store_true")

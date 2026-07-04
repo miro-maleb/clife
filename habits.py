@@ -21,7 +21,7 @@ from datetime import date as _date, timedelta
 from rich.console import Console
 
 import pool
-from week import is_habit, load_blocks
+from week import is_habit, load_blocks, travel_days
 
 console = Console()
 
@@ -62,6 +62,7 @@ def build(days=WINDOW):
     dates = [(start + timedelta(days=i)).isoformat() for i in range(days)]
 
     history = pool.review_history()  # all-time, so streak/totals are complete
+    tdays = travel_days(start, today)   # dates you were traveling → paused habits show ✈
     daily, weekly = [], []
     for sys_slug, meta, sys_status in load_blocks():
         if sys_status != "active":   # matches cl week — retired systems drop off
@@ -78,6 +79,13 @@ def build(days=WINDOW):
             instances = 1
         merged = _merge_instances(name, instances, history)
         streak, done, partial, marked = _streak_and_counts(merged)
+        paused_when_travel = meta.get("travel") == "pause"
+
+        def cell(d):
+            if paused_when_travel and d in tdays:
+                return "paused"
+            return merged.get(d)
+
         row = {
             "block": name,
             "system": sys_slug,
@@ -86,7 +94,7 @@ def build(days=WINDOW):
             "done": done,
             "partial": partial,
             "marked": marked,
-            "strip": [{"date": d, "status": merged.get(d)} for d in dates],
+            "strip": [{"date": d, "status": cell(d)} for d in dates],
         }
         (daily if cadence == "daily" else weekly).append(row)
 

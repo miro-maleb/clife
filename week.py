@@ -245,6 +245,16 @@ def fetch_titles(calendar, start, end):
     return [t for _, _, _, t in fetch_events(calendar, start, end)]
 
 
+TRAVEL_CALENDAR = "Travel"
+
+
+def travel_days(start, end):
+    """Set of dates in [start, end] the user is traveling — any day covered by a
+    `Travel` calendar event. Multi-day trips are already expanded to one row per
+    day by fetch_events, so a whole trip's dates land in the set."""
+    return {d for d, _s, _e, _t in fetch_events(TRAVEL_CALENDAR, start, end)}
+
+
 def suggest_time(meta, target_date, day_events):
     """Suggested HH:MM start time for placing this block on target_date.
 

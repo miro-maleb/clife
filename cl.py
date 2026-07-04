@@ -77,7 +77,7 @@ HELP = """
   cl blocks [list]            routine block editor — list every daily/weekly block
   cl blocks show BLOCK        one block's settings + the goals/orientations it feeds
   cl blocks new --block SLUG --parent SYSTEM --cadence daily|weekly [--days --duration --start …]
-  cl blocks set BLOCK [--calendar --cadence --days --duration --start --instances --habit --name --parent]
+  cl blocks set BLOCK [--calendar --cadence --days --duration --start --instances --habit --travel --name --parent]
   cl blocks rm BLOCK [--force]   delete a block
   cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]   edit a system's feeding chain
   cl blocks meta|calendars    pickers — systems/goals/orientations, or writable calendars

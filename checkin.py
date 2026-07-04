@@ -91,6 +91,7 @@ def rows_for(date_str, full=False):
         rows = [_classify(conn, date_str, ev) for ev in events]
         if full:
             return rows
+        is_travel = any(r.get("calendar") == "Travel" for r in rows)   # a Travel event covers today
         rows = [r for r in rows if r["markable"]]
         placed = {r["title"] for r in rows if r["kind"] == "block"}
         for sys_slug, meta in _habit_blocks_for(date_str):
@@ -105,6 +106,16 @@ def rows_for(date_str, full=False):
                 "system": sys_slug, "placement_id": None,
                 "status": mark["status"] if mark else None,
             })
+        # On travel days, habits flagged `travel: pause` show as paused — off,
+        # not tickable, not counted (the Travel calendar drives this, no marking).
+        if is_travel:
+            for r in rows:
+                if r["kind"] != "block":
+                    continue
+                _s, m, _i = block_from_title(r["title"])
+                if m and m.get("travel") == "pause":
+                    r["status"] = "paused"
+                    r["markable"] = False
     rows.sort(key=lambda r: (bool(r["all_day"]), r["start"] or ""))
     return rows
 
