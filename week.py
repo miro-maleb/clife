@@ -580,7 +580,9 @@ def fill_day(day_arg, offset_weeks=0):
         return {"ok": False, "msg": f"bad day: {day_arg} (use mon|tue|…|sun or YYYY-MM-DD)",
                 "placed": [], "skipped": []}
     weekday = DAYS[date.weekday()]
-    is_travel = date.isoformat() in travel_days(date, date)
+    import trips
+    trip = trips.trip_for(date.isoformat())          # traveling? which trip?
+    allow = trips.allowlist(trip["key"]) if trip else None
 
     placed, skipped = [], []
     for sys_slug, meta, st in load_blocks():
@@ -590,8 +592,9 @@ def fill_day(day_arg, offset_weeks=0):
         days = meta.get("days") or DAYS
         if weekday not in days:
             continue
-        if is_travel and meta.get("travel") == "pause":   # don't auto-schedule paused habits on a trip
-            skipped.append({"block": name, "reason": "paused — traveling", "travel": True})
+        if trip and name not in allow:                # on a trip, daily is paused unless allowed
+            skipped.append({"block": name, "reason": f"paused for trip — {trip['name']}",
+                            "travel": True})
             continue
         start = (meta.get("default_start") or "").strip()
         if not re.match(r"^\d{1,2}:\d{2}$", start):

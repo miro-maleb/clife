@@ -16,6 +16,7 @@ COMMANDS = {
     "checkin":     "checkin",
     "habits":      "habits",
     "blocks":      "blocks",
+    "trips":       "trips",
     "systems":     "systems",
     "goals":       "goals",
     "orientations": "orientations",
@@ -85,6 +86,8 @@ HELP = """
   cl blocks rm BLOCK [--force]   delete a block
   cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]   edit a system's feeding chain
   cl blocks meta|calendars    pickers — systems/goals/orientations, or writable calendars
+  cl trips show [DAY]         the trip covering DAY + which daily blocks it schedules
+  cl trips set DAY --blocks a,b | --all | --none   per-trip schedule allowlist (saved for the trip)
   cl systems [list]           system editor — status + feeding chain; new/set/rm
   cl systems new --system SLUG [--status --goals a,b --orientations x,y]
   cl systems set SLUG [--status --goals --orientations --superseded-by --superseded-on]

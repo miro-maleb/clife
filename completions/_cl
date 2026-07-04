@@ -57,6 +57,7 @@ _cl_orientations() {
 _cl() {
   local commands=(
     "init:welcome + guided setup (connect + populate)"
+    "trips:travel-aware scheduling (per-trip allowlist)"
     "capture:quick text or voice capture → inbox"
     "ingest:pull new email from capture maildir → inbox"
     "inbox:route inbox files"
@@ -89,6 +90,16 @@ _cl() {
         _values "init options" \
           "--status[print the readiness report, no prompts]" \
           "--json[with --status: emit JSON]"
+        ;;
+      trips)
+        if (( CURRENT == 3 )); then
+          _values "trips subcommand" "show[trip + allowlist]" "set[replace allowlist]"
+        else
+          _values "trips options" \
+            "--blocks[comma daily block names]:blocks:" \
+            "--all[allow every daily block]" "--none[pause everything]" \
+            "--json[emit JSON]"
+        fi
         ;;
       capture)
         _values "capture options" \
