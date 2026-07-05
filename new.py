@@ -24,7 +24,7 @@ from rich.console import Console
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 PROJECTS = KB / "projects"
 GOALS = KB / "goals"
 SYSTEMS = KB / "systems"

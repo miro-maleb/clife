@@ -36,7 +36,7 @@ from week import (
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB, gcalcli
 STATUSES = ("done", "partial", "missed")
 
 
@@ -451,9 +451,9 @@ def main() -> None:
         # so the surface can render multi-day events as continuous bars with lanes.
         events: list[dict] = []
         for cal in active_calendars():
-            cmd = ["gcalcli", "agenda", "--calendar", cal,
+            cmd = gcalcli("agenda", "--calendar", cal,
                    grid_start.strftime("%Y-%m-%d"),
-                   (grid_end + timedelta(days=1)).strftime("%Y-%m-%d"), "--tsv"]
+                   (grid_end + timedelta(days=1)).strftime("%Y-%m-%d"), "--tsv")
             try:
                 r = _sp.run(cmd, capture_output=True, text=True, check=False, timeout=60)
             except (FileNotFoundError, _sp.TimeoutExpired):

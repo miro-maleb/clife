@@ -29,7 +29,7 @@ from rich.console import Console
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB, gcalcli   # tenant-aware kb root + gcalcli argv builder
 SYSTEMS = KB / "systems"
 STATE = KB / "_state"
 SKIPS_FILE = STATE / "skips.yaml"
@@ -127,7 +127,7 @@ def expected_count(meta):
 
 def list_calendars(access=("owner", "writer", "reader")):
     """List gcal calendars accessible to user, filtered by access level (owner/writer/reader)."""
-    cmd = ["gcalcli", "--nocolor", "list"]
+    cmd = gcalcli("--nocolor", "list")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     except FileNotFoundError:
@@ -171,14 +171,13 @@ def fetch_events(calendar, start, end):
     strip_display_suffix(). Parens not brackets because Rich would parse
     `[day 1/3]` as a style tag and crash.
     """
-    cmd = [
-        "gcalcli",
+    cmd = gcalcli(
         "agenda",
         "--calendar", calendar,
         start.strftime("%Y-%m-%d"),
         (end + timedelta(days=1)).strftime("%Y-%m-%d"),
         "--tsv",
-    ]
+    )
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
     except FileNotFoundError:
@@ -541,14 +540,14 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override
         return {"ok": False, "msg": f"all {instances} instance(s) of {block_name} already scheduled this week"}
 
     when = f"{date.strftime('%Y-%m-%d')} {time_arg}"
-    cmd = [
-        "gcalcli", "add",
+    cmd = gcalcli(
+        "add",
         "--calendar", cal,
         "--title", title,
         "--when", when,
         "--duration", str(duration_min),
         "--noprompt",
-    ]
+    )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         return {"ok": False, "msg": f"gcalcli add failed: {result.stderr.strip()}"}
@@ -761,14 +760,14 @@ def find_event_on_date(events, block_name, target_date):
 def delete_event_by_title(calendar, title, date):
     """Delete a gcal event by exact title on a specific date."""
     title = strip_display_suffix(title)
-    cmd = [
-        "gcalcli", "delete",
+    cmd = gcalcli(
+        "delete",
         "--calendar", calendar,
         "--iamaexpert",
         title,
         date.strftime("%Y-%m-%d"),
         (date + timedelta(days=1)).strftime("%Y-%m-%d"),
-    ]
+    )
     # NB: gcalcli delete uses subcommand-level --calendar (correct as written above)
     result = subprocess.run(cmd, input="y\n" * 10, capture_output=True, text=True, timeout=30)
     return result.returncode == 0

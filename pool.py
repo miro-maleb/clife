@@ -34,6 +34,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from paths import gcalcli
+
 console = Console()
 
 DB_DIR = Path(os.environ.get("CLIFE_DATA_DIR", Path.home() / ".local" / "share" / "clife"))
@@ -253,8 +255,8 @@ def schedule_item(item_id, date, start, calendar=None, duration=None):
     cal = calendar or item.get("calendar") or DEFAULT_CALENDAR
     dur = duration or item.get("est_minutes") or 30
     end = _end_time(start, dur)
-    cmd = ["gcalcli", "add", "--calendar", cal, "--title", item["title"],
-           "--when", f"{date} {start}", "--duration", str(dur), "--noprompt"]
+    cmd = gcalcli("add", "--calendar", cal, "--title", item["title"],
+           "--when", f"{date} {start}", "--duration", str(dur), "--noprompt")
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:

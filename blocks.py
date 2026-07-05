@@ -51,7 +51,7 @@ FIELD_ORDER = ["block", "parent", "calendar", "cadence", "habit",
                "days", "duration", "instances", "default_start", "travel"]
 
 CADENCES = ("daily", "weekly")
-DEFAULT_CALENDAR = "Miro-Personal"
+from paths import DEFAULT_CALENDAR
 
 
 # ── file read / write ────────────────────────────────────────────────────────

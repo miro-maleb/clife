@@ -21,12 +21,14 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+from paths import KB
+
 from rich.console import Console
 from rich.rule import Rule
 
 console = Console()
 
-INBOX_DIR = Path.home() / "kb" / "inbox"
+INBOX_DIR = KB / "inbox"
 DEFAULT_MAILDIR = Path.home() / "mail" / "kb-capture" / "Inbox"
 
 

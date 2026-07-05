@@ -31,7 +31,7 @@ import inbox
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 PROJECTS_DIR = KB / "projects"
 INBOX_DIR = KB / "inbox"
 STALE_DAYS = 30

@@ -9,6 +9,8 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
+from paths import KB
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -20,12 +22,12 @@ import pool
 
 console = Console()
 
-notes_path = Path.home() / "kb" / "notes"
-project_path = Path.home() / "kb" / "projects"
-inbox_path = Path.home() / "kb" / "inbox"
-shopping_path = Path.home() / "kb" / "shopping"
+notes_path = KB / "notes"
+project_path = KB / "projects"
+inbox_path = KB / "inbox"
+shopping_path = KB / "shopping"
 system_improvements_path = (
-    Path.home() / "kb" / "projects" / "infrastructure" / "clife" / "system-improvements.md"
+    KB / "projects" / "infrastructure" / "clife" / "system-improvements.md"
 )
 
 HOTKEYS = (
@@ -642,7 +644,7 @@ def prune_items():
     return {"items": out}
 
 
-TRASH = Path.home() / "kb" / ".trash"
+TRASH = KB / ".trash"
 
 
 def _trash_file(file):

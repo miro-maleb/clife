@@ -5,14 +5,16 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
+from paths import KB
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
 console = Console()
 
-ideas_path = Path.home() / "kb" / "ideas"
-project_path = Path.home() / "kb" / "projects"
+ideas_path = KB / "ideas"
+project_path = KB / "projects"
 EXCLUDED_TOP = {"life-os", "personal-life"}
 
 

@@ -1,0 +1,28 @@
+"""paths.py — the per-tenant seams for clife, in one place.
+
+Everything used to hardcode `~/kb` and a bare `gcalcli`. For a second tenant on
+the same machine (a different `~/kb`, a different Google account) those become
+env-driven — but the defaults are Miro's exact old values, so an un-env'd run is
+byte-identical. Zero clife imports here, so anything can import it cycle-free.
+
+  CLIFE_KB                 knowledge-base root        (default ~/kb)
+  CLIFE_GCALCLI_CONFIG     gcalcli --config-folder    (default: ambient config)
+  CLIFE_DEFAULT_CALENDAR   default calendar for new blocks (default Miro-Personal)
+"""
+import os
+from pathlib import Path
+
+KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
+
+GCALCLI_CONFIG = os.environ.get("CLIFE_GCALCLI_CONFIG")   # None → gcalcli's own default
+
+DEFAULT_CALENDAR = os.environ.get("CLIFE_DEFAULT_CALENDAR", "Miro-Personal")
+
+
+def gcalcli(*args):
+    """Build a gcalcli argv, injecting --config-folder for the active tenant so
+    each tenant reads/writes its own Google account."""
+    base = ["gcalcli"]
+    if GCALCLI_CONFIG:
+        base += ["--config-folder", GCALCLI_CONFIG]
+    return base + list(args)

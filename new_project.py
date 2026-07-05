@@ -4,6 +4,8 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
+from paths import KB
+
 from rich.console import Console
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -11,7 +13,7 @@ from inbox import get_project_areas, select_area_fzf
 
 console = Console()
 
-project_path = Path.home() / "kb" / "projects"
+project_path = KB / "projects"
 
 
 def getch():

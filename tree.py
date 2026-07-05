@@ -19,7 +19,7 @@ from tui_common import ACCENT, ACCENT_DIM, BODY, MUTED
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 PROJECTS = KB / "projects"
 SYSTEMS = KB / "systems"
 GOALS = KB / "goals"

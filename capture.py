@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from paths import KB
+
 from kb_utils import insert_journal_bullet, today_journal
 
 try:
@@ -76,7 +78,7 @@ def save_pending(wav_path):
 
 
 def kb_push(stamp):
-    kb_dir = str(Path.home() / "kb")
+    kb_dir = str(KB)
     subprocess.run(["git", "-C", kb_dir, "add", "-A"], capture_output=True)
     subprocess.run(["git", "-C", kb_dir, "commit", "-m", f"capture {stamp}"],
                    capture_output=True)
@@ -89,7 +91,7 @@ def kb_push(stamp):
     else:
         print(f"Push failed: {result.stderr.strip() or 'unknown error'}")
 
-inbox_path = Path.home() / "kb" / "inbox"
+inbox_path = KB / "inbox"
 
 
 def unique_inbox_path(stamp, index=None):
@@ -106,7 +108,7 @@ def unique_inbox_path(stamp, index=None):
     return path
 
 
-capture_log = Path.home() / "kb" / "capture-log.md"
+capture_log = KB / "capture-log.md"
 
 
 def log_capture(text, stamp):

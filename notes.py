@@ -31,7 +31,7 @@ from rich.console import Console
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 PROJECTS = KB / "projects"
 LEGACY_NOTES = KB / "notes"
 

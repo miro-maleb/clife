@@ -23,6 +23,8 @@ import sys
 from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 
+from paths import KB, gcalcli
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from rich.text import Text
@@ -581,7 +583,7 @@ class AgendaPane(Static):
         if not ev or not ev["meta"]:
             self.app.notify("open only applies to system blocks", severity="warning")
             return
-        sys_dir = Path.home() / "kb" / "systems" / ev["system"]
+        sys_dir = KB / "systems" / ev["system"]
         target = sys_dir / "working.md"
         if not target.exists():
             target = sys_dir / "system.md"
@@ -892,14 +894,14 @@ class AgendaApp(App):
                     self.load_day(date_obj)
                     return
                 when = f"{date_obj.strftime('%Y-%m-%d')} {new_time}"
-                cmd = [
-                    "gcalcli", "add",
+                cmd = gcalcli(
+                    "add",
                     "--calendar", cal,
                     "--title", title,
                     "--when", when,
                     "--duration", str(duration_min),
                     "--noprompt",
-                ]
+                )
                 result = await asyncio.to_thread(
                     subprocess.run, cmd, capture_output=True, text=True
                 )

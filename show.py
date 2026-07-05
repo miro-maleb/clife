@@ -31,7 +31,7 @@ from tui_common import ACCENT, ACCENT_DIM, BODY, BORDER, MUTED
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 PROJECTS = KB / "projects"
 
 OVERVIEW_FILES = ("area.md", "project.md", "sub-project.md")

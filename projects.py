@@ -17,7 +17,7 @@ import fm
 
 console = Console()
 
-KB = Path.home() / "kb"
+from paths import KB
 project_path = KB / "projects"
 archive_path = KB / "archive"
 goals_path = KB / "goals"

@@ -383,7 +383,7 @@ def exit_to_launcher() -> None:
 
 def git_push_kb() -> None:
     """Stage, commit, and push kb/ after a TUI session."""
-    kb = Path.home() / "kb"
+    from paths import KB as kb
     subprocess.run([GIT, "-C", str(kb), "add", "-A"], check=False)
     result = subprocess.run(
         [GIT, "-C", str(kb), "commit", "-m", f"auto sync {datetime.date.today()}"],

@@ -2,7 +2,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-_journal_dir = Path.home() / "kb" / "log"
+from paths import KB
+
+# The per-day work log. NOT kb/journal/ — that is reserved for the handwritten
+# journal (OCR pipeline); writing dailies there would collide with it.
+_journal_dir = KB / "log"
 
 
 def capture_payload(file_path):
