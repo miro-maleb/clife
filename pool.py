@@ -34,11 +34,12 @@ from pathlib import Path
 
 from rich.console import Console
 
-from paths import gcalcli
+from paths import gcalcli, DATA_DIR
+from paths import DEFAULT_CALENDAR as _TENANT_DEFAULT_CAL
 
 console = Console()
 
-DB_DIR = Path(os.environ.get("CLIFE_DATA_DIR", Path.home() / ".local" / "share" / "clife"))
+DB_DIR = DATA_DIR
 DB_PATH = DB_DIR / "calendar-pool.db"
 
 # item lifecycle: pooled → placed → done  (or → dropped; placed → pooled on miss)
@@ -51,7 +52,9 @@ REVIEW_STATUSES = ("done", "partial", "missed")
 STREAK_OK = ("done", "partial")
 
 # Calendar a one-off lands on when it has none of its own (daily-life bucket).
-DEFAULT_CALENDAR = os.environ.get("CLIFE_POOL_CALENDAR", "Miro-Personal")
+# CLIFE_POOL_CALENDAR overrides; otherwise the tenant's default calendar (so a
+# second tenant pools onto a calendar it can actually write, not Miro's).
+DEFAULT_CALENDAR = os.environ.get("CLIFE_POOL_CALENDAR") or _TENANT_DEFAULT_CAL
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pool_item (
@@ -670,7 +673,7 @@ def main():
     p.add_argument("item", type=int)
     p.add_argument("date", help="YYYY-MM-DD")
     p.add_argument("time", help="HH:MM start")
-    p.add_argument("--calendar", help="override calendar (default: item's, else Miro-Personal)")
+    p.add_argument("--calendar", help="override calendar (default: item's, else the tenant default)")
     p.add_argument("--duration", help="override duration: 90, 90m, or 2h (default: est_minutes)")
     p.set_defaults(func=cmd_schedule)
 

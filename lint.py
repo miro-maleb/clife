@@ -30,6 +30,7 @@ from rich.console import Console
 import fm
 import schema
 import week
+from paths import DATA_DIR
 
 console = Console()
 
@@ -37,7 +38,7 @@ KB = week.KB
 # Persistent snapshot of the latest read-only scan — written by the weekly timer
 # (`cl lint --snapshot`) and read by the Surface maintenance page as the "latest
 # scan before fixing." Tower-local state, not git-synced (like the pool DB).
-REPORT_PATH = Path.home() / ".local" / "share" / "clife" / "lint-report.json"
+REPORT_PATH = DATA_DIR / "lint-report.json"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_-]+)(:)(.*)$")
 _BLOCK_ITEM = re.compile(r"^\s+-\s+")

@@ -6,13 +6,20 @@ env-driven — but the defaults are Miro's exact old values, so an un-env'd run 
 byte-identical. Zero clife imports here, so anything can import it cycle-free.
 
   CLIFE_KB                 knowledge-base root        (default ~/kb)
+  CLIFE_DATA_DIR           tower-local state (pool DB, lint report)  (default ~/.local/share/clife)
   CLIFE_GCALCLI_CONFIG     gcalcli --config-folder    (default: ambient config)
   CLIFE_DEFAULT_CALENDAR   default calendar for new blocks (default Miro-Personal)
+
+Note: gcalcli's OAuth *token* lives in the XDG data dir, not --config-folder, so
+a second tenant also needs its own XDG_DATA_HOME to isolate its Google login.
 """
 import os
 from pathlib import Path
 
 KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
+
+# Tower-local state (not git-synced): the calendar-pool DB, the lint report, etc.
+DATA_DIR = Path(os.environ.get("CLIFE_DATA_DIR", str(Path.home() / ".local" / "share" / "clife"))).expanduser()
 
 GCALCLI_CONFIG = os.environ.get("CLIFE_GCALCLI_CONFIG")   # None → gcalcli's own default
 
