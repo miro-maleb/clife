@@ -37,7 +37,7 @@ LEGACY_NOTES = KB / "notes"
 
 EXCLUDE_PARTS = {
     ".git", "venv", ".venv", "__pycache__", "node_modules",
-    "archive", "inbox", "weeks", "journal", "templates",
+    "archive", "inbox", "weeks", "log", "journal", "templates",
     ".obsidian", ".trash",
 }
 

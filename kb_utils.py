@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-_journal_dir = Path.home() / "kb" / "journal"
+_journal_dir = Path.home() / "kb" / "log"
 
 
 def capture_payload(file_path):
@@ -45,10 +45,10 @@ def get_journal_path(date=None):
 
 
 def insert_journal_bullet(text, journal=None):
-    """Insert *text* as a bullet into the ## Journal section of today's journal.
+    """Insert *text* as a bullet into the ## Log section of today's journal.
 
     Creates the journal file if it doesn't exist.  Falls back to appending at
-    the end when there is no ## Journal section.
+    the end when there is no ## Log section.
     """
     if journal is None:
         journal = today_journal()
@@ -62,7 +62,7 @@ def insert_journal_bullet(text, journal=None):
     section_start = None
     insert_at = None
     for i, line in enumerate(lines):
-        if re.match(r'^## Journal\s*$', line):
+        if re.match(r'^## Log\s*$', line):
             section_start = i
         elif section_start is not None and re.match(r'^## ', line):
             insert_at = i
