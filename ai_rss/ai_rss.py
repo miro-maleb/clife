@@ -36,6 +36,8 @@ import yaml
 from ddgs import DDGS
 from urllib.parse import urlparse
 
+import sources
+
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/126.0 Safari/537.36")
 
@@ -134,8 +136,13 @@ def search_column(cfg: dict, queries: list[str]) -> list[dict]:
     return list(out.values())
 
 
-def select(cfg: dict, column: str, candidates: list[dict]) -> list[dict]:
-    """Local LLM picks the most significant, reputable, non-sensational stories."""
+def select(cfg: dict, column: str, candidates: list[dict],
+           brief: str | None = None) -> list[dict]:
+    """Local LLM picks the most significant, reputable, non-sensational stories.
+
+    A column's optional `brief` is its editorial standing order — what this section
+    is *for* — and overrides generic newsworthiness when the two disagree.
+    """
     n = cfg["select"]["per_column"]
     menu = "\n".join(
         f"[{i}] {c['title']}\n     {c['snippet'][:200]}\n     {c['url']}"
@@ -152,9 +159,11 @@ def select(cfg: dict, column: str, candidates: list[dict]) -> list[dict]:
         "Quality over quota: it is BETTER to return FEWER items — even an empty "
         "list — than to include something that is not actually news. Reply ONLY as JSON."
     )
+    brief_block = f"\nEditorial brief for this section (overrides all else):\n{brief}\n" if brief else ""
     user = (
-        f"Section: {column}\n\nCandidates:\n{menu}\n\n"
-        f"Select at most {n} — only the ones that are genuinely recent news. "
+        f"Section: {column}\n{brief_block}\nCandidates:\n{menu}\n\n"
+        f"Select at most {n} — only the ones that are genuinely recent news"
+        f"{' AND satisfy the editorial brief' if brief else ''}. "
         "Fewer (or none) is fine. Return JSON: "
         '{"selected": [<indices>], "reason": "<one line>"}'
     )
@@ -228,19 +237,35 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
     for col in cfg["columns"]:
         if only and col["name"].lower() != only.lower():
             continue
-        log(f"[{col['name']}] searching…")
+        # A column either names its sources (curated: high signal, no scrape) or
+        # states queries (open-web search). Curated wins where both are present.
+        if col.get("sources"):
+            log(f"[{col['name']}] collecting curated sources…")
+            raw = sources.collect(col["sources"])
+        else:
+            log(f"[{col['name']}] searching…")
+            raw = search_column(cfg, col["queries"])
         # dedupe against PREVIOUS days only (today's URLs stay eligible for regenerate)
-        candidates = [c for c in search_column(cfg, col["queries"])
-                      if seen.get(c["url"], today) >= today]
+        candidates = [c for c in raw if seen.get(c["url"], today) >= today]
         log(f"[{col['name']}] {len(candidates)} fresh candidates")
         if not candidates:
             continue
-        chosen = select(cfg, col["name"], candidates)
+        chosen = select(cfg, col["name"], candidates, col.get("brief"))
         log(f"[{col['name']}] selected {len(chosen)}")
         stories = []
         for st in chosen:
-            body = fetch_clean(cfg, st["url"])
-            if not body or len(body) < 250:
+            # Curated sources hand us the text (release notes, post body) or point
+            # at plain text; those URLs (reddit, HF) resist scraping anyway. Only
+            # search hits get the trafilatura treatment.
+            body = st.get("body")
+            if not body and st.get("raw_url"):
+                body = sources.fetch_raw(st["raw_url"])
+                if body:  # keep the stats — the card alone won't say it's trending
+                    body = f"{st.get('meta', '')}\n\n{body}"
+            provided = bool(body)
+            if not body:
+                body = fetch_clean(cfg, st["url"])
+            if not body or len(body) < (80 if provided else 250):
                 log(f"  skip (no text): {st['url']}")
                 continue
             log(f"  writing: {st['title'][:60]}")

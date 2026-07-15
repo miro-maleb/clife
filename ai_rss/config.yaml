@@ -12,7 +12,7 @@ search:
   sleep_between: 1.5               # politeness / rate-limit cushion (seconds)
 
 select:
-  per_column: 4                    # final stories that make the issue, per column
+  per_column: 6                    # final stories that make the issue, per column
 
 write:
   max_article_chars: 6000          # truncate cleaned article text fed to the writer
@@ -22,27 +22,46 @@ write:
 deliver:
   outbox: ~/kb/outbox
 
+# Single column for now: "is it time to download a new model?" is the question this
+# issue exists to answer. Other columns (AI & the World, World & Politics, Dharma,
+# Contemplative-Literary) are in git history at d45bc74 if we want them back.
 columns:
   - name: Local AI & Open Models
-    queries:
-      - "new open weights LLM model release"
-      - "ollama llama.cpp vllm update"
-      - "local AI agents MCP tools"
-      - "consumer GPU LLM inference"
-  - name: AI & the World
-    queries:
-      - "AI policy regulation news"
-      - "AI impact society jobs"
-  - name: World & Politics
-    queries:
-      - "major world news developments"
-      - "geopolitics this week"
-  - name: Dharma
-    queries:
-      - "Buddhism Zen news teacher"
-      - "Dzogchen Tibetan Buddhism"
-      - "new Buddhist book or essay"
-  - name: The Contemplative-Literary World
-    queries:
-      - "literary translation contemplative essay"
-      - "new literary fiction craft essay"
+    brief: |
+      This section answers ONE question: "is it time for me to download a new model?"
+      The reader runs open-weights models locally on a single 24GB RTX 3090 via ollama,
+      and today runs qwen3.6:27b. He is not a cloud-API customer.
+
+      INCLUDE only: releases of open-weights models he could actually download and run;
+      new quantizations (GGUF/AWQ/etc.) that newly fit a 24GB card; benchmarks that
+      compare open models head-to-head; and inference-engine releases (ollama,
+      llama.cpp, vllm) that change what his hardware can run.
+
+      EXCLUDE, no matter how big the news: closed/proprietary/API-only models
+      (OpenAI, Anthropic, Gemini, Grok) — he cannot download them; model cards, docs,
+      and vendor "release notes" pages, which are living reference, not news; models
+      far too large for 24GB with no quantization that fits; AI business, funding,
+      and policy news; and low-quality SEO/aggregator/content-farm sources — prefer
+      primary announcements and reputable outlets.
+    # Named, not searched. DDG for this topic returns SEO content farms; these are
+    # where the news actually breaks. Add a feed here rather than a query.
+    sources:
+      - type: rss
+        label: r/LocalLLaMA
+        url: https://www.reddit.com/r/LocalLLaMA/top.rss?t=week
+        limit: 25
+      - type: rss
+        label: Simon Willison
+        url: https://simonwillison.net/atom/everything/
+        limit: 15
+      - type: github_releases
+        repo: ollama/ollama
+        limit: 3
+      - type: github_releases
+        repo: ggml-org/llama.cpp
+        limit: 3
+      - type: github_releases
+        repo: vllm-project/vllm
+        limit: 2
+      - type: hf_trending
+        limit: 30
