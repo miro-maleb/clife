@@ -29,20 +29,46 @@ columns:
   - name: Local AI & Open Models
     brief: |
       This section answers ONE question: "is it time for me to download a new model?"
-      The reader runs open-weights models locally on a single 24GB RTX 3090 via ollama,
-      and today runs qwen3.6:27b. He is not a cloud-API customer.
 
-      INCLUDE only: releases of open-weights models he could actually download and run;
-      new quantizations (GGUF/AWQ/etc.) that newly fit a 24GB card; benchmarks that
-      compare open models head-to-head; and inference-engine releases (ollama,
-      llama.cpp, vllm) that change what his hardware can run.
+      THE READER'S RIG — judge every item against this, not against general interest:
+        - ONE RTX 3090: 24GB VRAM, Ampere, compute capability 8.6.
+        - Runs GGUF through ollama (+ OpenWebUI). Not vLLM, not SGLang, not TensorRT.
+        - Today runs qwen3.6:27b at Q4_K_M (~17GB). He is not a cloud-API customer.
 
-      EXCLUDE, no matter how big the news: closed/proprietary/API-only models
-      (OpenAI, Anthropic, Gemini, Grok) — he cannot download them; model cards, docs,
-      and vendor "release notes" pages, which are living reference, not news; models
-      far too large for 24GB with no quantization that fits; AI business, funding,
-      and policy news; and low-quality SEO/aggregator/content-farm sources — prefer
-      primary announcements and reputable outlets.
+      Capacity is not capability — check BOTH:
+        - "Fits in 24GB" does not mean it runs well. Ampere sm_86 has NO FP4 tensor
+          cores, so NVFP4 / MXFP4 / W4A4 checkpoints get none of their advertised
+          speedup here — those need Blackwell (sm_120+, RTX 50-series). A card-size
+          match is not a hardware match.
+        - If it isn't GGUF (or doesn't have a GGUF build), ollama cannot load it.
+          safetensors/AWQ/GPTQ/NVFP4 artifacts served "via vLLM" are NOT usable.
+
+      INCLUDE only: open-weights models with a GGUF he could pull and run tonight;
+      quantizations that newly make a good model fit ~24GB at usable quality;
+      head-to-head benchmarks between open models; and ollama/llama.cpp releases that
+      change what THIS card can run.
+
+      EXCLUDE, no matter how big the news: closed/API-only models (OpenAI, Anthropic,
+      Gemini, Grok) — he cannot download them; anything whose speed claim depends on
+      hardware he lacks (see above); formats ollama can't load; model cards, docs and
+      vendor "release notes" pages, which are living reference, not news; models far
+      too large for 24GB with no quantization that fits; AI business, funding and
+      policy news; and SEO/aggregator/content-farm sources — prefer primary
+      announcements and reputable outlets.
+
+      When an item's usefulness depends on hardware or format, SAY SO in the writeup
+      rather than repeating a vendor's headline number.
+    # Hard facts about this rig, enforced in code — the model kept selecting NVFP4
+    # despite the brief forbidding it, then wrote up its Blackwell-only "2.5x faster"
+    # as if it applied to an Ampere card. Not a judgment call; not the model's job.
+    # A 3090 (sm_86) has no FP4 tensor cores, and ollama loads GGUF only.
+    exclude:
+      - '\bnvfp4\b'          # Blackwell-only (sm_120+); no speedup on Ampere
+      - '\bmxfp4\b'          # same
+      - '\bw4a4\b'           # 4-bit activations need FP4 tensor cores
+      - '\bfp4\b'
+      - '-FP8$'              # FP8 checkpoints: Hopper/Blackwell path, not ollama GGUF
+
     # Named, not searched. DDG for this topic returns SEO content farms; these are
     # where the news actually breaks. Add a feed here rather than a query.
     sources:

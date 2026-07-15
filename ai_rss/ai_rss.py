@@ -136,6 +136,34 @@ def search_column(cfg: dict, queries: list[str]) -> list[dict]:
     return list(out.values())
 
 
+def drop_excluded(column: dict, candidates: list[dict]) -> list[dict]:
+    """Filter candidates a column can never use, by regex over title + snippet.
+
+    This is deliberately NOT the model's job. Whether this GPU has FP4 tensor cores
+    is a fact, not a judgment call, and the brief-only version kept selecting NVFP4
+    checkpoints anyway (and writing up their Blackwell-only speedups as if they
+    applied). Same lesson the inbox learned: let AI prune coarsely and judge, but
+    keep hard rules deterministic.
+    """
+    pats = [re.compile(p, re.I) for p in column.get("exclude", [])]
+    if not pats:
+        return candidates
+    kept, dropped = [], []
+    for c in candidates:
+        # Title only, deliberately. Matching the snippet too killed a real
+        # release-news post ("Kimi K3 in the next few hours…") because someone
+        # mentioned fp4 downthread. The format is named in a model id or a post
+        # title when the item IS that artifact; in body text it's just chatter.
+        if any(p.search(c.get("title", "")) for p in pats):
+            dropped.append(c["title"][:60])
+        else:
+            kept.append(c)
+    if dropped:
+        log(f"[{column['name']}] excluded {len(dropped)}: {', '.join(dropped[:4])}"
+            + (" …" if len(dropped) > 4 else ""))
+    return kept
+
+
 def select(cfg: dict, column: str, candidates: list[dict],
            brief: str | None = None) -> list[dict]:
     """Local LLM picks the most significant, reputable, non-sensational stories.
@@ -247,6 +275,7 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
             raw = search_column(cfg, col["queries"])
         # dedupe against PREVIOUS days only (today's URLs stay eligible for regenerate)
         candidates = [c for c in raw if seen.get(c["url"], today) >= today]
+        candidates = drop_excluded(col, candidates)
         log(f"[{col['name']}] {len(candidates)} fresh candidates")
         if not candidates:
             continue
