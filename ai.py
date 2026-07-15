@@ -250,6 +250,51 @@ Return ONLY JSON: {{"title":"<t>","est_minutes":<int>}}""")
     }
 
 
+# ── watchdog event triage ────────────────────────────────────────────────────
+#
+# Coarse triage only (per the AI-role rule): when the tower's health watchdog
+# changes state, the model writes a plain-English read on WHAT changed and WHY,
+# plus ONE *suggested* next step. It never acts — the human (or a later, opted-in
+# autonomous phase) decides. Surface shows this note; the alert email carries it.
+
+def triage_watchdog(report, previous=None):
+    """Explain a watchdog snapshot in plain words + suggest a next step.
+
+    report:   the current snapshot dict (status, checks[], culprits[]).
+    previous: the prior snapshot dict, if any, so the model can say what CHANGED.
+    Returns {"headline","explanation","suggested_action","confidence"} — {} on failure.
+    """
+    def brief(r):
+        if not r:
+            return "(none)"
+        parts = [f'status={r.get("status")}']
+        for c in r.get("checks", []):
+            parts.append(f'{c["name"]}:{c["status"]}={c["detail"]}')
+        for cp in r.get("culprits", []):
+            parts.append(f'culprit pid {cp["pid"]} {cp.get("cpu")}%cpu '
+                         f'{cp.get("etime")} {cp.get("cmd", "")}')
+        return " | ".join(parts)
+
+    prompt = f"""/no_think
+You triage a Linux tower's health-watchdog events for its owner. You do NOT fix
+anything — you explain what changed and suggest ONE next step for the human.
+
+Prior snapshot:   {brief(previous)}
+Current snapshot: {brief(report)}
+
+Each check is ok/warn/crit. Culprits are flagged runaway/stray processes.
+Common benign case: a service reads warn only because it was caught mid-restart
+(deactivating/activating) — call that out as likely-transient, not a real outage.
+Be concise and decisive; never invent causes the snapshot doesn't support.
+
+Return ONLY JSON:
+{{"headline": "<= 8 words: the current state>",
+  "explanation": "<= 2 sentences: what changed and the most likely cause>",
+  "suggested_action": "<= 1 sentence; 'none needed' if healthy or self-resolving>",
+  "confidence": <0.0-1.0>}}"""
+    return _generate_json(prompt)
+
+
 # ── (room for more calls: draft_reply(), propose_blocks(), weekly_review(), … ) ──
 
 

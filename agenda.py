@@ -451,9 +451,13 @@ def main() -> None:
         # so the surface can render multi-day events as continuous bars with lanes.
         events: list[dict] = []
         for cal in active_calendars():
+            # --details id prepends an `id` column: the gcal event id. Surfaces need
+            # it to address a specific event (click-to-edit); without it an event is
+            # only identifiable by title+date, which collides.
             cmd = gcalcli("agenda", "--calendar", cal,
                    grid_start.strftime("%Y-%m-%d"),
-                   (grid_end + timedelta(days=1)).strftime("%Y-%m-%d"), "--tsv")
+                   (grid_end + timedelta(days=1)).strftime("%Y-%m-%d"),
+                   "--tsv", "--details", "id")
             try:
                 r = _sp.run(cmd, capture_output=True, text=True, check=False, timeout=60)
             except (FileNotFoundError, _sp.TimeoutExpired):
@@ -464,9 +468,10 @@ def main() -> None:
                 if not line.strip():
                     continue
                 parts = line.split("\t")
-                if len(parts) < 5 or parts[0] == "start_date":
+                if len(parts) < 6 or parts[0] == "id":
                     continue
-                sd, st, ed, _et, title = parts[0], parts[1], parts[2], parts[3], parts[4]
+                eid, sd, st, ed, _et, title = (parts[0], parts[1], parts[2],
+                                               parts[3], parts[4], parts[5])
                 try:
                     sdate = _date.fromisoformat(sd)
                 except ValueError:
@@ -485,7 +490,7 @@ def main() -> None:
                 if edate < grid_start or sdate > grid_end:
                     continue
                 events.append({
-                    "calendar": cal, "title": title,
+                    "id": eid, "calendar": cal, "title": title,
                     "start_date": max(sdate, grid_start).isoformat(),
                     "end_date": min(edate, grid_end).isoformat(),
                     "start_time": st or None,

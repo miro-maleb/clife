@@ -1,0 +1,10 @@
+{
+"https://github.com/ggml-org/llama.cpp/releases/tag/b10032": "2026-07-15",
+"https://github.com/ollama/ollama/releases/tag/v0.32.0": "2026-07-15",
+"https://github.com/vllm-project/vllm/releases/tag/v0.25.0": "2026-07-15",
+"https://huggingface.co/bottlecapai/ThinkingCap-Qwen3.6-27B": "2026-07-15",
+"https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf": "2026-07-15",
+"https://huggingface.co/unsloth/DeepSeek-V4-Flash-GGUF": "2026-07-15",
+"https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4": "2026-07-15",
+"https://www.reddit.com/r/LocalLLaMA/comments/1usniqh/25x_faster_qwen36_nvfp4_unsloth_quants/": "2026-07-15"
+}
