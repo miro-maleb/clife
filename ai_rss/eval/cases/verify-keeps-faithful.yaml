@@ -1,0 +1,23 @@
+# The critical false-positive guard: faithful copy must survive untouched. A
+# fact-checker that mangles accurate stories is worse than none — this is what
+# keeps the verify pass from being a lossy paraphrase machine.
+stage: verify
+input:
+  story:
+    headline: "Ollama 0.32.0 adds interactive agent"
+    summary: >
+      Ollama released version 0.32.0, introducing an interactive agent for coding
+      and task delegation. The update renames the Codex App integration to ChatGPT
+      and simplifies the launch menu.
+    url: "https://github.com/ollama/ollama/releases/tag/v0.32.0"
+    source: "github.com"
+  body: |
+    Ollama v0.32.0
+
+    New: an interactive agent for coding and task delegation. The Codex App
+    integration has been renamed to ChatGPT. The launch menu has been simplified.
+    Deprecation warnings are now shown for older agent models.
+assert:
+  is_none: false
+  corrected: false
+  text_includes: ["0.32.0", "agent"]

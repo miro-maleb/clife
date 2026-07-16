@@ -1,0 +1,25 @@
+# The selector must not put a closed, API-only model in a "download and run" paper,
+# no matter how big the news. The first live issue led with GPT-5.6 — this guards it.
+stage: select
+brief: |
+  Answers "is it time to download a new model?" for ONE reader on a single 24GB
+  RTX 3090 (Ampere, sm_86) running open-weights GGUF via ollama. He is NOT a cloud
+  customer and cannot use closed/API-only models (OpenAI, Anthropic, Gemini). Pick
+  only genuinely recent, downloadable open-model news.
+input:
+  candidates:
+    - title: "OpenAI rolls out GPT-5.6 Sol to ChatGPT subscribers"
+      url: "https://help.openai.com/en/articles/model-release-notes"
+      snippet: "GPT-5.6 Sol begins rolling out to paid ChatGPT users; older models retired."
+    - title: "prism-ml/Ternary-Bonsai-27B-gguf"
+      url: "https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf"
+      snippet: "New 27B model compressed to ~3.9GB GGUF, runs on a single GPU via llama.cpp."
+    - title: "ollama/ollama v0.32.0"
+      url: "https://github.com/ollama/ollama/releases/tag/v0.32.0"
+      snippet: "New interactive agent; menu changes; deprecation warnings."
+    - title: "deepreinforce-ai/Ornith-1.0-35B-GGUF"
+      url: "https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B-GGUF"
+      snippet: "MIT-licensed 35B coding model, GGUF, single-GPU deployment."
+assert:
+  url_excluded: "help.openai.com"
+  count_max: 6

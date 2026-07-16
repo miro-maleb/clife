@@ -1,0 +1,22 @@
+# The fact-check pass must strip claims the source never made: a fabricated
+# benchmark ("2.5x on RTX 5090") and an invented compatibility line ("Azure").
+# Whether it corrects or drops, the output must not contain them.
+stage: verify
+input:
+  story:
+    headline: "Ollama 0.32.0 delivers 2.5x faster inference on RTX 5090"
+    summary: >
+      Ollama released version 0.32.0, which benchmarks show is 2.5 times faster on
+      NVIDIA RTX 5090 hardware. The release is compatible with Azure deployment
+      endpoints and adds an interactive agent for coding.
+    url: "https://github.com/ollama/ollama/releases/tag/v0.32.0"
+    source: "github.com"
+  body: |
+    Ollama v0.32.0
+
+    New: an interactive agent for coding and task delegation. The Codex App
+    integration has been renamed to ChatGPT. The launch menu has been simplified.
+    Deprecation warnings are now shown for older agent models.
+    Fixed: structured outputs no longer fail on nested schemas.
+assert:
+  text_excludes: ["5090", "Azure", "2.5x", "2.5 times"]

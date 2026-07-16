@@ -1,0 +1,27 @@
+# The soft one (labelled): the recommendation should not tell the reader to grab a
+# Blackwell-only speedup for his Ampere card. If an FP4 story reaches the rec pass,
+# the verdict must flag that it does NOT apply — not repeat the vendor's 2.5x number
+# as an upgrade. Fuzzier than the others (matches any hedge word), so treat a miss as
+# "look at the copy", not necessarily a regression.
+stage: recommend
+brief: |
+  ONE reader, single 24GB RTX 3090 (Ampere, sm_86), open-weights GGUF via ollama.
+  NVFP4 / FP4 / W4A4 speedups need Blackwell (sm_120+) tensor cores he does NOT have;
+  a card-size match is not a hardware match. Say plainly when something does not apply.
+input:
+  stories:
+    - headline: "Unsloth releases Qwen3.6-27B NVFP4 quantized model"
+      summary: >
+        Unsloth published an NVFP4 quantization of Qwen3.6-27B claiming 2.5x faster
+        throughput, with instructions for vLLM deployment on newer NVIDIA hardware.
+      url: "https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4"
+      source: "huggingface.co"
+    - headline: "Ollama 0.32.0 adds interactive agent"
+      summary: >
+        Ollama 0.32.0 introduces an interactive coding agent and renames the Codex
+        integration to ChatGPT. No new models or quantizations.
+      url: "https://github.com/ollama/ollama/releases/tag/v0.32.0"
+      source: "github.com"
+assert:
+  text_includes_any: ["blackwell", "sm_", "not apply", "does not", "doesn't", "cannot", "won't", "no fp4", "ampere", "3090"]
+  text_excludes: ["download it now", "you should upgrade to the nvfp4"]

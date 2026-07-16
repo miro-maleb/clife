@@ -1,0 +1,24 @@
+# The deterministic filter must drop FP4/FP8 artifacts by TITLE, but leave a
+# release-news post alone even when "fp4" appears in its discussion body.
+# (No LLM — this stage is pure code; 1 run is as good as 100.)
+stage: exclude
+input:
+  candidates:
+    - title: "2.5x faster Qwen3.6 NVFP4 Unsloth quants"
+      url: "https://reddit.com/r/LocalLLaMA/x"
+      snippet: "unsloth nvfp4 w4a4"
+    - title: "unsloth/Qwen3.6-27B-NVFP4"
+      url: "https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4"
+      snippet: "nvfp4 checkpoint"
+    - title: "bottlecapai/ThinkingCap-Qwen3.6-27B-FP8"
+      url: "https://huggingface.co/bottlecapai/ThinkingCap-Qwen3.6-27B-FP8"
+      snippet: "fp8 build"
+    - title: "prism-ml/Ternary-Bonsai-27B-gguf"
+      url: "https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf"
+      snippet: "1.125-bit gguf, 7.2GB"
+    - title: "Kimi K3 in the next few hours, DeepSeek V4 GA later this week"
+      url: "https://reddit.com/r/LocalLLaMA/y"
+      snippet: "someone downthread mentions nvfp4 and fp4 support coming"
+assert:
+  dropped_includes: ["NVFP4", "FP8"]
+  kept_includes: ["gguf", "Kimi"]
