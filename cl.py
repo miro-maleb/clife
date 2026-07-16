@@ -13,6 +13,7 @@ COMMANDS = {
     "week":        "week",
     "pool":        "pool",
     "agenda":      "agenda",
+    "events":      "events",
     "checkin":     "checkin",
     "habits":      "habits",
     "blocks":      "blocks",
@@ -74,6 +75,10 @@ HELP = """
   cl agenda                   today's anchor — gcal + system blocks; mark done/skip
   cl agenda --dump            print today, headless
   cl agenda --date YYYY-MM-DD operate on a specific date
+  cl events show ID [--calendar NAME]    one gcal event by id (--json for surfaces)
+  cl events new --title T --calendar NAME --start "YYYY-MM-DD HH:MM" [--duration 30m|--all-day]
+  cl events set ID [--calendar NAME] [--title --start --duration --all-day --to-calendar]
+  cl events rm ID [--calendar NAME] [--force]   delete a gcal event by id
   cl checkin                  daily review — verify what was scheduled got done/missed
   cl checkin --dump|--json    print / emit today's plan + verdicts
   cl checkin --mark TITLE done|partial|missed  record a verdict (missed pool items return to pool)

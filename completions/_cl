@@ -27,6 +27,19 @@ _cl_blocks() {
   _describe "blocks" bl
 }
 
+_cl_calendars() {
+  # Reads the cache `cl events` writes (~/.local/share/clife/gcal-calendars.json).
+  # Offline by design — never shell out to gcalcli from a completion.
+  local -a cals
+  local f="${XDG_DATA_HOME:-$HOME/.local/share}/clife/gcal-calendars.json"
+  if [[ -r "$f" ]]; then
+    cals=(${(f)"$(python3 -c 'import json,sys
+try: print("\n".join(json.load(open(sys.argv[1]))["calendars"]))
+except Exception: pass' "$f" 2>/dev/null)"})
+  fi
+  _describe "calendars" cals
+}
+
 _cl_systems() {
   local -a sys
   local d
@@ -69,6 +82,7 @@ _cl() {
     "week:weekly planner"
     "pool:scheduling pool — one-off items awaiting placement"
     "agenda:today's anchor — gcal + system blocks"
+    "events:gcal event CRUD by id — show/new/set/rm"
     "checkin:daily review — verify what was scheduled got done/missed"
     "habits:habit dashboard — per-block streaks + done/missed history"
     "blocks:routine block editor — daily/weekly block CRUD"
@@ -237,6 +251,52 @@ _cl() {
         _values "agenda options" \
           "--dump[print today, headless]" \
           "--date[operate on YYYY-MM-DD]:date:"
+        ;;
+      events)
+        if (( CURRENT == 3 )); then
+          _values "events subcommand" \
+            "show[one event by id]" "new[create an event]" \
+            "set[edit an event by id]" "rm[delete an event by id]"
+        else
+          if [[ "$words[CURRENT-1]" == "--calendar" || "$words[CURRENT-1]" == "--to-calendar" ]]; then
+            _cl_calendars
+            return
+          fi
+          case "$words[3]" in
+            show)
+              _values "show options" \
+                "--calendar[the event's calendar (skips the scan)]:cal:_cl_calendars" \
+                "--json[emit JSON]"
+              ;;
+            new)
+              _values "new options" \
+                "--title[event title]:title:" \
+                "--calendar[target calendar]:cal:_cl_calendars" \
+                "--start[YYYY-MM-DD HH:MM | YYYY-MM-DD]:start:" \
+                "--duration[30m | 90m | 2h]:dur:" \
+                "--all-day[all-day event]" \
+                "--end[all-day last day, inclusive]:end:" \
+                "--json[emit JSON]"
+              ;;
+            set)
+              _values "set options" \
+                "--calendar[the event's current calendar (skips the scan)]:cal:_cl_calendars" \
+                "--to-calendar[move to this calendar (id preserved)]:cal:_cl_calendars" \
+                "--title[new title]:title:" \
+                "--start[YYYY-MM-DD HH:MM | HH:MM | YYYY-MM-DD]:start:" \
+                "--duration[30m | 90m | 2h]:dur:" \
+                "--all-day[convert to all-day]" \
+                "--end[all-day last day, inclusive]:end:" \
+                "--json[emit JSON]"
+              ;;
+            rm)
+              _values "rm options" \
+                "--calendar[the event's calendar (skips the scan)]:cal:_cl_calendars" \
+                "--force[no confirmation prompt]" \
+                "--json[emit JSON]"
+              ;;
+          esac
+        fi
         ;;
       checkin)
         _values "checkin options" \

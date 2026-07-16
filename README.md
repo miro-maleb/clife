@@ -20,6 +20,7 @@ Commands:
 | `cl review` | full review |
 | `cl week` | weekly planner |
 | `cl blocks` | routine block editor — daily/weekly block CRUD + feeding chain |
+| `cl events` | gcal event CRUD by id — show/new/set/rm (Calendar API, not gcalcli) |
 | `cl trips` | travel-aware scheduling — per-trip daily allowlist (saved for the trip) |
 | `cl systems` | system editor — status + feeding chain CRUD |
 | `cl goals` | goal editor — year/status/marker/orientations CRUD |

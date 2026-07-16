@@ -8,6 +8,7 @@ byte-identical. Zero clife imports here, so anything can import it cycle-free.
   CLIFE_KB                 knowledge-base root        (default ~/kb)
   CLIFE_DATA_DIR           tower-local state (pool DB, lint report)  (default ~/.local/share/clife)
   CLIFE_GCALCLI_CONFIG     gcalcli --config-folder    (default: ambient config)
+  CLIFE_GCAL_OAUTH         gcalcli's OAuth token pickle (default $XDG_DATA_HOME/gcalcli/oauth)
   CLIFE_DEFAULT_CALENDAR   default calendar for new blocks (default Miro-Personal)
 
 Note: gcalcli's OAuth *token* lives in the XDG data dir, not --config-folder, so
@@ -22,6 +23,13 @@ KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
 DATA_DIR = Path(os.environ.get("CLIFE_DATA_DIR", str(Path.home() / ".local" / "share" / "clife"))).expanduser()
 
 GCALCLI_CONFIG = os.environ.get("CLIFE_GCALCLI_CONFIG")   # None → gcalcli's own default
+
+# gcalcli's OAuth token lives in the XDG *data* dir, not --config-folder. `cl events`
+# unpickles it to talk to the Calendar API directly (gcalcli can't edit by id).
+GCAL_OAUTH = Path(os.environ.get(
+    "CLIFE_GCAL_OAUTH",
+    os.path.join(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")),
+                 "gcalcli", "oauth"))).expanduser()
 
 DEFAULT_CALENDAR = os.environ.get("CLIFE_DEFAULT_CALENDAR", "Miro-Personal")
 
