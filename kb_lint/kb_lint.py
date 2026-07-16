@@ -187,6 +187,19 @@ def scan_deadlines(today: dt.date) -> list[tuple]:
 
 
 # ── Layer 2: LLM passes (the --deep sweep) ────────────────────────────────────
+def _json_list(raw: str, key: str) -> list:
+    """Coerce a model JSON reply to a list. It may return {"key": [...]} or a bare
+    [...] — accept both; anything else is empty. Raises nothing the caller must catch
+    beyond json.JSONDecodeError."""
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        v = data.get(key)
+        return v if isinstance(v, list) else []
+    return []
+
+
 def _llm(system: str, user: str, temperature: float = 0.2) -> str:
     payload = {
         "model": MODEL,
@@ -248,10 +261,9 @@ def stale_pass(files: list[Path], today: dt.date, log=lambda s: None) -> list[di
                 f"{_body(md, DOC_TRUNC)}\n\n"
                 'Return JSON: {"stale": [{"claim": "<short quote>", "why": "<one line>"}]}')
         try:
-            data = json.loads(_llm(system, user))
-            items = [i for i in data.get("stale", [])
+            items = [i for i in _json_list(_llm(system, user), "stale")
                      if isinstance(i, dict) and i.get("claim")]
-        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError) as e:
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
             log(f"  stale skip {rel}: {e}")
             continue
         if items:
@@ -296,21 +308,21 @@ def contradiction_pass(files: list[Path], log=lambda s: None) -> list[dict]:
                 'Return JSON: {"conflicts": [{"a": "<quote from one note>", '
                 '"b": "<quote from another>", "issue": "<one line>"}]}')
         try:
-            found = json.loads(_llm(find_sys, user)).get("conflicts", [])
-        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError) as e:
+            found = _json_list(_llm(find_sys, user), "conflicts")
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
             log(f"  contra skip {d}: {e}")
             continue
         for c in found:
-            if not (c.get("a") and c.get("b")):
+            if not (isinstance(c, dict) and c.get("a") and c.get("b")):
                 continue
             vuser = (f"Note A says: {c['a']}\nNote B says: {c['b']}\n"
                      f"Claimed issue: {c.get('issue','')}\n\n"
                      'Return JSON: {"real": <true|false>, "why": "<one line>"}')
             try:
                 v = json.loads(_llm(verify_sys, vuser, temperature=0.1))
-            except (requests.RequestException, json.JSONDecodeError, TypeError):
+            except (requests.RequestException, json.JSONDecodeError, ValueError):
                 continue
-            if v.get("real"):
+            if isinstance(v, dict) and v.get("real"):
                 log(f"  {d}: contradiction confirmed")
                 out.append({"folder": d, **c, "why": v.get("why", "")})
     return out
