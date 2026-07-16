@@ -21,8 +21,10 @@ Output contract (the web app reads latest.json):
           }]}                                         # is off or returns nothing
 Same-day reruns re-pick freely (seen-dedupe is against previous days only).
 
-Runs as an overnight batch (systemd `ai-rss.timer`, Mondays 00:00), so nothing here
-optimises for latency: thinking is on and the model gets whole articles to read.
+Runs as an overnight batch (systemd `ai-rss.timer`, Mondays 00:00), so latency is
+free — the model gets whole articles to read. Thinking was tried and MEASURED not
+worth it (see config.yaml `think`); the freedom is spent on full-article context and
+the multi-pass verify/recommend stages, not on reasoning tokens.
 """
 from __future__ import annotations
 
@@ -101,11 +103,10 @@ def llm(cfg: dict, system: str, user: str, json_mode: bool = False,
         temperature: float = 0.3) -> str:
     """One non-streaming chat call to the tower's ollama.
 
-    This runs as an overnight batch job, so reasoning time is free — `think: true`
-    buys better judgment at no cost anyone is awake to notice. With thinking on,
-    ollama returns the reasoning in a separate `thinking` field and leaves `content`
-    clean, so JSON mode is unaffected (the <think> strip below stays as a fallback
-    for models that inline it instead).
+    `think` is config-driven (currently false — measured no better than off, see
+    config.yaml). When on, ollama returns reasoning in a separate `thinking` field and
+    leaves `content` clean, so JSON mode is unaffected; the <think> strip below is a
+    fallback for models that inline it instead.
     """
     payload = {
         "model": cfg["model"],
@@ -251,6 +252,12 @@ def write_story(cfg: dict, column: str, story: dict, body: str) -> dict | None:
     user = (
         f"Section: {column}\nSource title: {story['title']}\n\n"
         f"Article text:\n{body[:cfg['write']['max_article_chars']]}\n\n"
+        # The one thing thinking did better on deep sources was surface deployment
+        # caveats (hardware/format/runtime limits) buried in the article. Ask for it
+        # directly so the fast, non-thinking model catches them too.
+        "If the source states a hardware requirement, file format, or runtime "
+        "limitation that bears on whether a reader could actually run this, include "
+        "it in the summary. Do not pad — if there is no such caveat, omit it. "
         'Return JSON: {"headline": "<plain headline, <=12 words, no hype, no '
         'markdown>", "summary": "<2-3 calm sentences: what happened and why it '
         'matters>"}'

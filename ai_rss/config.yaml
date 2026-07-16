@@ -5,8 +5,14 @@
 # waiting on it, so it is tuned for QUALITY, not speed. Reasoning time is free here.
 model: qwen3.6-96k:latest          # tower 3090; long context for multi-article reads
 ollama_host: http://127.0.0.1:11434
-think: true                        # let it reason; ollama returns thinking separately,
-                                   # so JSON mode is unaffected. ~3-4x slower, all night to spend.
+think: false                       # MEASURED off (2026-07-15): the eval harness scored
+                                   # think:on and think:off identically (15/15 = 15/15) on
+                                   # correctness, and the prose comparison showed thinking
+                                   # writes *more*, not better — padded on thin sources,
+                                   # only marginally richer on deep ones — for ~5x runtime.
+                                   # Not worth it. Flip back to true only if a harder eval
+                                   # case ever separates the two. (ollama returns thinking in
+                                   # a separate field, so JSON mode is unaffected either way.)
 num_ctx: 32768                     # must hold the whole candidate menu + a full article.
                                    # Ceiling is VRAM, not the model: 17.4GB of weights on a
                                    # 24GB card leaves ~6GB for KV cache. Raise only with
