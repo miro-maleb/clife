@@ -347,47 +347,59 @@ def dump(offset_weeks=0):
     console.print(f"[bold]Total:[/bold] {placed_total} scheduled · {unplaced_total} to place\n")
 
 
-def build_view(offset_weeks=0):
-    """Assemble the full week view model for surfaces (web / TUI-agnostic).
+def found_in_titles(entry, titles):
+    """How many of this block's instances are already on the calendar, given the
+    multiset of titles from its OWN calendar for the window.
 
-    Fetches every non-excluded calendar once, computes the routine bank
-    (daily/weekly with found/expected), pulls the calendar pool, and lays out
-    the seven days with their events. Same data the TUI renders — no Rich, no
-    curses, just a dict ready for JSON.
+    The `instances` contract in one place: 1 instance matches the bare block name
+    (counted, so a stray duplicate shows up); N instances match "name #1".."name #N"
+    (each counted once — that's what caps a weekly block at N). Surfaces that build
+    the bank from their own event payload (Surface's month grid) call THIS, so the
+    count can't drift from what `cl week` reports.
+    """
+    name = entry["block"]
+    n = entry.get("instances", 1) or 1
+    if n <= 1:
+        return sum(1 for t in titles if t == name)
+    uniq = set(titles)
+    return sum(1 for i in range(1, n + 1) if f"{name} #{i}" in uniq)
+
+
+def build_bank(offset_weeks=0):
+    """The week's routine bank + pool, WITHOUT touching gcal.
+
+    Every input here is local — block defs (fs), skip counts (kb yaml), the pool
+    (sqlite) — so this is the ~200ms part of build_view a surface can have
+    without paying the ~5s calendar fetch. `found` is the one bank field that
+    genuinely needs the calendar; it comes back 0 and the caller fills it in via
+    found_in_titles().
+
+    build_view() calls this. Do NOT copy this loop into a caller: the bank shape
+    is read by `cl week`, the week planner, the day planner and the day modal,
+    and four hand-synced copies is exactly the drift this repo keeps warning about.
     """
     import pool
 
     monday, sunday = week_range(offset_weeks=offset_weeks)
-    blocks = load_blocks()
-    active = [(s, m, st) for s, m, st in blocks if st == "active"]
     skips = week_skip_counts(monday, sunday)
 
-    cals = [c for c in list_calendars() if c not in EXCLUDE_CALENDARS]
-    events_by_cal = {c: fetch_events(c, monday, sunday) for c in cals}
-    tdays = travel_days(monday, sunday)   # dates on the Travel calendar → paused habits skip
-
     daily, weekly = [], []
-    for sys_slug, meta, _ in active:
+    for sys_slug, meta, st in load_blocks():
+        if st != "active":
+            continue
         block_name = meta.get("block", "?")
-        cal = meta.get("calendar", "")
         expected_raw = expected_count(meta)
         if expected_raw == 0:
             continue
-        expected = max(0, expected_raw - skips.get(block_name, 0))
         try:
             instances = int(meta.get("instances", 1) or 1)
         except (ValueError, TypeError):
             instances = 1
-        events = events_by_cal.get(cal, [])
-        if instances <= 1:
-            found = sum(1 for _, _, _, t in events if t == block_name)
-        else:
-            titles = {t for _, _, _, t in events}
-            found = sum(1 for i in range(1, instances + 1) if f"{block_name} #{i}" in titles)
         entry = {
             "block": block_name, "system": sys_slug,
-            "found": found, "expected": expected,
-            "calendar": cal, "duration": meta.get("duration", ""),
+            "found": 0, "expected": max(0, expected_raw - skips.get(block_name, 0)),
+            "instances": instances,
+            "calendar": meta.get("calendar", ""), "duration": meta.get("duration", ""),
             "duration_min": parse_duration_minutes(meta.get("duration", "")) or 0,
             "default_start": meta.get("default_start", ""),
             "days": meta.get("days") or DAYS,
@@ -396,6 +408,37 @@ def build_view(offset_weeks=0):
         }
         (daily if meta.get("cadence") == "daily" else weekly).append(entry)
 
+    daily.sort(key=lambda e: e["block"])
+    weekly.sort(key=lambda e: e["block"])
+    return {
+        "week": {"monday": monday.isoformat(), "sunday": sunday.isoformat(),
+                 "offset": offset_weeks},
+        "bank": {"daily": daily, "weekly": weekly},
+        "pool": pool.list_items(status="pooled"),
+    }
+
+
+def build_view(offset_weeks=0):
+    """Assemble the full week view model for surfaces (web / TUI-agnostic).
+
+    build_bank() for the local half, then one fetch per non-excluded calendar to
+    fill in each block's `found` and lay out the seven days with their events.
+    Same data the TUI renders — no Rich, no curses, just a dict ready for JSON.
+    """
+    view = build_bank(offset_weeks=offset_weeks)
+    monday, sunday = week_range(offset_weeks=offset_weeks)
+
+    cals = [c for c in list_calendars() if c not in EXCLUDE_CALENDARS]
+    events_by_cal = {c: fetch_events(c, monday, sunday) for c in cals}
+    tdays = travel_days(monday, sunday)   # dates on the Travel calendar → paused habits skip
+
+    daily, weekly = view["bank"]["daily"], view["bank"]["weekly"]
+    for entry in daily + weekly:
+        titles = [t for _, _, _, t in events_by_cal.get(entry["calendar"], [])]
+        entry["found"] = found_in_titles(entry, titles)
+
+    # build_bank sorts by name alone (it can't know found); the real order puts
+    # what still needs placing on top, so re-sort now that found is filled in.
     daily.sort(key=lambda e: (e["found"] >= e["expected"], e["block"]))
     weekly.sort(key=lambda e: (e["found"] >= e["expected"], e["block"]))
 
@@ -419,13 +462,8 @@ def build_view(offset_weeks=0):
             "travel": ds in tdays,
         })
 
-    return {
-        "week": {"monday": monday.isoformat(), "sunday": sunday.isoformat(),
-                 "offset": offset_weeks},
-        "bank": {"daily": daily, "weekly": weekly},
-        "pool": pool.list_items(status="pooled"),
-        "days": days,
-    }
+    view["days"] = days
+    return view
 
 
 def find_block(block_name):
@@ -498,9 +536,15 @@ def pick_title(meta, block_name, target_date, existing_events):
 
 
 def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
-    """Programmatic place. Returns dict {ok, msg, title?, calendar?, when?, duration?}.
+    """Programmatic place. Returns {ok, msg, title?, calendar?, when?, duration?, event?}.
 
     duration_override (minutes) wins over the block's frontmatter duration when set.
+
+    `event` is the created event as gcal_api.event_dict() — the same shape
+    `cl agenda --month` emits, INCLUDING its id. That id is why this writes via
+    the API rather than `gcalcli add`: gcalcli prints nothing identifying, so a
+    caller holding a cached month grid had no way to patch the new bar in and had
+    to throw the whole month away (a ~90s refetch) on every single placement.
     """
     sys_slug, meta = find_block(block_name)
     if not meta:
@@ -539,18 +583,30 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override
             instances = 1
         return {"ok": False, "msg": f"all {instances} instance(s) of {block_name} already scheduled this week"}
 
-    when = f"{date.strftime('%Y-%m-%d')} {time_arg}"
-    cmd = gcalcli(
-        "add",
-        "--calendar", cal,
-        "--title", title,
-        "--when", when,
-        "--duration", str(duration_min),
-        "--noprompt",
-    )
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return {"ok": False, "msg": f"gcalcli add failed: {result.stderr.strip()}"}
+    day_s = date.strftime("%Y-%m-%d")
+    when = f"{day_s} {time_arg}"
+    # HH:MM may be "9:05" (the regex above allows a 1-digit hour); the API wants
+    # a real RFC3339 timestamp, so normalize through datetime rather than pasting.
+    try:
+        start_dt = datetime.fromisoformat(f"{day_s}T{time_arg}:00")
+    except ValueError:
+        return {"ok": False, "msg": f"bad time: {time_arg} (use HH:MM)"}
+    end_dt = start_dt + timedelta(minutes=duration_min)
+
+    import gcal_api    # local: events.py imports week, so a top-level import would cycle
+    try:
+        cal_id, tz = gcal_api.resolve_calendar(cal, writable=True)
+        body = {
+            "summary": title,
+            "start": {"dateTime": start_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": tz},
+            "end": {"dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": tz},
+            "reminders": {"useDefault": True},
+        }
+        res = gcal_api._wrap(lambda: gcal_api.service().events().insert(
+            calendarId=cal_id, body=body, sendUpdates="none").execute())
+        ev = gcal_api.event_dict(res, cal)
+    except gcal_api.GcalError as e:
+        return {"ok": False, "msg": f"couldn't place {title}: {e.msg}"}
 
     return {
         "ok": True,
@@ -559,6 +615,7 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override
         "calendar": cal,
         "when": when,
         "duration": duration_min,
+        "event": ev,
     }
 
 
@@ -618,7 +675,10 @@ def fill_day(day_arg, offset_weeks=0):
             continue
         res = place_event(name, date.strftime("%Y-%m-%d"), start, offset_weeks=offset_weeks)
         if res["ok"]:
-            placed.append({"block": name, "title": res["title"], "when": res["when"]})
+            # `event` carries the created event's id — a surface holding a cached
+            # month grid patches each one straight in instead of refetching.
+            placed.append({"block": name, "title": res["title"], "when": res["when"],
+                           "event": res.get("event")})
         else:
             skipped.append({"block": name, "reason": res["msg"]})
 
@@ -684,10 +744,21 @@ def move_event(block_name, day_arg, new_time, offset_weeks=0, duration_override=
                        duration_override=duration_override)
 
 
-def place(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None):
-    """CLI wrapper: prints result, exits with non-zero on failure."""
+def place(block_name, day_arg, time_arg, offset_weeks=0, duration_override=None,
+          as_json=False):
+    """CLI wrapper: prints result, exits with non-zero on failure.
+
+    Under --json the whole place_event dict goes out, `event` included — that's
+    how a surface learns the new event's id without re-reading the calendar.
+    """
     result = place_event(block_name, day_arg, time_arg, offset_weeks=offset_weeks,
                          duration_override=duration_override)
+    if as_json:
+        import json
+        print(json.dumps(result))
+        if not result["ok"]:
+            sys.exit(1)
+        return
     if result["ok"]:
         console.print(f"[dark_sea_green4]  → {result['msg']}[/dark_sea_green4]")
     else:
@@ -838,7 +909,6 @@ def main():
                         help="operate N weeks from now (negative = past); overrides --next")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dump", action="store_true", help="print this week's bank, headless")
-    group.add_argument("--json", action="store_true", help="emit the full week view model as JSON (surfaces)")
     group.add_argument("--place", nargs=3, metavar=("BLOCK", "DAY", "TIME"),
                        help="schedule BLOCK on DAY at TIME (e.g. writing-block mon 10:10)")
     parser.add_argument("--duration", type=int, default=None,
@@ -853,6 +923,13 @@ def main():
     # the structured result); --fill wins if combined with another mode.
     parser.add_argument("--fill", metavar="DAY",
                         help="auto-place every unplaced daily/weekly block that runs on DAY at its default_start")
+    # --json is a MODIFIER, not a mode: alone it emits the week view model; with
+    # --place/--fill it emits that write's result (incl. the created event + its
+    # id, which is what lets a surface patch its cached grid instead of refetching).
+    parser.add_argument("--json", action="store_true",
+                        help="emit JSON: the week view model, or the result of --place/--fill")
+    parser.add_argument("--bank", action="store_true",
+                        help="with --json: emit only the bank + pool (no calendar fetch; `found` is 0)")
     args = parser.parse_args()
 
     offset = args.offset if args.offset is not None else (1 if args.next_week else 0)
@@ -863,12 +940,14 @@ def main():
     if args.dump:
         dump(offset_weeks=offset)
         return
+    if args.place:
+        place(*args.place, offset_weeks=offset, duration_override=args.duration,
+              as_json=args.json)
+        return
     if args.json:
         import json
-        print(json.dumps(build_view(offset_weeks=offset)))
-        return
-    if args.place:
-        place(*args.place, offset_weeks=offset, duration_override=args.duration)
+        view = build_bank(offset_weeks=offset) if args.bank else build_view(offset_weeks=offset)
+        print(json.dumps(view))
         return
     if args.move:
         r = move_event(*args.move, offset_weeks=offset, duration_override=args.duration)

@@ -190,7 +190,8 @@ _cl() {
       week)
         _values "week options" \
           "--dump[print this week's bank, headless]" \
-          "--json[emit the full week view model as JSON (surfaces)]" \
+          "--json[emit JSON: the week view model, or the result of --place/--fill]" \
+          "--bank[with --json: bank + pool only, no calendar fetch]" \
           "--next[operate on next week]" \
           "--offset[operate N weeks from now]:offset:" \
           "--place[schedule BLOCK DAY TIME]:block:" \
@@ -237,7 +238,8 @@ _cl() {
             schedule)
               _values "pool schedule options" \
                 "--calendar[override calendar]:calendar:" \
-                "--duration[override duration: 90, 90m, 2h]:duration:"
+                "--duration[override duration: 90, 90m, 2h]:duration:" \
+                "--json[emit the placement + created event as JSON]"
               ;;
             stage)
               _values "pool stage options" \

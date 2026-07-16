@@ -29,7 +29,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from rich.console import Console
@@ -240,12 +240,12 @@ def schedule_item(item_id, date, start, calendar=None, duration=None):
     """Place a pool item AND write the real gcal event (fork #1: it lands on the
     actual calendar). Records a placement; item → placed. Returns the placement.
 
-    duration (minutes) overrides the item's est_minutes when set. gcalcli add
-    doesn't hand back an event id, so gcal_id stays NULL — the placement row
-    still tracks date/time/status for the daily-review loop.
+    duration (minutes) overrides the item's est_minutes when set. Writes through
+    the Calendar API rather than `gcalcli add` so the created event's id comes
+    back: it lands in the placement's gcal_id (previously always NULL), and the
+    caller gets `event` — the `cl agenda --month` shape — to patch into a cached
+    grid instead of refetching the month.
     """
-    import subprocess
-
     with connect() as conn:
         item = get_item(conn, item_id)
     if not item:
@@ -258,15 +258,29 @@ def schedule_item(item_id, date, start, calendar=None, duration=None):
     cal = calendar or item.get("calendar") or DEFAULT_CALENDAR
     dur = duration or item.get("est_minutes") or 30
     end = _end_time(start, dur)
-    cmd = gcalcli("add", "--calendar", cal, "--title", item["title"],
-           "--when", f"{date} {start}", "--duration", str(dur), "--noprompt")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date or ""):
+        raise ValueError(f"bad date: {date} (use YYYY-MM-DD)")
+
+    import gcal_api
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except FileNotFoundError:
-        raise ValueError("gcalcli not installed")
-    if r.returncode != 0:
-        raise ValueError(f"gcalcli add failed: {r.stderr.strip()}")
-    return place_item(item_id, date, start=start, end=end)
+        cal_id, tz = gcal_api.resolve_calendar(cal, writable=True)
+        start_dt = datetime.fromisoformat(f"{date}T{start}:00")
+        end_dt = start_dt + timedelta(minutes=int(dur))
+        body = {
+            "summary": item["title"],
+            "start": {"dateTime": start_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": tz},
+            "end": {"dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": tz},
+            "reminders": {"useDefault": True},
+        }
+        res = gcal_api._wrap(lambda: gcal_api.service().events().insert(
+            calendarId=cal_id, body=body, sendUpdates="none").execute())
+        ev = gcal_api.event_dict(res, cal)
+    except gcal_api.GcalError as e:
+        raise ValueError(f"couldn't schedule {item['title']}: {e.msg}")
+
+    pl = place_item(item_id, date, start=start, end=end, gcal_id=ev["id"])
+    pl["event"] = ev
+    return pl
 
 
 def stage_item(item_id, date):
@@ -555,8 +569,17 @@ def cmd_schedule(a):
     try:
         pl = schedule_item(a.item, a.date, a.time, calendar=a.calendar, duration=dur)
     except ValueError as e:
+        if getattr(a, "json", False):
+            print(json.dumps({"ok": False, "error": str(e)}))
+            sys.exit(1)
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
+    if getattr(a, "json", False):
+        # `event` carries the created event's id — a surface patches it straight
+        # into its cached month grid rather than refetching.
+        print(json.dumps({"ok": True, "placement": pl, "event": pl.get("event"),
+                          "msg": f"scheduled {pl['date']} {pl['start']}"}))
+        return
     console.print(f"[dark_sea_green4]  → scheduled[/dark_sea_green4] item #{a.item} @ "
                   f"{pl['date']} {pl['start']}–{pl['end']} [grey50](→ gcal)[/grey50]")
 
@@ -675,6 +698,8 @@ def main():
     p.add_argument("time", help="HH:MM start")
     p.add_argument("--calendar", help="override calendar (default: item's, else the tenant default)")
     p.add_argument("--duration", help="override duration: 90, 90m, or 2h (default: est_minutes)")
+    p.add_argument("--json", action="store_true",
+                   help="emit the placement + created event as JSON (surfaces)")
     p.set_defaults(func=cmd_schedule)
 
     p = sub.add_parser("done", help="mark a placement done")

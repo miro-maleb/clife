@@ -470,8 +470,8 @@ def main() -> None:
                 parts = line.split("\t")
                 if len(parts) < 6 or parts[0] == "id":
                     continue
-                eid, sd, st, ed, _et, title = (parts[0], parts[1], parts[2],
-                                               parts[3], parts[4], parts[5])
+                eid, sd, st, ed, et, title = (parts[0], parts[1], parts[2],
+                                              parts[3], parts[4], parts[5])
                 try:
                     sdate = _date.fromisoformat(sd)
                 except ValueError:
@@ -494,6 +494,7 @@ def main() -> None:
                     "start_date": max(sdate, grid_start).isoformat(),
                     "end_date": min(edate, grid_end).isoformat(),
                     "start_time": st or None,
+                    "end_time": et or None,
                     "all_day": all_day,
                 })
         print(_json.dumps({
