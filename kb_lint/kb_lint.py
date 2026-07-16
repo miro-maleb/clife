@@ -32,15 +32,35 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import sys
 from pathlib import Path
 
+import requests
 import yaml
 
 KB = Path(os.path.expanduser("~/kb"))
 LINT_DIR = KB / "_lint"
+
+# ── Layer 2 (LLM) config ──────────────────────────────────────────────────────
+# The deep pass runs on the tower's local qwen (sovereign, free), overnight, so it
+# isn't tuned for speed. think:false — thinking was measured not worth its cost on the
+# ai-rss pipeline; revisit only if an eval separates them here.
+OLLAMA_HOST = os.environ.get("KB_LINT_OLLAMA", "http://127.0.0.1:11434")
+MODEL = os.environ.get("KB_LINT_MODEL", "qwen3.6:27b")
+NUM_CTX = 16384
+
+# Only these top-level dirs hold standing CLAIMS that can go stale or contradict.
+# Logs are timestamped records (not claims), recipes/shopping/weeks/inbox are not
+# assertions, archive is frozen, agent configs aren't prose. Feeding them the LLM
+# would be cost with no signal — the same "scope tightly or drown in noise" lesson.
+CLAIM_DIRS = {"projects", "ideas", "notes", "systems", "orientations", "goals"}
+MIN_CLAIM_CHARS = 200          # a stub too short to hold a stale claim
+DOC_TRUNC = 8000               # per-doc text fed to the stale pass
+CLUSTER_DOC_TRUNC = 3500       # per-doc excerpt in a contradiction cluster
+CLUSTER_MAX_DOCS = 6           # biggest folder we'll feed at once
 
 # Dirs whose contents we neither scan nor count as link targets. `_lint` is our own
 # output (don't lint the linter); `oil:` is an oil.nvim accident (untracked cruft);
@@ -166,18 +186,158 @@ def scan_deadlines(today: dt.date) -> list[tuple]:
     return overdue
 
 
+# ── Layer 2: LLM passes (the --deep sweep) ────────────────────────────────────
+def _llm(system: str, user: str, temperature: float = 0.2) -> str:
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "stream": False, "think": False, "format": "json",
+        "options": {"temperature": temperature, "num_ctx": NUM_CTX},
+    }
+    r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=600)
+    r.raise_for_status()
+    c = r.json()["message"]["content"]
+    return re.sub(r"<think>.*?</think>", "", c, flags=re.DOTALL).strip()
+
+
+def _claim_files() -> list[Path]:
+    """Substantive, claim-bearing notes only — the LLM's scope."""
+    out = []
+    for md in KB.rglob("*.md"):
+        rel = md.relative_to(KB)
+        if _skip(rel) or rel.parts[0] not in CLAIM_DIRS:
+            continue
+        if md.name.endswith(".excalidraw.md"):
+            continue
+        try:
+            if len(md.read_text(errors="replace")) >= MIN_CLAIM_CHARS:
+                out.append(md)
+        except OSError:
+            pass
+    return out
+
+
+def _body(md: Path, limit: int) -> str:
+    """Note text minus its frontmatter, truncated."""
+    t = md.read_text(errors="replace")
+    if t.startswith("---"):
+        end = t.find("\n---", 3)
+        if end >= 0:
+            t = t[end + 4:]
+    return t.strip()[:limit]
+
+
+def stale_pass(files: list[Path], today: dt.date, log=lambda s: None) -> list[dict]:
+    """Per-doc: flag time-bound claims that today has probably overtaken. O(n), no
+    pairing. Conservative by construction — most notes have zero."""
+    system = (
+        "You audit ONE personal note for STALE claims: statements true when written but "
+        f"probably false or outdated as of {today.isoformat()}. Stale means time has "
+        "overtaken it — 'currently doing X', 'X is being set up', 'next week', a plan whose "
+        "date has passed, 'the new Y' now old. Do NOT flag: timeless notes, opinions, "
+        "aspirations, or ANYTHING you are unsure about. Most notes have ZERO stale claims — "
+        "returning an empty list is the common, correct answer. Never invent. Reply ONLY as JSON."
+    )
+    out = []
+    for md in files:
+        rel = str(md.relative_to(KB))
+        fm = _frontmatter(md) or {}
+        date = fm.get("created") or fm.get("updated") or "unknown"
+        user = (f"Note: {rel}\nWritten: {date}\nToday: {today.isoformat()}\n\n"
+                f"{_body(md, DOC_TRUNC)}\n\n"
+                'Return JSON: {"stale": [{"claim": "<short quote>", "why": "<one line>"}]}')
+        try:
+            data = json.loads(_llm(system, user))
+            items = [i for i in data.get("stale", [])
+                     if isinstance(i, dict) and i.get("claim")]
+        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError) as e:
+            log(f"  stale skip {rel}: {e}")
+            continue
+        if items:
+            log(f"  {rel}: {len(items)} stale")
+            out.append({"file": rel, "items": items})
+    return out
+
+
+def _clusters(files: list[Path]) -> list[tuple[str, list[Path]]]:
+    """Group claim-bearing files by their immediate parent dir — a project + its
+    sub-projects/notes is the tightest topical unit and the likeliest place for an
+    internal contradiction. Only folders with 2+ files, capped in size."""
+    by_dir: dict[str, list[Path]] = {}
+    for md in files:
+        by_dir.setdefault(str(md.parent.relative_to(KB)), []).append(md)
+    return [(d, fs[:CLUSTER_MAX_DOCS]) for d, fs in sorted(by_dir.items())
+            if len(fs) >= 2]
+
+
+def contradiction_pass(files: list[Path], log=lambda s: None) -> list[dict]:
+    """Within each project-folder cluster, ask for factual contradictions, then
+    adversarially VERIFY each before reporting — the ai-rss fact-check lesson: a fresh
+    skeptic told to default to 'not a contradiction' kills the plausible-but-wrong ones."""
+    find_sys = (
+        "You find CONTRADICTIONS across a person's related notes: two places asserting "
+        "incompatible FACTS about the same thing (status, decision, number, name, date). "
+        "Quote both sides. Do NOT flag: different topics, complementary detail, or a clearly "
+        "dated decision that was later revised (that is history, not conflict). Most groups "
+        "have NONE — an empty list is the common, correct answer. Reply ONLY as JSON."
+    )
+    verify_sys = (
+        "You are a skeptic checking a claimed contradiction between two notes. Default to "
+        "NOT a contradiction. It is real ONLY if both statements are about the same thing and "
+        "cannot both be true now. Superseded-over-time, different scope, or vagueness = not a "
+        "contradiction. Reply ONLY as JSON."
+    )
+    out = []
+    for d, group in _clusters(files):
+        blob = "\n\n".join(f"=== {md.name} ===\n{_body(md, CLUSTER_DOC_TRUNC)}"
+                           for md in group)
+        user = (f"Folder: {d}\nNotes:\n\n{blob}\n\n"
+                'Return JSON: {"conflicts": [{"a": "<quote from one note>", '
+                '"b": "<quote from another>", "issue": "<one line>"}]}')
+        try:
+            found = json.loads(_llm(find_sys, user)).get("conflicts", [])
+        except (requests.RequestException, json.JSONDecodeError, KeyError, TypeError) as e:
+            log(f"  contra skip {d}: {e}")
+            continue
+        for c in found:
+            if not (c.get("a") and c.get("b")):
+                continue
+            vuser = (f"Note A says: {c['a']}\nNote B says: {c['b']}\n"
+                     f"Claimed issue: {c.get('issue','')}\n\n"
+                     'Return JSON: {"real": <true|false>, "why": "<one line>"}')
+            try:
+                v = json.loads(_llm(verify_sys, vuser, temperature=0.1))
+            except (requests.RequestException, json.JSONDecodeError, TypeError):
+                continue
+            if v.get("real"):
+                log(f"  {d}: contradiction confirmed")
+                out.append({"folder": d, **c, "why": v.get("why", "")})
+    return out
+
+
 # ── report ────────────────────────────────────────────────────────────────────
-def render(broken: dict, overdue: list, today: dt.date) -> str:
+def render(broken: dict, overdue: list, today: dt.date,
+           stale: list | None = None, contradictions: list | None = None) -> str:
     concepts = {k: v for k, v in broken.items() if len(v) >= 2}
     typos = {k: v for k, v in broken.items() if len(v) == 1}
     total_broken = sum(len(v) for v in broken.values())
+    deep = stale is not None or contradictions is not None
+    stale = stale or []
+    contradictions = contradictions or []
+    stale_n = sum(len(s["items"]) for s in stale)
 
     p = [f"# kb-lint — {today.isoformat()}\n",
-         "*Deterministic sweep (no AI). Report only — nothing was changed.*\n",
+         "*Report only — nothing was changed."
+         + (" Deep pass (local qwen) ran.*\n" if deep else " Deterministic, no AI.*\n"),
          "## Summary\n",
          f"- **{total_broken}** broken wikilink(s) across **{len(broken)}** distinct target(s)",
          f"- **{len(concepts)}** unresolved concept(s) (referenced 2+ times — worth a note?)",
-         f"- **{len(overdue)}** overdue project deadline(s)\n"]
+         f"- **{len(overdue)}** overdue project deadline(s)"]
+    if deep:
+        p.append(f"- **{stale_n}** possible stale claim(s) · "
+                 f"**{len(contradictions)}** verified contradiction(s) *(AI, review each)*")
+    p.append("")
 
     if concepts:
         p.append("## Unresolved concepts — referenced but never written")
@@ -201,21 +361,50 @@ def render(broken: dict, overdue: list, today: dt.date) -> str:
             p.append(f"- `{raw}` — `{f}:{ln}`")
         p.append("")
 
-    if not (concepts or overdue or typos):
-        p.append("Nothing broken. The kb is clean. ✓")
+    if contradictions:
+        p.append("## Possible contradictions *(AI-flagged, verified — still check each)*\n")
+        for c in contradictions:
+            p.append(f"- **`{c['folder']}`** — {c.get('issue','')}")
+            p.append(f"    - A: *{c['a']}*")
+            p.append(f"    - B: *{c['b']}*")
+        p.append("")
+
+    if stale:
+        p.append("## Possible stale claims *(AI-flagged — review, don't auto-trust)*\n")
+        for s in stale:
+            p.append(f"### `{s['file']}`")
+            for it in s["items"]:
+                p.append(f"- *{it['claim']}* — {it.get('why','')}")
+            p.append("")
+
+    if not (concepts or overdue or typos or stale or contradictions):
+        p.append("Nothing flagged. The kb is clean. ✓")
     return "\n".join(p) + "\n"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="deterministic kb health lint")
     ap.add_argument("--stdout", action="store_true", help="print, don't write a file")
+    ap.add_argument("--deep", action="store_true",
+                    help="add the LLM pass (stale claims + verified contradictions)")
+    ap.add_argument("--limit", type=int, help="cap claim-files in --deep (for testing)")
     args = ap.parse_args()
 
     today = dt.date.today()
     names, rel_paths = build_index()
     broken = scan_links(names, rel_paths)
     overdue = scan_deadlines(today)
-    report = render(broken, overdue, today)
+
+    stale = contradictions = None
+    if args.deep:
+        log = lambda s: print(s, file=sys.stderr, flush=True)
+        files = _claim_files()
+        if args.limit:
+            files = files[:args.limit]
+        log(f"deep pass: {len(files)} claim-bearing notes via {MODEL}")
+        stale = stale_pass(files, today, log)
+        contradictions = contradiction_pass(files, log)
+    report = render(broken, overdue, today, stale, contradictions)
 
     if args.stdout:
         print(report)
@@ -224,7 +413,11 @@ def main() -> None:
     (LINT_DIR / f"lint-{today.isoformat()}.md").write_text(report)
     (LINT_DIR / "latest.md").write_text(report)
     total = sum(len(v) for v in broken.values())
-    print(f"kb-lint: {total} broken link(s), {len(overdue)} overdue deadline(s) "
+    extra = ""
+    if args.deep:
+        extra = (f", {sum(len(s['items']) for s in (stale or []))} stale, "
+                 f"{len(contradictions or [])} contradiction(s)")
+    print(f"kb-lint: {total} broken link(s), {len(overdue)} overdue deadline(s){extra} "
           f"-> {LINT_DIR}/latest.md")
 
 
