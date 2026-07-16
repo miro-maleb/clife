@@ -29,6 +29,13 @@ write:
                                    # further down the page.
   fetch_timeout: 20
 
+# Fact-check pass: re-read each written story against its source and catch invented
+# claims. The writer is the only stage that can hallucinate, and nothing downstream
+# would notice — the recommender trusts the column. Adversarial on purpose: a fresh
+# critic told to assume the writer lied, not the writer asked "are you sure?".
+verify:
+  enabled: true
+
 # The second pass: the paper reads its own column back and says whether to act.
 # This is the point of the whole thing — news is the input, the verdict is the output.
 recommend:

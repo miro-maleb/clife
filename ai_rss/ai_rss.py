@@ -268,6 +268,59 @@ def write_story(cfg: dict, column: str, story: dict, body: str) -> dict | None:
             "url": story["url"], "source": domain(story["url"])}
 
 
+def verify_story(cfg: dict, story: dict, body: str) -> dict | None:
+    """Re-read a written story against its source. Fix it, or throw it out.
+
+    The writer is the only stage that can invent facts, and nothing downstream could
+    catch it: the recommender trusts the column, and the column is all the reader
+    sees. Observed inventions include "compatible with Azure deployment endpoints"
+    (conjured from tag metadata) — plausible, specific, and wholly absent from the
+    source.
+
+    So this pass is adversarial by construction: a separate call, told to assume the
+    summary is wrong and to hunt for claims the source doesn't support. Asking the
+    writer "are you sure?" just gets agreement; asking a fresh critic "what did they
+    make up?" gets findings. One rewrite attempt, then drop — a story we can't state
+    accurately is worth less than the silence it leaves.
+    """
+    v = cfg.get("verify", {})
+    if not v.get("enabled"):
+        return story
+    system = (
+        "You fact-check newspaper copy against its source text. Assume the writer "
+        "hallucinated: your job is to catch claims the source does not support. "
+        "A claim is unsupported if the source does not state it — plausible, "
+        "well-known, or probably-true is NOT supported. Watch especially for "
+        "invented specifics: numbers, hardware, platforms, benchmarks, dates, "
+        "compatibility claims. Do not object to compression, ordinary paraphrase, "
+        "or omission — only to statements the source cannot back. Reply ONLY as JSON."
+    )
+    user = (
+        f"SOURCE TEXT:\n{body[:cfg['write']['max_article_chars']]}\n\n"
+        f"HEADLINE: {story['headline']}\nSUMMARY: {story['summary']}\n\n"
+        'Return JSON: {"supported": <true if EVERY claim is backed by the source>, '
+        '"problems": ["<each unsupported claim, quoted>"], '
+        '"fixed_headline": "<the headline, corrected if needed>", '
+        '"fixed_summary": "<the summary rewritten using ONLY what the source '
+        'supports; keep it 2-3 calm sentences>"}'
+    )
+    try:
+        d = json.loads(llm(cfg, system, user, json_mode=True, temperature=0.1))
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        log(f"  verify parse failed ({e}); keeping story as written")
+        return story
+    if d.get("supported"):
+        return story
+    problems = [str(p) for p in d.get("problems", []) if str(p).strip()]
+    fixed_h = str(d.get("fixed_headline", "")).strip().lstrip("# ")
+    fixed_s = str(d.get("fixed_summary", "")).strip()
+    if not fixed_s or not fixed_h:
+        log(f"  ✗ dropped (unfixable): {story['headline'][:52]}")
+        return None
+    log(f"  ~ corrected: {story['headline'][:44]} — {problems[0][:60] if problems else '?'}")
+    return {**story, "headline": fixed_h, "summary": fixed_s, "corrected": True}
+
+
 def recommend(cfg: dict, column: dict, stories: list[dict]) -> dict | None:
     """The paper reads its column back and says what, if anything, to DO about it.
 
@@ -366,6 +419,8 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                 continue
             log(f"  writing: {st['title'][:60]}")
             s = write_story(cfg, col["name"], st, body)
+            if s:
+                s = verify_story(cfg, s, body)   # may correct it, or drop it entirely
             if s:
                 stories.append(s)
                 if update_seen:
