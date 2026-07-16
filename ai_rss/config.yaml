@@ -1,9 +1,17 @@
 # ai-rss — personal AI newspaper (qwen-on-tower scrapes + curates the web)
 # Edit columns/queries freely; this is the editorial brief.
 
+# This is an overnight batch job (systemd ai-rss.timer, Mondays 00:00) — nobody is
+# waiting on it, so it is tuned for QUALITY, not speed. Reasoning time is free here.
 model: qwen3.6-96k:latest          # tower 3090; long context for multi-article reads
 ollama_host: http://127.0.0.1:11434
-num_ctx: 16384                     # context window for select/write calls
+think: true                        # let it reason; ollama returns thinking separately,
+                                   # so JSON mode is unaffected. ~3-4x slower, all night to spend.
+num_ctx: 32768                     # must hold the whole candidate menu + a full article.
+                                   # Ceiling is VRAM, not the model: 17.4GB of weights on a
+                                   # 24GB card leaves ~6GB for KV cache. Raise only with
+                                   # `ollama ps` showing 100% GPU — any CPU spill is a cliff,
+                                   # not a slowdown.
 
 search:
   results_per_query: 8
@@ -15,8 +23,16 @@ select:
   per_column: 6                    # final stories that make the issue, per column
 
 write:
-  max_article_chars: 6000          # truncate cleaned article text fed to the writer
+  max_article_chars: 18000         # feed the writer the WHOLE model card / release note.
+                                   # At 6000 it was summarising a truncated preamble — the
+                                   # numbers that matter (size, VRAM, requirements) live
+                                   # further down the page.
   fetch_timeout: 20
+
+# The second pass: the paper reads its own column back and says whether to act.
+# This is the point of the whole thing — news is the input, the verdict is the output.
+recommend:
+  enabled: true
 
 # Where the finished issue lands. Dry runs ignore this and write to ./out/.
 deliver:

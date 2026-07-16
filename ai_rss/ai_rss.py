@@ -16,8 +16,13 @@ Usage:
 Output contract (the web app reads latest.json):
     <outbox>/ai-rss/latest.json  ·  issue-<date>.json  ·  latest.md  ·  issue-<date>.md
     JSON: {"date","generated_at","columns":[{"name","stories":[
-           {"headline","summary","url","source"}]}]}
-The "regenerate" button just re-runs this script; same-day reruns re-pick freely.
+           {"headline","summary","url","source"}],
+           "recommendation":{"verdict","notes":[…]}   # optional; omitted if the pass
+          }]}                                         # is off or returns nothing
+Same-day reruns re-pick freely (seen-dedupe is against previous days only).
+
+Runs as an overnight batch (systemd `ai-rss.timer`, Mondays 00:00), so nothing here
+optimises for latency: thinking is on and the model gets whole articles to read.
 """
 from __future__ import annotations
 
@@ -94,7 +99,14 @@ def save_seen(seen: dict[str, str]) -> None:
 # ── local model ───────────────────────────────────────────────────────────────
 def llm(cfg: dict, system: str, user: str, json_mode: bool = False,
         temperature: float = 0.3) -> str:
-    """One non-streaming chat call to the tower's ollama. Thinking stripped."""
+    """One non-streaming chat call to the tower's ollama.
+
+    This runs as an overnight batch job, so reasoning time is free — `think: true`
+    buys better judgment at no cost anyone is awake to notice. With thinking on,
+    ollama returns the reasoning in a separate `thinking` field and leaves `content`
+    clean, so JSON mode is unaffected (the <think> strip below stays as a fallback
+    for models that inline it instead).
+    """
     payload = {
         "model": cfg["model"],
         "messages": [
@@ -102,7 +114,7 @@ def llm(cfg: dict, system: str, user: str, json_mode: bool = False,
             {"role": "user", "content": user},
         ],
         "stream": False,
-        "think": False,
+        "think": cfg.get("think", False),
         "options": {"temperature": temperature, "num_ctx": cfg["num_ctx"]},
     }
     if json_mode:
@@ -256,6 +268,61 @@ def write_story(cfg: dict, column: str, story: dict, body: str) -> dict | None:
             "url": story["url"], "source": domain(story["url"])}
 
 
+def recommend(cfg: dict, column: dict, stories: list[dict]) -> dict | None:
+    """The paper reads its column back and says what, if anything, to DO about it.
+
+    This is the actual payload. The reader doesn't want news, he wants to know
+    whether it's time to act — so a second pass re-reads the finished stories
+    against the same rig facts the selector used, and answers that directly.
+
+    Two failure modes it is explicitly steered away from, both learned the hard way
+    on 2026-07-15: manufacturing urgency when the honest answer is "nothing changed
+    this week", and repeating a vendor's headline number without checking it applies
+    to THIS hardware (an NVFP4 checkpoint got recommended as an upgrade for a card
+    with no FP4 tensor cores).
+    """
+    if not stories or not cfg.get("recommend", {}).get("enabled"):
+        return None
+    brief = column.get("brief", "")
+    menu = "\n\n".join(
+        f"- {s['headline']}\n  {s['summary']}\n  ({s['source']})" for s in stories)
+    system = (
+        "You advise ONE reader whose exact setup is given. Your only job: say "
+        "whether anything in this section is worth ACTING on, for him, now.\n"
+        "Rules:\n"
+        "1. Doing nothing is a real, common, and respectable answer. Most weeks "
+        "nothing genuinely changes. Say so plainly rather than inventing a reason "
+        "to act. Never manufacture urgency.\n"
+        "2. Never recommend anything whose benefit depends on hardware or a file "
+        "format he does not have. If a claimed speedup needs a different GPU "
+        "architecture, or a format his runtime cannot load, it is NOT an upgrade "
+        "for him — say that explicitly instead of repeating the vendor's number.\n"
+        "3. If an item is promising but you cannot tell from the text whether it "
+        "fits his rig, say what would have to be checked. Do not guess.\n"
+        "4. Be concrete and specific. Name the thing. No vague 'keep an eye on AI'.\n"
+        "Reply ONLY as JSON."
+    )
+    user = (
+        f"The reader's setup and standing editorial brief:\n{brief}\n\n"
+        f"This week's '{column['name']}' section, as written:\n\n{menu}\n\n"
+        'Return JSON: {"verdict": "<one line: the bottom line, e.g. \'Nothing to '
+        'do this week.\' or \'One thing worth a look: X\'>", "notes": ["<a specific '
+        'point, naming the item and why it does or does not matter for HIS rig>", '
+        '"<another, if warranted>"]}'
+    )
+    try:
+        d = json.loads(llm(cfg, system, user, json_mode=True, temperature=0.2))
+        verdict = str(d.get("verdict", "")).strip()
+        notes = [str(n).strip() for n in d.get("notes", []) if str(n).strip()]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        log(f"  recommend parse failed: {e}")
+        return None
+    if not verdict:
+        return None
+    log(f"[{column['name']}] verdict: {verdict[:70]}")
+    return {"verdict": verdict, "notes": notes}
+
+
 # ── assembly ──────────────────────────────────────────────────────────────────
 def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                    update_seen: bool) -> dict:
@@ -304,7 +371,11 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                 if update_seen:
                     seen[st["url"]] = today
         if stories:
-            columns_out.append({"name": col["name"], "stories": stories})
+            out_col = {"name": col["name"], "stories": stories}
+            rec = recommend(cfg, col, stories)
+            if rec:
+                out_col["recommendation"] = rec
+            columns_out.append(out_col)
     return {
         "date": today,
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
@@ -325,6 +396,11 @@ def render_markdown(issue: dict) -> str:
         blocks = [f"### {s['headline']}\n\n{s['summary']}\n\n"
                   f"[{s['source']}]({s['url']})" for s in col["stories"]]
         parts.append("\n\n---\n\n".join(blocks))
+        rec = col.get("recommendation")
+        if rec:
+            parts.append(f"\n### Recommendations\n\n**{rec['verdict']}**\n")
+            if rec.get("notes"):
+                parts.append("\n".join(f"- {n}" for n in rec["notes"]))
     return "\n".join(parts) + "\n"
 
 
