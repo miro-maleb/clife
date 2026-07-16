@@ -64,13 +64,20 @@ columns:
       head-to-head benchmarks between open models; and ollama/llama.cpp releases that
       change what THIS card can run.
 
+      A model card for a NEW model IS news — do not reject it as "reference". That is
+      how an open model announces itself, and Hugging Face is a deliberate source here.
+      Reject a model card only when the model is not actually new (an established
+      checkpoint merely resurfacing in a trending list), or when it is a bare re-upload
+      of someone else's weights adding nothing. Docs, tutorials, and index pages that
+      list many releases remain reference, not news.
+
       EXCLUDE, no matter how big the news: closed/API-only models (OpenAI, Anthropic,
       Gemini, Grok) — he cannot download them; anything whose speed claim depends on
-      hardware he lacks (see above); formats ollama can't load; model cards, docs and
-      vendor "release notes" pages, which are living reference, not news; models far
-      too large for 24GB with no quantization that fits; AI business, funding and
-      policy news; and SEO/aggregator/content-farm sources — prefer primary
-      announcements and reputable outlets.
+      hardware he lacks (see above); formats ollama can't load; documentation,
+      tutorials and "release notes" index pages; models far too large for 24GB with no
+      quantization that fits; AI business, funding and policy news; and
+      SEO/aggregator/content-farm sources — prefer primary announcements and
+      reputable outlets.
 
       When an item's usefulness depends on hardware or format, SAY SO in the writeup
       rather than repeating a vendor's headline number.
