@@ -563,15 +563,22 @@ def place_event(block_name, day_arg, time_arg, offset_weeks=0, duration_override
 
 
 def fill_day(day_arg, offset_weeks=0):
-    """Auto-place every still-unplaced *daily* block that runs on `day_arg`, at
-    its `default_start`. The day-planner's "schedule defaults" button — it lays
+    """Auto-place every still-unplaced block that runs on `day_arg`, at its
+    `default_start`. The day-planner's "schedule defaults" button — it lays
     down the routine skeleton in one shot so the user only hand-places the
     exceptions. Returns {ok, date?, placed:[…], skipped:[{block,reason}], msg}.
 
-    Only daily blocks with a well-formed `default_start` are auto-placed; a
-    daily block without one needs a human to pick the time, so it's reported as
-    skipped rather than guessed. Collision / already-placed is handled by
-    place_event (via pick_title), and surfaces here as a skip reason.
+    Only blocks with a well-formed `default_start` are auto-placed; one without
+    needs a human to pick the time, so it's reported as skipped rather than
+    guessed. That makes `default_start` the de-facto fixed/mutable switch, and
+    surfaces rely on it meaning exactly that.
+
+    Both daily and weekly cadences fill. A weekly block is placed on the days it
+    names (`days: [sat]`), and place_event's pick_title enforces `instances` per
+    *week*, so filling both tue and thu for a 1-instance block places it once and
+    reports the second as an already-scheduled skip. A weekly block with no days
+    is skipped: there'd be no principled way to choose which day it lands on.
+    Collision / already-placed is handled by place_event, surfacing here as a skip.
     """
     monday, sunday = week_range(offset_weeks=offset_weeks)
     date = parse_day(day_arg, monday)
@@ -585,10 +592,20 @@ def fill_day(day_arg, offset_weeks=0):
 
     placed, skipped = [], []
     for sys_slug, meta, st in load_blocks():
-        if st != "active" or meta.get("cadence") != "daily":
+        if st != "active":
+            continue
+        cadence = (meta.get("cadence") or "").strip()
+        if cadence not in ("daily", "weekly"):
             continue
         name = meta.get("block", "?")
-        days = meta.get("days") or DAYS
+        # A daily block with no days runs every day. A *weekly* one with no days
+        # has no anchor day, so filling would drop it on whichever day happened to
+        # be filled first — an arbitrary choice that belongs to the planner, not us.
+        days = meta.get("days") or (DAYS if cadence == "daily" else [])
+        if cadence == "weekly" and not days:
+            skipped.append({"block": name,
+                            "reason": "weekly block has no days — set days or place by hand"})
+            continue
         if weekday not in days:
             continue
         if trip and name not in allow:                # on a trip, daily is paused unless allowed
@@ -835,7 +852,7 @@ def main():
     # Outside the group so it can pair with --json (the day-planner surface reads
     # the structured result); --fill wins if combined with another mode.
     parser.add_argument("--fill", metavar="DAY",
-                        help="auto-place every unplaced daily block that runs on DAY at its default_start")
+                        help="auto-place every unplaced daily/weekly block that runs on DAY at its default_start")
     args = parser.parse_args()
 
     offset = args.offset if args.offset is not None else (1 if args.next_week else 0)
