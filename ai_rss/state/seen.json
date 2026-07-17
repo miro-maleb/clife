@@ -1,10 +1,19 @@
 {
 "https://github.com/ggml-org/llama.cpp/releases/tag/b10032": "2026-07-15",
+"https://github.com/ggml-org/llama.cpp/releases/tag/b10034": "2026-07-15",
 "https://github.com/ollama/ollama/releases/tag/v0.32.0": "2026-07-15",
+"https://github.com/ollama/ollama/releases/tag/v0.32.1": "2026-07-16",
 "https://github.com/vllm-project/vllm/releases/tag/v0.25.0": "2026-07-15",
+"https://huggingface.co/AngelSlim/Hy3-GGUF": "2026-07-15",
+"https://huggingface.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive": "2026-07-15",
 "https://huggingface.co/bottlecapai/ThinkingCap-Qwen3.6-27B": "2026-07-15",
+"https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B-GGUF": "2026-07-15",
+"https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF": "2026-07-16",
+"https://huggingface.co/prism-ml/Bonsai-27B-gguf": "2026-07-15",
 "https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf": "2026-07-15",
 "https://huggingface.co/unsloth/DeepSeek-V4-Flash-GGUF": "2026-07-15",
 "https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4": "2026-07-15",
-"https://www.reddit.com/r/LocalLLaMA/comments/1usniqh/25x_faster_qwen36_nvfp4_unsloth_quants/": "2026-07-15"
+"https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF": "2026-07-15",
+"https://www.reddit.com/r/LocalLLaMA/comments/1usniqh/25x_faster_qwen36_nvfp4_unsloth_quants/": "2026-07-15",
+"https://www.reddit.com/r/LocalLLaMA/comments/1uxdv34/thinking_machines_releases_first_openweight_model/": "2026-07-16"
 }

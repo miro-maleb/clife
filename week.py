@@ -30,7 +30,8 @@ from rich.console import Console
 console = Console()
 
 from paths import KB, gcalcli   # tenant-aware kb root + gcalcli argv builder
-SYSTEMS = KB / "systems"
+SYSTEMS = KB / "systems"        # legacy nested layout (pre-flatten tenants)
+HABITS = KB / "habits"          # flat layout: one block file, self-contained
 STATE = KB / "_state"
 SKIPS_FILE = STATE / "skips.yaml"
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -71,28 +72,67 @@ def week_range(today=None, offset_weeks=0):
     return monday, sunday
 
 
+def _aslist(v):
+    if v is None or v == "":
+        return []
+    return v if isinstance(v, list) else [v]
+
+
 def load_blocks():
-    """Return [(system_slug, block_meta, system_status)] for every block."""
-    out = []
-    if not SYSTEMS.exists():
-        return out
-    for system_dir in sorted(SYSTEMS.iterdir()):
-        if not system_dir.is_dir():
-            continue
-        sf = system_dir / "system.md"
-        if not sf.exists():
-            continue
-        sys_meta = parse_frontmatter(sf)
-        sys_status = sys_meta.get("status", "active")
-        bd = system_dir / "blocks"
-        if not bd.exists():
-            continue
-        for bf in sorted(bd.iterdir()):
-            if bf.suffix != ".md":
-                continue
+    """Return [(group, block_meta, status)] for every block.
+
+    `block_meta` is enriched with `status`, `goals`, `orientations` so every
+    consumer reads the feeding chain uniformly, whatever the on-disk layout:
+
+    - Flat (new):   KB/habits/<block>.md carries status/goals/orientations itself.
+    - Nested (old): KB/systems/<sys>/blocks/<block>.md — those fields live on the
+      parent system.md, and are copied onto the block here.
+
+    Both are read (flat wins on a name clash) so the systems→habits migration can
+    land per-tenant without a flag-day: an unmigrated tenant keeps its nested
+    tree working untouched. `group` is the old system slug for nested blocks, ""
+    for flat ones.
+    """
+    out, seen = [], set()
+
+    if HABITS.exists():
+        for bf in sorted(HABITS.glob("*.md")):
             meta = parse_frontmatter(bf)
-            if meta.get("block"):
+            name = meta.get("block")
+            if not name or name in seen:       # notes files have no block: key
+                continue
+            seen.add(name)
+            status = meta.get("status", "active")
+            meta["status"] = status
+            meta["goals"] = _aslist(meta.get("goals"))
+            meta["orientations"] = _aslist(meta.get("orientations"))
+            out.append(("", meta, status))
+
+    if SYSTEMS.exists():
+        for system_dir in sorted(SYSTEMS.iterdir()):
+            if not system_dir.is_dir():
+                continue
+            sf = system_dir / "system.md"
+            if not sf.exists():
+                continue
+            sys_meta = parse_frontmatter(sf)
+            sys_status = sys_meta.get("status", "active")
+            bd = system_dir / "blocks"
+            if not bd.exists():
+                continue
+            for bf in sorted(bd.iterdir()):
+                if bf.suffix != ".md":
+                    continue
+                meta = parse_frontmatter(bf)
+                name = meta.get("block")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                meta["status"] = sys_status
+                meta["goals"] = _aslist(sys_meta.get("goals"))
+                meta["orientations"] = _aslist(sys_meta.get("orientations"))
                 out.append((system_dir.name, meta, sys_status))
+
     return out
 
 

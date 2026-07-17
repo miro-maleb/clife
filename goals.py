@@ -28,6 +28,7 @@ from rich.console import Console
 
 import fm
 import week
+import week
 
 console = Console()
 
@@ -35,8 +36,7 @@ KB = week.KB
 GOALS = KB / "goals"
 ORIENTATIONS = KB / "orientations"
 
-FIELD_ORDER = ["goal", "year", "status", "marker", "orientations",
-               "systems", "projects"]
+FIELD_ORDER = ["goal", "year", "status", "marker", "orientations", "projects"]
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 YEAR_RE = re.compile(r"^\d{4}$")
 DEFAULT_STATUS = "active"
@@ -60,15 +60,23 @@ def known_orientations():
     return out
 
 
+def _blocks_feeding(goal_slug):
+    """Which habit blocks declare this goal — computed live from the flat block
+    files (post-flatten, blocks own the feeding chain; there's no systems layer)."""
+    return sorted(m.get("block") for _, m, _ in week.load_blocks()
+                  if goal_slug in (m.get("goals") or []))
+
+
 def goal_row(path):
     m = fm.read(path)
+    slug = m.get("goal") or path.stem
     return {
-        "goal": m.get("goal") or path.stem,
+        "goal": slug,
         "year": str(m.get("year", "") or path.parent.name),
         "status": m.get("status", "active"),
         "marker": m.get("marker", ""),
         "orientations": m.get("orientations") or [],
-        "systems": m.get("systems") or [],
+        "blocks": _blocks_feeding(slug),
         "projects": m.get("projects") or [],
         "slug": path.stem,
     }
@@ -120,7 +128,7 @@ def cmd_show(args):
     if row["marker"]:
         console.print(f"  marker         {row['marker']}")
     console.print(f"  orientations   {', '.join(row['orientations']) or '—'}")
-    console.print(f"  systems        {', '.join(row['systems']) or '—'}")
+    console.print(f"  fed by blocks  {', '.join(row['blocks']) or '—'}")
     console.print(f"  projects       {', '.join(row['projects']) or '—'}")
 
 

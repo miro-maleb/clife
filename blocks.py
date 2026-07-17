@@ -48,7 +48,8 @@ DAYS = week.DAYS
 # appended after these. `habit` is only written when False (anchor); tracked is
 # the default, so we keep those files clean by omitting it.
 FIELD_ORDER = ["block", "parent", "calendar", "cadence", "habit",
-               "days", "duration", "instances", "default_start", "travel"]
+               "days", "duration", "instances", "default_start", "travel",
+               "status", "goals", "orientations"]
 
 CADENCES = ("daily", "weekly")
 from paths import DEFAULT_CALENDAR
@@ -102,8 +103,23 @@ def write_block(path, meta, body):
     path.write_text(fm + "\n\n" + body + "\n" if body else fm + "\n")
 
 
+HABITS = week.HABITS
+
+
 def block_path(meta):
-    return SYSTEMS / meta["parent"] / "blocks" / (meta["block"] + ".md")
+    """Where this block's file lives. The flat layout (KB/habits/<block>.md) is
+    canonical; the legacy nested path is honored only if that file still exists
+    (an unmigrated tenant). New blocks land flat."""
+    name = meta["block"]
+    flat = HABITS / (name + ".md")
+    if flat.exists():
+        return flat
+    parent = meta.get("parent")
+    if parent:
+        nested = SYSTEMS / parent / "blocks" / (name + ".md")
+        if nested.exists():
+            return nested
+    return flat
 
 
 def default_body(slug):
@@ -192,6 +208,10 @@ def block_dict(sys_slug, meta, sys_status):
         "instances": int(meta.get("instances", 1) or 1),
         "default_start": meta.get("default_start", ""),
         "travel": meta.get("travel", ""),   # "pause" = skip on Travel-calendar days
+        # feeding chain — enriched onto meta by week.load_blocks(), whatever the
+        # layout (block's own keys when flat, parent system's when nested)
+        "goals": _aslist(meta.get("goals")),
+        "orientations": _aslist(meta.get("orientations")),
     }
 
 
@@ -207,8 +227,10 @@ def validate(meta, *, is_new, original_name=None):
     name = meta.get("block", "")
     if not SLUG_RE.match(name or ""):
         errs.append(f"block name '{name}' must be lowercase-kebab (a-z0-9-)")
+    # Flat blocks (KB/habits/) have no parent. Only validate a parent when one is
+    # given — i.e. a legacy nested tenant still authoring under systems/.
     parent = meta.get("parent", "")
-    if not parent or not (SYSTEMS / parent / "system.md").exists():
+    if parent and not (SYSTEMS / parent / "system.md").exists():
         errs.append(f"parent system '{parent}' not found under ~/kb/systems/")
     cadence = meta.get("cadence", "")
     if cadence not in CADENCES:
@@ -337,7 +359,7 @@ def cmd_show(args):
         _fail(f"no block named '{args.block}'", args.json)
         return
     bd = block_dict(s, meta, st)
-    bd["feeding"] = feeding_for(bd["parent"])
+    bd["feeding"] = {"goals": bd["goals"], "orientations": bd["orientations"]}
     bd["path"] = str(path)
     if args.json:
         print(json.dumps(bd))
@@ -356,12 +378,14 @@ def cmd_show(args):
 def cmd_new(args):
     meta = {
         "block": args.block,
-        "parent": args.parent,
         "calendar": args.calendar or DEFAULT_CALENDAR,
         "cadence": args.cadence,
         "duration": args.duration or "30m",
         "instances": str(args.instances or 1),
+        "status": "active",
     }
+    if args.parent:                           # legacy nested tenant only
+        meta["parent"] = args.parent
     if args.start:
         meta["default_start"] = args.start
     if args.days and args.cadence == "daily":
@@ -379,7 +403,8 @@ def cmd_new(args):
         _fail(f"{path} already exists", args.json)
         return
     write_block(path, meta, default_body(meta["block"]))
-    _sync_system_bullet(meta["parent"], meta["block"], add=True)
+    if meta.get("parent"):
+        _sync_system_bullet(meta["parent"], meta["block"], add=True)
     _ok({"created": meta["block"], "path": str(path)},
         f"created {meta['block']} → {path}", args.json)
 
@@ -400,8 +425,10 @@ def cmd_set(args):
     write_block(new_path, meta, body)
     if new_path != path:                      # renamed or re-homed: drop the old file
         path.unlink(missing_ok=True)
-        _sync_system_bullet(old_parent, old_name, add=False)
-        _sync_system_bullet(meta["parent"], meta["block"], add=True)
+        if old_parent:
+            _sync_system_bullet(old_parent, old_name, add=False)
+        if meta.get("parent"):
+            _sync_system_bullet(meta["parent"], meta["block"], add=True)
     warn = ""
     if new_name != old_name:
         warn = " (name changed — its habit streak resets, gcal title contract shifts)"

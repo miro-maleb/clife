@@ -56,18 +56,17 @@ def all_orientations():
 
 
 def _fed_by(name):
-    """Systems + goals that declare this orientation in their feeding chain."""
-    systems, goals = [], []
-    if SYSTEMS.exists():
-        for d in sorted(SYSTEMS.iterdir()):
-            sf = d / "system.md"
-            if sf.exists() and name in fm.read(sf).get("orientations", []):
-                systems.append(d.name)
+    """Blocks + goals that declare this orientation in their feeding chain.
+    Post-flatten, blocks own the chain directly (no systems layer)."""
+    blocks, goals = [], []
+    for _, m, _ in week.load_blocks():
+        if name in (m.get("orientations") or []):
+            blocks.append(m.get("block"))
     if GOALS.exists():
         for f in sorted(GOALS.rglob("*.md")):
             if name in fm.read(f).get("orientations", []):
                 goals.append(fm.read(f).get("goal") or f.stem)
-    return {"systems": systems, "goals": goals}
+    return {"blocks": sorted(blocks), "goals": goals}
 
 
 def default_body(slug):
@@ -101,7 +100,7 @@ def cmd_show(args):
         print(json.dumps(out))
         return
     console.print(f"[bold]{out['orientation']}[/bold]  ({out['status']})")
-    console.print(f"  fed by systems  {', '.join(out['fed_by']['systems']) or '—'}")
+    console.print(f"  fed by blocks   {', '.join(out['fed_by']['blocks']) or '—'}")
     console.print(f"  fed by goals    {', '.join(out['fed_by']['goals']) or '—'}")
 
 
@@ -156,8 +155,8 @@ def cmd_rm(args):
         _fail(f"no orientation named '{args.name}'", args.json)
         return
     fed = _fed_by(args.name)
-    if (fed["systems"] or fed["goals"]) and not args.force:
-        refs = ", ".join(fed["systems"] + fed["goals"])
+    if (fed["blocks"] or fed["goals"]) and not args.force:
+        refs = ", ".join(fed["blocks"] + fed["goals"])
         _fail(f"still fed by: {refs} — pass --force to delete anyway", args.json)
         return
     if not args.force and not args.json:
