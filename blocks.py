@@ -574,7 +574,8 @@ def build_parser():
 
     np = sub.add_parser("new")
     np.add_argument("--block", required=True)
-    np.add_argument("--parent", required=True)
+    np.add_argument("--parent", default=None,
+                    help="legacy: nest under a system (flat blocks omit this)")
     add_field_opts(np)
     np.add_argument("--json", action="store_true")
 
