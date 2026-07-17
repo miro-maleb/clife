@@ -6,7 +6,7 @@ Top-of-pane tabs switch between views of kb/:
   all      every project regardless of status
   goals    kb/goals, organised by year
   orient   kb/orientations, flat list
-  systems  kb/systems → blocks
+  habits   kb/habits, blocks grouped by cadence
 
 Live-refreshes every 60s. Designed for the left pane of `cl dashboard`.
 
@@ -29,6 +29,7 @@ from textual.widgets import Tab, Tabs, Tree
 sys.path.insert(0, os.path.dirname(__file__))
 
 import projects as proj
+import week
 from tui_common import (
     ACCENT, ACCENT_DIM, BG, BODY, BORDER, MUTED,
     dispatch_subprocess,
@@ -40,7 +41,6 @@ FILE_TYPES = {"goal", "orientation", "system", "block"}
 
 from paths import KB
 PROJECTS     = KB / "projects"
-SYSTEMS      = KB / "systems"
 GOALS        = KB / "goals"
 ORIENTATIONS = KB / "orientations"
 
@@ -108,7 +108,7 @@ VIEWS = [
     ("all",     "all"),
     ("goals",   "goals"),
     ("orient",  "orient"),
-    ("systems", "systems"),
+    ("habits",  "habits"),
 ]
 
 
@@ -126,7 +126,7 @@ class TreePaneApp(App):
         Binding("2", "show('all')",     show=False),
         Binding("3", "show('goals')",   show=False),
         Binding("4", "show('orient')",  show=False),
-        Binding("5", "show('systems')", show=False),
+        Binding("5", "show('habits')", show=False),
     ]
 
     def __init__(self, active_only: bool = True) -> None:
@@ -223,8 +223,8 @@ class TreePaneApp(App):
             self._load_goals(tree)
         elif v == "orient":
             self._load_orientations(tree)
-        elif v == "systems":
-            self._load_systems(tree)
+        elif v == "habits":
+            self._load_habits(tree)
 
     # ── per-view loaders ──────────────────────────────────────────────────────
 
@@ -342,37 +342,25 @@ class TreePaneApp(App):
                 data={"path": of, "type": "orientation"},
             )
 
-    def _load_systems(self, tree: Tree) -> None:
-        if not SYSTEMS.exists():
-            return
-        for sys_dir in sorted(SYSTEMS.iterdir()):
-            if not sys_dir.is_dir():
+    def _load_habits(self, tree: Tree) -> None:
+        by_cadence = {"daily": [], "weekly": []}
+        for _grp, meta, status in week.load_blocks():
+            by_cadence.setdefault(meta.get("cadence", "other"), []).append((meta, status))
+        extra = [c for c in by_cadence if c not in ("daily", "weekly")]
+        for cadence in ("daily", "weekly", *extra):
+            rows = by_cadence.get(cadence)
+            if not rows:
                 continue
-            sf = sys_dir / "system.md"
-            if not sf.exists():
-                continue
-            try:
-                status = proj.get_status(sf.read_text())
-            except OSError:
-                continue
-            color = proj.status_color(status)
-            sys_node = tree.root.add(
-                _label(
-                    f"[bold {BODY}]{sys_dir.name}[/bold {BODY}]  "
-                    f"[{color}]{status}[/{color}]"
-                ),
-                expand=True,
-                data={"path": sf, "type": "system"},
+            cad_node = tree.root.add(
+                _label(f"[bold {BODY}]{cadence}[/bold {BODY}]"),
+                expand=True, data={"path": week.HABITS, "type": "dir"},
             )
-            bd = sys_dir / "blocks"
-            if not bd.exists():
-                continue
-            for bf in sorted(bd.iterdir()):
-                if bf.suffix != ".md":
-                    continue
-                sys_node.add_leaf(
-                    _label(f"[{MUTED}]{bf.stem}[/{MUTED}]"),
-                    data={"path": bf, "type": "block"},
+            for meta, status in sorted(rows, key=lambda r: r[0].get("block", "")):
+                color = proj.status_color(status)
+                tag = "" if status == "active" else f"  [{color}]{status}[/{color}]"
+                cad_node.add_leaf(
+                    _label(f"[{MUTED}]{meta.get('block')}[/{MUTED}]{tag}"),
+                    data={"path": week.HABITS / f"{meta.get('block')}.md", "type": "block"},
                 )
 
 

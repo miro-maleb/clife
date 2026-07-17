@@ -15,13 +15,13 @@ from rich.padding import Padding
 from rich.tree import Tree
 
 import projects as proj
+import week
 from tui_common import ACCENT, ACCENT_DIM, BODY, MUTED
 
 console = Console()
 
 from paths import KB
 PROJECTS = KB / "projects"
-SYSTEMS = KB / "systems"
 GOALS = KB / "goals"
 ORIENTATIONS = KB / "orientations"
 
@@ -39,36 +39,27 @@ def fmt_subproject(sub_dir, status):
     return f"[{BODY}]{sub_dir.name}[/{BODY}]  [{color}]{status}[/{color}]"
 
 
-def render_systems_tree(active_only):
-    """Build a Tree of systems → blocks. Returns (tree, n_systems, n_blocks)."""
-    tree = Tree(f"[bold {ACCENT}]kb/systems[/bold {ACCENT}]")
-    n_systems = 0
+def render_habits_tree(active_only):
+    """Build a Tree of habit blocks grouped by cadence. Returns (tree, n_blocks)."""
+    tree = Tree(f"[bold {ACCENT}]kb/habits[/bold {ACCENT}]")
     n_blocks = 0
-    if not SYSTEMS.exists():
-        return tree, n_systems, n_blocks
-    for sys_dir in sorted(SYSTEMS.iterdir()):
-        if not sys_dir.is_dir():
-            continue
-        sf = sys_dir / "system.md"
-        if not sf.exists():
-            continue
-        status = proj.get_status(sf.read_text())
+    by_cadence = {"daily": [], "weekly": []}
+    for _grp, meta, status in week.load_blocks():
         if active_only and status != "active":
             continue
-        n_systems += 1
-        color = proj.status_color(status)
-        sys_branch = tree.add(
-            f"[bold {BODY}]{sys_dir.name}[/bold {BODY}]  [{color}]{status}[/{color}]"
-        )
-        bd = sys_dir / "blocks"
-        if not bd.exists():
+        by_cadence.setdefault(meta.get("cadence", "other"), []).append((meta, status))
+    extra = [c for c in by_cadence if c not in ("daily", "weekly")]
+    for cadence in ("daily", "weekly", *extra):
+        rows = by_cadence.get(cadence)
+        if not rows:
             continue
-        for bf in sorted(bd.iterdir()):
-            if bf.suffix != ".md":
-                continue
+        branch = tree.add(f"[bold {BODY}]{cadence}[/bold {BODY}]")
+        for meta, status in sorted(rows, key=lambda r: r[0].get("block", "")):
             n_blocks += 1
-            sys_branch.add(f"[{MUTED}]{bf.stem}[/{MUTED}]")
-    return tree, n_systems, n_blocks
+            color = proj.status_color(status)
+            tag = "" if status == "active" else f"  [{color}]{status}[/{color}]"
+            branch.add(f"[{MUTED}]{meta.get('block')}[/{MUTED}]{tag}")
+    return tree, n_blocks
 
 
 def render_orientations_tree(active_only):
@@ -169,13 +160,13 @@ def render(args):
     console.print()
     console.print(Padding(tree, pad))
 
-    n_systems = n_blocks = n_goals = n_orientations = 0
+    n_blocks = n_goals = n_orientations = 0
     if args.full:
-        sys_tree, n_systems, n_blocks = render_systems_tree(args.active)
+        habits_tree, n_blocks = render_habits_tree(args.active)
         goals_tree, n_goals = render_goals_tree(args.active)
         orient_tree, n_orientations = render_orientations_tree(args.active)
         console.print()
-        console.print(Padding(sys_tree, pad))
+        console.print(Padding(habits_tree, pad))
         console.print()
         console.print(Padding(goals_tree, pad))
         console.print()
@@ -185,7 +176,7 @@ def render(args):
     if args.full:
         summary += (
             f" · {n_subprojects} sub-projects"
-            f" · {n_systems} systems · {n_blocks} blocks"
+            f" · {n_blocks} habit blocks"
             f" · {n_goals} goals · {n_orientations} orientations"
         )
     if args.active:

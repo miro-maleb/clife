@@ -1,7 +1,7 @@
 """pool.py — `cl pool` — the scheduling pool (one-off items awaiting placement).
 
 The pool is the keystone of the weekly loop. Routine blocks stay as markdown in
-`~/kb/systems/*/blocks/` (human-authored, git-synced, reach every machine). The
+`~/kb/habits/` (human-authored, git-synced, reach every machine). The
 pool DB owns only the churny, queried state that markdown is bad at:
 
   - one-off items ("call Jonah") that need a slot but don't recur, and

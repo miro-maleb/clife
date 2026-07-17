@@ -32,7 +32,6 @@ console = Console()
 
 KB = week.KB
 ORIENTATIONS = KB / "orientations"
-SYSTEMS = week.SYSTEMS
 GOALS = KB / "goals"
 
 FIELD_ORDER = ["orientation", "status"]

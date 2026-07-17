@@ -47,6 +47,7 @@ from agenda import (
     update_last_note,
 )
 from week import (
+    HABITS,
     append_skip,
     delete_event_by_title,
     fetch_events,
@@ -576,19 +577,17 @@ class AgendaPane(Static):
         into the dashboard's center pane instead, since suspending a tmux
         pane TUI just hides our own UI.
 
-        Falls back to system.md if working.md doesn't exist — some systems
-        won't ever need a project list.
+        Opens the block's own file — post-flatten each habit block is a single
+        self-contained file in ~/kb/habits/ (prose folded in).
         """
         ev = self._focused()
         if not ev or not ev["meta"]:
-            self.app.notify("open only applies to system blocks", severity="warning")
+            self.app.notify("open only applies to habit blocks", severity="warning")
             return
-        sys_dir = KB / "systems" / ev["system"]
-        target = sys_dir / "working.md"
+        block = ev["meta"].get("block") or ev.get("title")
+        target = HABITS / f"{block}.md"
         if not target.exists():
-            target = sys_dir / "system.md"
-        if not target.exists():
-            self.app.notify(f"no system file for {ev['system']}", severity="error")
+            self.app.notify(f"no block file for {block}", severity="error")
             return
         if self.app.pane_mode:
             self.app._dispatch_to_center(f"nvim {shlex.quote(str(target))}")

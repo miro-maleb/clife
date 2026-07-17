@@ -1,6 +1,6 @@
 """habits.py — `cl habits` — the habit dashboard.
 
-Every routine block IS a habit (the block definitions in ~/kb/systems/ are the
+Every routine block IS a habit (the block definitions in ~/kb/habits/ are the
 source of truth for what habits exist). This surface reads the daily-review
 verdicts back out of the pool DB (pool.review_mark) and shows, per habit, a
 recent done/missed strip plus the current streak and totals.

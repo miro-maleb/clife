@@ -3,7 +3,7 @@
 Everything the daily-driver stack needs before it works, in one guided pass:
 the **connect** half (knowledge base + git, calendars, email, a default
 calendar) and the **populate** half (the 5-tier spine — orientations → goals →
-areas → projects → systems/habits). Portable by design: it keys off `~/kb` and
+areas → projects → habit blocks). Portable by design: it keys off `~/kb` and
 the user's own gcalcli, so running it as a different person (or `HOME`) stands
 up their instance. See `hearth/surface/docs/PORTABILITY.md`.
 
@@ -35,7 +35,7 @@ console = Console()
 KB = week.KB
 ORIENTATIONS = KB / "orientations"
 GOALS = KB / "goals"
-SYSTEMS = KB / "systems"
+HABITS = KB / "habits"
 PROJECTS = KB / "projects"
 MSMTPRC = Path.home() / ".msmtprc"
 
@@ -171,26 +171,23 @@ def new_project(name, area):
 
 
 def new_habit(name, cadence="daily", start="", days=None, travel=False):
-    """Scaffold a one-block system with the interviewed schedule filled in."""
+    """Scaffold a flat habit block (~/kb/habits/<block>.md) with the interviewed
+    schedule filled in."""
     slug = slugify(name)
-    system_dir = SYSTEMS / slug
-    if system_dir.exists():
-        return None
     block_name = re.sub(r"^(daily|weekly|monthly)-", "", slug)
+    HABITS.mkdir(parents=True, exist_ok=True)
+    path = HABITS / f"{block_name}.md"
+    if path.exists():
+        return None
     day_list = days if days is not None else (week.DAYS if cadence == "daily" else [])
-    (system_dir / "blocks").mkdir(parents=True)
-    (system_dir / "system.md").write_text(
-        f"---\nsystem: {slug}\nstatus: active\ngoals: []\norientations: []\n---\n\n"
-        f"# {title_of(name)}\n\n## Why it exists\n\n"
-        f"## Blocks\n\n- [{block_name}](blocks/{block_name}.md)\n")
     travel_line = "travel: pause\n" if travel else ""
-    (system_dir / "blocks" / f"{block_name}.md").write_text(
-        f"---\nblock: {block_name}\nparent: {slug}\ncalendar: {blocks.DEFAULT_CALENDAR}\n"
+    path.write_text(
+        f"---\nblock: {block_name}\ncalendar: {blocks.DEFAULT_CALENDAR}\n"
         f"cadence: {cadence}\ndays: [{', '.join(day_list)}]\nduration: 30m\ninstances: 1\n"
-        f'default_start: "{start}"\n{travel_line}---\n\n'
+        f'default_start: "{start}"\n{travel_line}status: active\ngoals: []\norientations: []\n---\n\n'
         f"# {title_of(name)} — {block_name}\n\n## What this block is\n\n"
         f'## "Done" looks like\n')
-    return system_dir / "system.md"
+    return path
 
 
 # ── the interview wizard ─────────────────────────────────────────────────────

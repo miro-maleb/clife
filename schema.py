@@ -85,23 +85,21 @@ SCHEMAS = {
         dates={"created", "completed", "started", "deferred_on", "deadline",
                "abandoned", "sleeping", "last_reviewed", "superseded_on"},
         lists={"depends_on", "blocks", "tags"}),
-    "system": dict(
-        required={"system", "status"},
-        known={"system", "status", "goals", "orientations", "superseded_by",
-               "superseded_on", "supersedes", "applies_when"},
-        status={"active", "superseded", "on-hold", "dormant"},
-        dates={"superseded_on"}, lists={"goals", "orientations"}),
     "block": dict(
-        required={"block", "parent", "calendar", "cadence"},
-        known={"block", "parent", "calendar", "cadence", "habit", "days",
-               "duration", "instances", "default_start", "travel"},
-        status=None, dates=set(), lists={"days"}),
+        # Flat habit block (~/kb/habits/<block>.md) — self-contained since the
+        # systems flatten: it carries its own status + feeding chain.
+        required={"block", "calendar", "cadence"},
+        known={"block", "calendar", "cadence", "habit", "days", "duration",
+               "instances", "default_start", "travel", "status", "goals",
+               "orientations", "parent"},   # parent tolerated for legacy nested tenants
+        status={"active", "on-hold", "superseded", "dormant"},
+        dates=set(), lists={"days", "goals", "orientations"}),
     "goal": dict(
         required={"goal", "year", "status"},
-        known={"goal", "year", "status", "marker", "orientations", "systems",
+        known={"goal", "year", "status", "marker", "orientations",
                "projects", "deferred_on", "deferred_to"},
         status={"active", "paused", "done", "dropped", "deferred"},
-        dates={"deferred_on"}, lists={"orientations", "systems", "projects"}),
+        dates={"deferred_on"}, lists={"orientations", "projects"}),
     "orientation": dict(
         required={"orientation", "status"},
         known={"orientation", "status", "superseded_by", "superseded_on"},
@@ -125,11 +123,8 @@ def identity_issues(typ, path, meta):
         if actual and actual != expected:
             out.append((key, expected, actual))
 
-    if typ == "system":
-        chk("system", path.parent.name)                 # systems/<slug>/system.md
-    elif typ == "block":
-        chk("block", path.stem)                          # …/blocks/<block>.md
-        chk("parent", path.parent.parent.name)           # owning system folder
+    if typ == "block":
+        chk("block", path.stem)                          # habits/<block>.md
     elif typ == "goal":
         chk("goal", path.stem)                           # goals/<year>/<slug>.md
     elif typ == "orientation":
@@ -150,10 +145,8 @@ def classify(path: Path):
     if not parts:
         return None
     top, name = parts[0], p.name
-    if top == "systems":
-        if name == "system.md":
-            return "system"
-        if "blocks" in parts and name.endswith(".md"):
+    if top == "habits":
+        if name.endswith(".md") and name != "README.md" and not name.endswith("-notes.md"):
             return "block"
         return None
     if top == "goals" and name.endswith(".md"):

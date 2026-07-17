@@ -46,7 +46,7 @@ _BLOCK_ITEM = re.compile(r"^\s+-\s+")
 # Files/dirs we never descend into.
 SKIP_PARTS = {".git", ".trash", "__pycache__", "node_modules", "venv", ".venv"}
 # Only these top-level trees are in scope (matches the agreed cleanup scope).
-SCOPE_TOPS = {"systems", "goals", "orientations", "projects", "templates"}
+SCOPE_TOPS = {"habits", "goals", "orientations", "projects", "templates"}
 
 
 def in_scope(p: Path) -> bool:
