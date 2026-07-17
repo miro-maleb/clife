@@ -18,7 +18,6 @@ COMMANDS = {
     "habits":      "habits",
     "blocks":      "blocks",
     "trips":       "trips",
-    "systems":     "systems",
     "goals":       "goals",
     "orientations": "orientations",
     "lint":        "lint",
@@ -61,7 +60,7 @@ HELP = """
   cl projects new --project SLUG --area AREA [--status --goals --orientations --tags --title]
   cl projects archive SLUG    move a project to ~/kb/archive (status → archived)
   cl review                   full review pipeline — projects (incl. sleeping) → notes
-  cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, systems, goals, orientations)
+  cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, goals, orientations)
   cl show PATH                overview for an area / project / sub-project (dir or .md file)
   cl week                     weekly planner
   cl pool                     scheduling pool — one-off items awaiting placement
@@ -72,7 +71,7 @@ HELP = """
   cl pool done|return|drop ID resolve a placement / item
   cl pool stage ITEM [DATE]   soft-assign an item to a target day (--clear); day planner highlights it there
   cl pool suggest "TEXT"      AI-structure a freeform capture → schedulable item (--json); powers Surface "New +"
-  cl agenda                   today's anchor — gcal + system blocks; mark done/skip
+  cl agenda                   today's anchor — gcal + habit blocks; mark done/skip
   cl agenda --dump            print today, headless
   cl agenda --date YYYY-MM-DD operate on a specific date
   cl events show ID [--calendar NAME]    one gcal event by id (--json for surfaces)
@@ -86,16 +85,13 @@ HELP = """
   cl habits --dump|--json [--days N]   print / emit the dashboard
   cl blocks [list]            routine block editor — list every daily/weekly block
   cl blocks show BLOCK        one block's settings + the goals/orientations it feeds
-  cl blocks new --block SLUG --parent SYSTEM --cadence daily|weekly [--days --duration --start …]
-  cl blocks set BLOCK [--calendar --cadence --days --duration --start --instances --habit --travel --name --parent]
+  cl blocks new --block SLUG --cadence daily|weekly [--calendar --days --duration --start …]
+  cl blocks set BLOCK [--calendar --cadence --days --duration --start --instances --habit --travel --name]
   cl blocks rm BLOCK [--force]   delete a block
-  cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]   edit a system's feeding chain
-  cl blocks meta|calendars    pickers — systems/goals/orientations, or writable calendars
+  cl blocks feed BLOCK [--goals a,b] [--orientations x,y]   set a block's feeding chain
+  cl blocks meta|calendars    pickers — goals/orientations, or writable calendars
   cl trips show [DAY]         the trip covering DAY + which daily blocks it schedules
   cl trips set DAY --blocks a,b | --all | --none   per-trip schedule allowlist (saved for the trip)
-  cl systems [list]           system editor — status + feeding chain; new/set/rm
-  cl systems new --system SLUG [--status --goals a,b --orientations x,y]
-  cl systems set SLUG [--status --goals --orientations --superseded-by --superseded-on]
   cl goals [list]             goal editor — year/status/marker/orientations
   cl goals new --goal SLUG --year YYYY [--status --marker "…" --orientations a,b]
   cl goals set SLUG [--name --year --status --marker --orientations]

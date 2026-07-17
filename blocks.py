@@ -7,19 +7,20 @@ default settings, create new daily/weekly blocks, and delete them without
 hand-editing frontmatter.
 
   cl blocks [list] [--json]        list every block (table, or JSON envelope
-                                   with blocks + systems + goals + orientations)
+                                   with blocks + goals + orientations)
   cl blocks show BLOCK [--json]    one block's settings + its feeding chain
-  cl blocks new --block SLUG --parent SYSTEM --cadence daily|weekly [opts]
+  cl blocks new --block SLUG --cadence daily|weekly [opts]
   cl blocks set BLOCK [opts]       edit fields on an existing block
   cl blocks rm BLOCK [--force]     delete a block file
-  cl blocks feed SYSTEM [--goals a,b] [--orientations x,y]
-                                   edit which goals/orientations a system feeds
-  cl blocks meta [--json]          systems + goals + orientations (pickers)
+  cl blocks feed BLOCK [--goals a,b] [--orientations x,y]
+                                   edit which goals/orientations a block feeds
+  cl blocks meta [--json]          goals + orientations (pickers)
   cl blocks calendars [--json]     writable gcal calendar names (slow — gcalcli)
 
-Field opts (new/set): --calendar NAME, --cadence daily|weekly, --days mon,tue
-(or 'all' to clear → every day), --duration 30m|2h, --start HH:MM, --instances N,
---habit true|false, --name NEW-SLUG (rename), --parent SYSTEM (re-home).
+Blocks are self-contained files in ~/kb/habits/ (the systems layer was flattened
+2026-07-17). Field opts (new/set): --calendar NAME, --cadence daily|weekly,
+--days mon,tue (or 'all' to clear → every day), --duration 30m|2h, --start HH:MM,
+--instances N, --habit true|false, --name NEW-SLUG (rename).
 
 Block name == file stem == gcal title key; renaming resets its streak (the
 review DB is keyed by title). All block names are globally unique.
@@ -453,24 +454,24 @@ def cmd_rm(args):
 
 
 def cmd_feed(args):
-    sf = SYSTEMS / args.system / "system.md"
-    if not sf.exists():
-        _fail(f"no system named '{args.system}'", args.json)
+    """Set which goals/orientations a BLOCK feeds. Post-flatten the feeding chain
+    lives on the block itself (there's no system layer)."""
+    _, found, _, path = find_block(args.block)
+    if not found:
+        _fail(f"no block named '{args.block}'", args.json)
         return
-    text = sf.read_text()
-    meta = week.parse_frontmatter(sf)
-    updates = {}
-    if args.goals is not None:
-        updates["goals"] = _csv(args.goals)
-    if args.orientations is not None:
-        updates["orientations"] = _csv(args.orientations)
-    if not updates:
+    if args.goals is None and args.orientations is None:
         _fail("nothing to change (pass --goals and/or --orientations)", args.json)
         return
-    text = _rewrite_fm_list(text, updates)
-    sf.write_text(text)
-    _ok({"system": args.system, **{k: updates[k] for k in updates}},
-        f"updated feeding for {args.system}", args.json)
+    meta, body = read_block(path)
+    if args.goals is not None:
+        meta["goals"] = _csv(args.goals)
+    if args.orientations is not None:
+        meta["orientations"] = _csv(args.orientations)
+    write_block(path, meta, body)
+    _ok({"block": args.block, "goals": meta.get("goals", []),
+         "orientations": meta.get("orientations", [])},
+        f"updated feeding for {args.block}", args.json)
 
 
 def cmd_meta(args):
@@ -592,7 +593,7 @@ def build_parser():
     rp.add_argument("--json", action="store_true")
 
     fp = sub.add_parser("feed")
-    fp.add_argument("system")
+    fp.add_argument("block")
     fp.add_argument("--goals", help="comma list (replaces)")
     fp.add_argument("--orientations", help="comma list (replaces)")
     fp.add_argument("--json", action="store_true")

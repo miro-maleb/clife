@@ -21,8 +21,10 @@ _cl_projects() {
 _cl_blocks() {
   local -a bl
   local d
-  for d in $HOME/kb/systems/*/blocks/*.md(N); do
-    bl+=("${${d##*/}%.md}")
+  for d in $HOME/kb/habits/*.md(N); do
+    local n="${${d##*/}%.md}"
+    [[ "$n" == *-notes || "$n" == README ]] && continue
+    bl+=("$n")
   done
   _describe "blocks" bl
 }
@@ -38,15 +40,6 @@ try: print("\n".join(json.load(open(sys.argv[1]))["calendars"]))
 except Exception: pass' "$f" 2>/dev/null)"})
   fi
   _describe "calendars" cals
-}
-
-_cl_systems() {
-  local -a sys
-  local d
-  for d in $HOME/kb/systems/*/system.md(N); do
-    sys+=("${${d%/system.md}##*/}")
-  done
-  _describe "systems" sys
 }
 
 _cl_goals() {
@@ -81,12 +74,11 @@ _cl() {
     "show:overview for area / project / sub-project"
     "week:weekly planner"
     "pool:scheduling pool — one-off items awaiting placement"
-    "agenda:today's anchor — gcal + system blocks"
+    "agenda:today's anchor — gcal + habit blocks"
     "events:gcal event CRUD by id — show/new/set/rm"
     "checkin:daily review — verify what was scheduled got done/missed"
     "habits:habit dashboard — per-block streaks + done/missed history"
     "blocks:routine block editor — daily/weekly block CRUD"
-    "systems:system editor — status + feeding chain CRUD"
     "goals:goal editor — year/status/marker/orientations CRUD"
     "orientations:orientation editor — status CRUD"
     "lint:check kb frontmatter against the canonical schema"
@@ -319,12 +311,12 @@ _cl() {
           _values "blocks subcommand" \
             "list[list every block]" "show[one block + feeding chain]" \
             "new[create a block]" "set[edit a block]" "rm[delete a block]" \
-            "feed[edit a system's goals/orientations]" \
-            "meta[systems/goals/orientations pickers]" "calendars[writable calendars]"
+            "feed[set a block's goals/orientations]" \
+            "meta[goals/orientations pickers]" "calendars[writable calendars]"
         else
           case "$words[3]" in
             show|rm) _cl_blocks ;;
-            feed) _cl_systems ;;
+            feed) _cl_blocks ;;
             new)
               _values "new options" \
                 "--block[block slug]:slug:" "--parent[owning system]:system:" \
@@ -346,34 +338,6 @@ _cl() {
                   "--start[HH:MM]:start:" "--instances[count]:n:" \
                   "--calendar[gcal name]:cal:" "--habit[true|false]:habit:(true false)" \
                   "--travel[pause|keep on Travel days]:travel:(pause keep)" \
-                  "--json[emit JSON]"
-              fi
-              ;;
-          esac
-        fi
-        ;;
-      systems)
-        if (( CURRENT == 3 )); then
-          _values "systems subcommand" \
-            "list[list every system]" "show[one system + blocks]" \
-            "new[create a system]" "set[edit a system]" "rm[delete a system]"
-        else
-          case "$words[3]" in
-            show|rm) _cl_systems ;;
-            new)
-              _values "new options" \
-                "--system[system slug]:slug:" "--status[status]:status:" \
-                "--goals[comma list]:goals:" "--orientations[comma list]:orients:" \
-                "--json[emit JSON]"
-              ;;
-            set)
-              if (( CURRENT == 4 )); then
-                _cl_systems
-              else
-                _values "set options" \
-                  "--status[status]:status:" "--goals[comma list]:goals:" \
-                  "--orientations[comma list]:orients:" \
-                  "--superseded-by[system slug]:slug:" "--superseded-on[YYYY-MM-DD]:date:" \
                   "--json[emit JSON]"
               fi
               ;;
@@ -450,8 +414,8 @@ _cl() {
         ;;
       tree)
         _values "tree options" \
-          "--full[include sub-projects, systems, goals, orientations]" \
-          "--active[only active projects/systems/goals/orientations]"
+          "--full[include sub-projects, goals, orientations]" \
+          "--active[only active projects/goals/orientations]"
         ;;
       show)
         _files

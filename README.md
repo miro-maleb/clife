@@ -19,10 +19,9 @@ Commands:
 | `cl projects` | active project pulse |
 | `cl review` | full review |
 | `cl week` | weekly planner |
-| `cl blocks` | routine block editor — daily/weekly block CRUD + feeding chain |
+| `cl blocks` | routine block editor — self-contained habit blocks in `~/kb/habits/` (CRUD + `feed` for goals/orientations) |
 | `cl events` | gcal event CRUD by id — show/new/set/rm (Calendar API, not gcalcli) |
 | `cl trips` | travel-aware scheduling — per-trip daily allowlist (saved for the trip) |
-| `cl systems` | system editor — status + feeding chain CRUD |
 | `cl goals` | goal editor — year/status/marker/orientations CRUD |
 | `cl orientations` | orientation editor — status CRUD |
 | `cl lint` | check kb frontmatter against the canonical schema (`--fix` for mechanical repairs) |
