@@ -221,7 +221,10 @@ def _claim_files() -> list[Path]:
         rel = md.relative_to(KB)
         if _skip(rel) or rel.parts[0] not in CLAIM_DIRS:
             continue
-        if md.name.endswith(".excalidraw.md"):
+        # Blog/journal drafts are creative writing in narrative present tense, not
+        # status claims — flagging "I'm renting a room in the Catskills" as stale is
+        # a category error. Skip any drafts/ folder.
+        if "drafts" in rel.parts or md.name.endswith(".excalidraw.md"):
             continue
         try:
             if len(md.read_text(errors="replace")) >= MIN_CLAIM_CHARS:
@@ -245,12 +248,18 @@ def stale_pass(files: list[Path], today: dt.date, log=lambda s: None) -> list[di
     """Per-doc: flag time-bound claims that today has probably overtaken. O(n), no
     pairing. Conservative by construction — most notes have zero."""
     system = (
-        "You audit ONE personal note for STALE claims: statements true when written but "
-        f"probably false or outdated as of {today.isoformat()}. Stale means time has "
-        "overtaken it — 'currently doing X', 'X is being set up', 'next week', a plan whose "
-        "date has passed, 'the new Y' now old. Do NOT flag: timeless notes, opinions, "
-        "aspirations, or ANYTHING you are unsure about. Most notes have ZERO stale claims — "
-        "returning an empty list is the common, correct answer. Never invent. Reply ONLY as JSON."
+        "You audit ONE personal note for STALE STATUS: a claim about the person's CURRENT "
+        "situation or PLANS that time has made wrong and that they would want to UPDATE. "
+        f"Today is {today.isoformat()}. Worth flagging: 'currently doing X', 'waiting on Y', "
+        "'in progress', 'next: Z', a plan or deadline implying work that is now overdue.\n"
+        "Do NOT flag — RETURN EMPTY for these, they are records, not stale status:\n"
+        "- inherently dated documents: forecasts, astrology/horoscope readings, predictions, "
+        "meeting minutes, historical logs. Every line is time-bound BY DESIGN — that is not "
+        "staleness. If the whole note is a record of a past period or event, return nothing.\n"
+        "- narrative or creative writing (blog/journal prose) in present tense about a past moment.\n"
+        "- anything where flagging would just restate 'this described a past period'.\n"
+        "Only flag a claim if UPDATING it would genuinely help the person. Most notes have ZERO; "
+        "an empty list is the common, correct answer. Never invent. Reply ONLY as JSON."
     )
     out = []
     for md in files:
