@@ -295,6 +295,56 @@ Return ONLY JSON:
     return _generate_json(prompt)
 
 
+def plan_remediation(problem, allowed_actions):
+    """Pick remediation actions for a watchdog incident — from a FIXED menu only.
+
+    problem: {"status", "checks":[{name,status,detail}], "culprits":[{pid,cmd,kind,killable}]}
+    allowed_actions: [{"action","description","args_hint"}] — the ONLY actions permitted.
+    Returns {"assessment": str, "actions": [{"action","args","why"}]}. An empty
+    actions list means "nothing safe to do — leave it for a human". {} on failure.
+
+    The model never gets a shell; it only chooses from allowed_actions. The human
+    already authorized this run by pressing dispatch — keep choices conservative.
+    """
+    checks = " | ".join(f'{c["name"]}:{c["status"]}={c["detail"]}'
+                        for c in problem.get("checks", []))
+    culprits = " | ".join(f'pid {c["pid"]} {c.get("kind","")} '
+                          f'killable={c.get("killable")} {c.get("cmd","")}'
+                          for c in problem.get("culprits", [])) or "(none)"
+    menu = "\n".join(f'- {a["action"]}({a.get("args_hint","")}): {a["description"]}'
+                     for a in allowed_actions)
+    prompt = f"""/no_think
+You are the remediation step of a Linux tower's health watchdog. The owner just
+pressed "fix it", authorizing you to act — but ONLY through the fixed action menu
+below. You cannot run arbitrary commands. Choose the smallest set of actions that
+resolves the problem; if nothing on the menu safely applies, return an empty
+actions list and say what a human should do.
+
+Problem status: {problem.get("status")}
+Checks: {checks}
+Flagged processes: {culprits}
+
+Action menu (the ONLY actions you may use):
+{menu}
+
+Rules:
+- Only kill a process that is flagged killable. Use its exact pid.
+- Only restart a service that is actually failing per the checks.
+- A service that is warn merely from a mid-restart blip needs no action.
+- Prefer doing nothing over a risky guess.
+
+Return ONLY JSON:
+{{"assessment": "<= 1 sentence: what's wrong and your plan (or why nothing to do)>",
+  "actions": [{{"action": "<name from the menu>", "args": {{...}}, "why": "<short>"}}]}}"""
+    out = _generate_json(prompt)
+    if not isinstance(out, dict):
+        return {}
+    out.setdefault("assessment", "")
+    if not isinstance(out.get("actions"), list):
+        out["actions"] = []
+    return out
+
+
 # ── (room for more calls: draft_reply(), propose_blocks(), weekly_review(), … ) ──
 
 
