@@ -30,6 +30,7 @@ local default_keymaps = {
   week              = "<leader>cw",
   journal           = "<leader>cj",
   review            = "<leader>cr",
+  tags              = "<leader>ct",
   template          = "<leader>t",
 }
 
@@ -292,6 +293,101 @@ function M.notes()
 end
 
 -- ------------------------------------------------------------------
+-- Inline-tag browser (the "pull up all blocks by tag" view)
+-- ------------------------------------------------------------------
+
+-- Stage 2: every block carrying `tag`, with a live preview; <CR> jumps to it.
+local function tag_blocks_picker(tag)
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local previewers = require("telescope.previewers")
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  local out = vim.fn.system(CL .. " tags " .. vim.fn.shellescape(tag) .. " --json")
+  local ok, blocks = pcall(vim.json.decode, out)
+  if not ok or type(blocks) ~= "table" or #blocks == 0 then
+    notify("no blocks for #" .. tag, vim.log.levels.WARN)
+    return
+  end
+
+  pickers.new({}, {
+    prompt_title = "#" .. tag .. "  (" .. #blocks .. ")",
+    finder = finders.new_table({
+      results = blocks,
+      entry_maker = function(b)
+        local date = (b.date and b.date ~= "") and b.date or vim.fn.fnamemodify(b.relpath, ":t:r")
+        return {
+          value = b,
+          display = date .. "  " .. (b.preview or ""),
+          ordinal = (b.text or "") .. " " .. table.concat(b.tags or {}, " "),
+        }
+      end,
+    }),
+    sorter = conf.generic_sorter({}),
+    previewer = previewers.new_buffer_previewer({
+      title = "block",
+      define_preview = function(self, entry)
+        local lines = vim.split(entry.value.text or "", "\n", { plain = true })
+        vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+        vim.bo[self.state.bufnr].filetype = "markdown"
+      end,
+    }),
+    attach_mappings = function(prompt_bufnr, _)
+      actions.select_default:replace(function()
+        actions.close(prompt_bufnr)
+        local sel = action_state.get_selected_entry()
+        if not sel then return end
+        vim.cmd("edit " .. vim.fn.fnameescape(sel.value.path))
+        pcall(vim.api.nvim_win_set_cursor, 0, { sel.value.line, 0 })
+        vim.cmd("normal! zz")
+      end)
+      return true
+    end,
+  }):find()
+end
+
+-- Stage 1: pick a tag from the whole daily-note index.
+function M.tags()
+  if not telescope_or_warn() then
+    term_run(CL .. " tags")
+    return
+  end
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  local out = vim.fn.system(CL .. " tags --list --json")
+  local ok, tags = pcall(vim.json.decode, out)
+  if not ok or type(tags) ~= "table" or #tags == 0 then
+    notify("no tags found (is ~/kb/daily/ populated?)", vim.log.levels.WARN)
+    return
+  end
+
+  pickers.new({}, {
+    prompt_title = "clife tags",
+    finder = finders.new_table({
+      results = tags,
+      entry_maker = function(t)
+        return { value = t, display = string.format("#%-30s %d", t.tag, t.count), ordinal = t.tag }
+      end,
+    }),
+    sorter = conf.generic_sorter({}),
+    attach_mappings = function(prompt_bufnr, _)
+      actions.select_default:replace(function()
+        actions.close(prompt_bufnr)
+        local sel = action_state.get_selected_entry()
+        if sel then tag_blocks_picker(sel.value.tag) end
+      end)
+      return true
+    end,
+  }):find()
+end
+
+-- ------------------------------------------------------------------
 -- Templates
 -- ------------------------------------------------------------------
 
@@ -377,6 +473,7 @@ local subcommands = {
   week              = M.week,
   journal           = M.journal,
   review            = M.review,
+  tags              = M.tags,
   view              = M.view,
   template          = M.template_insert,
 }
@@ -436,6 +533,7 @@ function M.setup(opts)
   map("n", keymaps.week,              M.week,              "clife: weekly plan")
   map("n", keymaps.journal,           M.journal,           "clife: today's journal")
   map("n", keymaps.review,            M.review,            "clife: full review")
+  map("n", keymaps.tags,              M.tags,              "clife: browse inline tags")
   map("n", keymaps.template,          M.template_insert,   "clife: insert template at cursor")
 end
 

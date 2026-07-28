@@ -24,6 +24,8 @@ COMMANDS = {
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
+    "daily":       "daily",
+    "tags":        "tags",
     "review":      "review",
     "tree":        "tree",
     "show":        "show",
@@ -50,6 +52,11 @@ HELP = """
   cl notes --area NAME        filter to one area
   cl notes --project NAME     filter to one project
   cl notes --tag NAME         filter to one tag
+  cl daily [--date D]         the daily writing surface as ordered blocks (--json for machines)
+  cl daily --append           append a block (text on stdin) · --set N replaces block N
+  cl tags                     index inline #tags across daily notes + block counts
+  cl tags TAG                 show every daily block carrying TAG (hierarchical: book → book/x)
+  cl tags [--all|--path P] [--json]   scan whole kb / a path; JSON for the nvim picker
   cl projects [--tui]         project review — active + on-hold (default)
   cl projects --sleeping      show sleeping projects
   cl projects --active|--on-hold|--complete|--abandoned|--all

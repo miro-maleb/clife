@@ -69,6 +69,7 @@ _cl() {
     "inbox:route inbox files"
     "projects:project review"
     "notes:notes browser"
+    "tags:index inline #tags across daily notes"
     "review:full review pipeline"
     "tree:bird's-eye view of areas/projects"
     "show:overview for area / project / sub-project"
@@ -123,6 +124,13 @@ _cl() {
           "--area[filter to one area]:area:" \
           "--project[filter to one project]:project:" \
           "--tag[filter to one tag]:tag:"
+        ;;
+      tags)
+        _values "tags options" \
+          "--list[list distinct tags + block counts]" \
+          "--all[scan whole kb, not just daily]" \
+          "--path[scan a specific file or dir]:path:_files" \
+          "--json[machine output]"
         ;;
       ingest)
         _values "ingest options" \

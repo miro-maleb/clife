@@ -26,6 +26,7 @@ Commands:
 | `cl orientations` | orientation editor — status CRUD |
 | `cl lint` | check kb frontmatter against the canonical schema (`--fix` for mechanical repairs) |
 | `cl notes` | notes browser |
+| `cl tags` | index inline `#tags` across daily notes; `cl tags TAG` shows every block carrying it |
 | `cl new-project` | scaffold a new project |
 | `cl show` | overview for an area / project / sub-project |
 | `cl dashboard` | persistent dashboard TUI |
