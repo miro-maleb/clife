@@ -99,10 +99,24 @@ def get_goal(content):
 
 
 def open_task_count(md_file):
+    """Open tasks belonging to THIS project — a nested sub-project owns its own,
+    so they aren't counted twice (once here, once on the child's own card)."""
+    root = md_file.parent
     count = 0
-    for f in md_file.parent.rglob("*.md"):
-        count += f.read_text().count("- [ ]")
+    for f in root.rglob("*.md"):
+        if _owner_dir(f, root) == root:
+            count += f.read_text().count("- [ ]")
     return count
+
+
+def _owner_dir(f, root):
+    """The project/sub-project directory a file belongs to, bounded by root."""
+    d = f.parent
+    while d != root:
+        if any((d / m).exists() for m in MARKERS):
+            return d
+        d = d.parent
+    return root
 
 
 def days_since_reviewed(content):
@@ -360,6 +374,13 @@ def review_item(md_file, index, total):
 EDITOR_CMDS = {"list", "show", "set", "new", "archive"}
 PROJECT_STATUSES = ["active", "on-hold", "sleeping", "complete", "abandoned",
                     "archived", "superseded", "pending"]
+# A sub-project is a project nested inside another, marked by sub-project.md
+# instead of project.md. `cl new --sub-project` has always created them and
+# `cl tree`/`cl show` have always read them, but the editor commands only ever
+# globbed project.md — so a tree like hearth/surface/budget was invisible to
+# `cl projects list` and therefore to Surface's Projects lens. They're the same
+# kind of thing you work on, so list them too, tagged with kind + parent.
+MARKERS = ("project.md", "sub-project.md")
 FIELD_ORDER = ["created", "deadline", "status", "completed", "abandoned",
                "sleeping", "last_reviewed", "area", "goals", "orientations", "tags"]
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -397,9 +418,31 @@ def known_areas():
                   if d.is_dir() and (d / "area.md").exists())
 
 
+def marker_files():
+    """Every project + sub-project marker in the tree."""
+    for name in MARKERS:
+        yield from project_path.rglob(name)
+
+
+def kind_of(md):
+    return "sub-project" if md.name == "sub-project.md" else "project"
+
+
+def parent_slug(md):
+    """Folder name of the nearest enclosing project/sub-project, or "" if this
+    one sits directly under an area."""
+    for d in md.parent.parents:
+        if d == project_path or not d.is_relative_to(project_path):
+            break
+        if any((d / m).exists() for m in MARKERS):
+            return d.name
+    return ""
+
+
 def find_project(slug):
-    """Locate a project.md by its folder name (unique across the tree)."""
-    for md in project_path.rglob("project.md"):
+    """Locate a project.md / sub-project.md by its folder name (unique across
+    the tree). project.md wins if a folder somehow carries both."""
+    for md in marker_files():
         if md.parent.name == slug:
             return md
     return None
@@ -418,6 +461,8 @@ def project_row(md):
     return {
         "slug": md.parent.name,
         "title": _project_title(content, md.parent.name),
+        "kind": kind_of(md),
+        "parent": parent_slug(md),
         "area": get_top_folder(md),
         "status": meta.get("status") or "unknown",
         "goal": get_goal(content),
@@ -434,8 +479,11 @@ def project_row(md):
 
 
 def _all_project_rows():
-    rows = [project_row(md) for md in project_path.rglob("project.md")]
-    rows.sort(key=lambda r: (r["area"], STATUS_ORDER.get(r["status"], 99), r["slug"]))
+    # Ordered by path so a sub-project always follows its parent (a caller
+    # rendering a tree can just walk the list); status ordering is left to the
+    # consumer, which usually filters by status anyway.
+    rows = [project_row(md) for md in marker_files()]
+    rows.sort(key=lambda r: (r["area"], r["dir"]))
     return rows
 
 
@@ -474,12 +522,22 @@ def cmd_list(args):
                           "statuses": PROJECT_STATUSES}))
         return
     area = None
+    by_slug = {r["slug"]: r for r in rows}
+
+    def depth(r):
+        """How far to indent — how many enclosing projects this one has."""
+        n, p = 0, r["parent"]
+        while p and p in by_slug and n < 6:
+            n, p = n + 1, by_slug[p]["parent"]
+        return n
+
     for r in rows:
         if r["area"] != area:
             area = r["area"]
             console.print(f"\n[bold]{area}[/bold]")
         badge = "" if r["status"] == "active" else f" [dim]({r['status']})[/dim]"
-        console.print(f"  {r['slug']:32}{badge}  {r['open_tasks']} open")
+        pad = "  " * depth(r)
+        console.print(f"  {pad}{r['slug']:{max(4, 32 - len(pad))}}{badge}  {r['open_tasks']} open")
 
 
 def cmd_show(args):
@@ -518,8 +576,12 @@ def cmd_set(args):
     if args.tags is not None:
         updates["tags"] = _csv(args.tags)
     if args.status is not None:
-        if args.status not in PROJECT_STATUSES:
-            _fail(f"status '{args.status}' not one of {PROJECT_STATUSES}", args.json)
+        # Sub-projects carry a slightly narrower status vocabulary than projects
+        # (no "archived"), so validate against the one this marker actually uses.
+        import schema
+        allowed = sorted(schema.SCHEMAS[kind_of(md)]["status"])
+        if args.status not in allowed:
+            _fail(f"status '{args.status}' not one of {allowed}", args.json)
             return
         updates["status"] = args.status
         today = datetime.now().strftime("%Y-%m-%d")
