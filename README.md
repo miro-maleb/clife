@@ -18,6 +18,7 @@ Commands:
 | `cl inbox` | route inbox items with hotkeys |
 | `cl projects` | active project pulse |
 | `cl review` | full review |
+| `cl chat [SLUG]` | flesh out a project with local qwen — `.t` toggles think, `?msg` thinks once |
 | `cl week` | weekly planner |
 | `cl blocks` | routine block editor — self-contained habit blocks in `~/kb/habits/` (CRUD + `feed` for goals/orientations) |
 | `cl events` | gcal event CRUD by id — show/new/set/rm (Calendar API, not gcalcli) |

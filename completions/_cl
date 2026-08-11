@@ -71,6 +71,7 @@ _cl() {
     "notes:notes browser"
     "tags:index inline #tags across daily notes"
     "review:full review pipeline"
+    "chat:flesh out a project with local qwen (.t toggles think)"
     "tree:bird's-eye view of areas/projects"
     "show:overview for area / project / sub-project"
     "week:weekly planner"

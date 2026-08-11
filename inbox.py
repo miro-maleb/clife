@@ -25,6 +25,7 @@ console = Console()
 notes_path = KB / "notes"
 project_path = KB / "projects"
 inbox_path = KB / "inbox"
+pinned_path = inbox_path / "pinned"   # inbox items pinned as todos (kept out of the route queue)
 shopping_path = KB / "shopping"
 system_improvements_path = (
     KB / "projects" / "infrastructure" / "clife" / "system-improvements.md"
@@ -487,24 +488,32 @@ def _sender_name(frm):
     return (m.group(1).strip() if m else frm).strip()
 
 
+def _item_from(f):
+    """One inbox/pinned file → the item dict the surfaces render."""
+    raw = f.read_text().strip()
+    body = _strip_frontmatter(raw)
+    src = _fm_field(raw, "source")
+    subject = _fm_field(raw, "subject")
+    sender = _sender_name(_fm_field(raw, "from"))
+    first = next((ln for ln in body.splitlines() if ln.strip()), "")
+    headline = subject or first
+    preview = headline if len(headline) <= 100 else headline[:97] + "…"
+    return {"file": f.name, "text": body, "preview": preview, "source": src,
+            "subject": subject, "from": sender}
+
+
 def inbox_items():
     """List inbox items as dicts. For emails, subject (from frontmatter) is the
     at-a-glance headline — no AI needed. source/from carried for context."""
-    items = []
-    for f in inbox_files():
-        raw = f.read_text().strip()
-        body = _strip_frontmatter(raw)
-        src = _fm_field(raw, "source")
-        subject = _fm_field(raw, "subject")
-        sender = _sender_name(_fm_field(raw, "from"))
-        first = next((ln for ln in body.splitlines() if ln.strip()), "")
-        headline = subject or first
-        preview = headline if len(headline) <= 100 else headline[:97] + "…"
-        items.append({
-            "file": f.name, "text": body, "preview": preview, "source": src,
-            "subject": subject, "from": sender,
-        })
-    return items
+    return [_item_from(f) for f in inbox_files()]
+
+
+def pinned_items():
+    """Inbox items pinned as todos — kept in inbox/pinned/, shown at the bottom of
+    the inbox until marked complete (then deleted)."""
+    if not pinned_path.exists():
+        return []
+    return [_item_from(f) for f in sorted(pinned_path.glob("*.md")) if f.name != ".gitkeep"]
 
 
 def route_targets_payload():
@@ -676,10 +685,27 @@ def prune_noise(dry_run=False):
     return {"trashed": trashed, "kept": kept, "dry_run": dry_run}
 
 
+def ni_todo(file):
+    """Pin an inbox item as a todo: move it into inbox/pinned/ so it drops out of
+    the route queue and shows at the bottom of the inbox until completed."""
+    pinned_path.mkdir(parents=True, exist_ok=True)
+    file.rename(pinned_path / file.name)
+    return {"ok": True, "msg": "pinned as todo"}
+
+
+def ni_complete(filename):
+    """Mark a pinned todo done — just delete it (git is the undo)."""
+    f = pinned_path / Path(filename).name
+    if f.exists():
+        f.unlink()
+    return {"ok": True, "msg": "done"}
+
+
 def ni_route(filename, dest, value="", area=""):
     file = inbox_path / filename
     if not file.exists():
         return {"ok": False, "msg": "file gone"}
+    if dest == "todo":         return ni_todo(file)
     if dest == "note":         return ni_note(file)
     if dest == "grocery":      return ni_shopping(file, "grocery")
     if dest == "household":    return ni_shopping(file, "household")
@@ -716,6 +742,8 @@ def try_ingest_email():
 def main():
     parser = argparse.ArgumentParser(prog="cl inbox", add_help=False)
     parser.add_argument("--list", action="store_true", help="emit inbox items as JSON")
+    parser.add_argument("--pinned", action="store_true", help="emit pinned todos as JSON")
+    parser.add_argument("--complete", metavar="FILE", help="delete a pinned todo (mark done)")
     parser.add_argument("--targets", action="store_true", help="emit picker targets as JSON")
     parser.add_argument("--prune", action="store_true",
                         help="AI coarse-prune: flag noise + summarize, as JSON (routing stays human)")
@@ -730,6 +758,12 @@ def main():
 
     if args.list:
         print(json.dumps({"items": inbox_items()}))
+        return
+    if args.pinned:
+        print(json.dumps({"items": pinned_items()}))
+        return
+    if args.complete:
+        print(json.dumps(ni_complete(args.complete)))
         return
     if args.targets:
         print(json.dumps(route_targets_payload()))

@@ -27,6 +27,7 @@ COMMANDS = {
     "daily":       "daily",
     "tags":        "tags",
     "review":      "review",
+    "chat":        "chat",
     "tree":        "tree",
     "show":        "show",
     "new":         "new",
@@ -67,6 +68,7 @@ HELP = """
   cl projects new --project SLUG --area AREA [--status --goals --orientations --tags --title]
   cl projects archive SLUG    move a project to ~/kb/archive (status → archived)
   cl review                   full review pipeline — projects (incl. sleeping) → notes
+  cl chat [SLUG]              flesh out a project with local qwen — .t toggles think, ?msg thinks once
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, goals, orientations)
   cl show PATH                overview for an area / project / sub-project (dir or .md file)
   cl week                     weekly planner
