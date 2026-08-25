@@ -119,7 +119,9 @@ def run_stage(cfg: dict, case: dict):
         return ai_rss.verify_story(cfg, inp["story"], inp["body"]), []
     if stage == "recommend":
         cfg.setdefault("recommend", {})["enabled"] = True
-        return ai_rss.recommend(cfg, col, inp["stories"]), []
+        # Optional: {url: article text}. Cases that supply it exercise the source-line
+        # evidence path; cases that omit it pin the summaries-only behaviour.
+        return ai_rss.recommend(cfg, col, inp["stories"], inp.get("bodies")), []
     raise ValueError(f"unknown stage: {stage}")
 
 

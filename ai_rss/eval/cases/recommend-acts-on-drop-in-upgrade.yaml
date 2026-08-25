@@ -1,0 +1,50 @@
+# The 2026-08-24 regression, frozen. This is a near-verbatim replay of the issue that
+# shipped the week Qwen3.8-27B landed: the section carried the model card, the
+# benchmarks, and the ollama release that gates it — and the verdict was "Nothing to
+# do this week", on the reasoning that 3.8 is "effectively a rebrand" of the 3.6 he
+# already runs, with "no new capacity gain".
+#
+# It is the mirror of recommend-flags-wrong-hardware: that case checks the recommender
+# does not say yes to hardware he lacks, this one checks it can still say yes at all.
+# A drop-in successor at identical cost is the easiest call the column will ever face.
+stage: recommend
+brief: |
+  ONE reader, single 24GB RTX 3090 (Ampere, sm_86), open-weights GGUF via ollama.
+  Today he runs qwen3.6:27b at Q4_K_M (~17GB).
+  An upgrade is not only a bigger model: a drop-in successor at the same parameter
+  count, quant and VRAM that scores better is the most actionable item there is —
+  it costs one `ollama pull`. Size is what it costs; benchmarks are what it buys.
+  A runtime release that adds support for a model is the prerequisite for pulling it.
+input:
+  stories:
+    - headline: "Qwen releases Qwen3.8-27B open model with vision capabilities"
+      summary: >
+        The Qwen team has released Qwen3.8-27B, a 27-billion-parameter dense model
+        supporting image and video understanding. The release includes benchmark data
+        indicating improvements in coding and agent tasks.
+      url: "https://huggingface.co/Qwen/Qwen3.8-27B"
+      source: "huggingface.co"
+    - headline: "Ollama v0.32.15 released with performance improvements"
+      summary: >
+        The update caches model metadata to reduce time-to-first-token, resolves a chat
+        parsing bug, and normalizes Qwen 3.8 system messages.
+      url: "https://github.com/ollama/ollama/releases/tag/v0.32.15"
+      source: "github.com"
+  # The numbers the calm summaries above throw away — the whole point of the fix.
+  bodies:
+    "https://huggingface.co/Qwen/Qwen3.8-27B": |
+      Qwen3.8-27B is a dense 27B model, Apache 2.0, released 2026-08-14.
+      Terminal-Bench 2.1: 73.0, up from 63.4 on Qwen3.6-27B.
+      SWE-bench Pro: 61.7, up from 53.5 on Qwen3.6-27B.
+      DeepSWE 1.1: 42.2, up from 13.3 on Qwen3.6-27B.
+      LiveCodeBench v6: 90.3. OSWorld-Verified: 84.3.
+      GGUF is 17.11 GB at Q4_K_M, so a 24 GB GPU runs it.
+      Thinking mode defaults to xhigh reasoning effort and can be tuned or disabled.
+    "https://github.com/ollama/ollama/releases/tag/v0.32.15": |
+      Support for Qwen 3.8 requires Ollama 0.32.12 or newer; earlier versions
+      return a 412 error when pulling the manifest.
+      This release normalizes Qwen 3.8 system messages and caches model metadata.
+assert:
+  text_includes: ["3.8"]
+  text_excludes: ["rebrand", "nothing to do", "no new capacity", "not actionable"]
+  text_includes_any: ["pull", "upgrade", "download", "worth", "switch", "replace"]

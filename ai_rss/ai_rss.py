@@ -328,31 +328,95 @@ def verify_story(cfg: dict, story: dict, body: str) -> dict | None:
     return {**story, "headline": fixed_h, "summary": fixed_s, "corrected": True}
 
 
-def recommend(cfg: dict, column: dict, stories: list[dict]) -> dict | None:
+# Lines worth handing the recommender verbatim: benchmark scores, sizes, version
+# gates, head-to-head comparisons. A line qualifies only if it carries BOTH a digit
+# and one of these words — prose about a model is not evidence about a model.
+_EVIDENCE_HINT = re.compile(
+    r"(bench|swe-?bench|terminal-?bench|livecodebench|osworld|mmlu|gpqa|aime|arena|"
+    r"elo|score|accuracy|pass@|tokens?/s|tok/s|context|ctx|q\d_k|gguf|vram|params?|"
+    r"\bvs\b|versus|compared|outperform|beat|improve|up from|higher|lower|faster|"
+    r"require|needs?|minimum|supported|added in|since v)", re.I)
+
+
+def evidence_lines(body: str, limit: int) -> str:
+    """The numbers a summary throws away.
+
+    `write_story` is told to be calm and non-sensational, so it flattens exactly what
+    an upgrade decision turns on: 63.4 -> 73.0 becomes "improvements in coding and
+    agent tasks" by the time it reaches the column, and headline+summary is all the
+    recommender ever saw. It then reported, honestly from where it stood, "no evidence
+    of superior performance" — twice, on the two weeks Qwen3.8 shipped (2026-08-17,
+    2026-08-24), while calling a benchmark-beating drop-in successor "effectively a
+    rebrand".
+
+    So give it the source lines instead of the prose. Verbatim excerpts, not another
+    model pass: whatever this returns, the article actually said. Cheap enough to run
+    on every story, and it cannot hallucinate a number that was never there.
+    """
+    if not body:
+        return ""
+    out, seen_lines, used = [], set(), 0
+    for ln in body.splitlines():
+        ln = " ".join(ln.split())
+        if not (8 <= len(ln) <= 300) or ln in seen_lines:
+            continue
+        if not (any(c.isdigit() for c in ln) and _EVIDENCE_HINT.search(ln)):
+            continue
+        if used + len(ln) > limit:
+            break
+        seen_lines.add(ln)
+        out.append(ln)
+        used += len(ln)
+    return "\n".join(out)
+
+
+def recommend(cfg: dict, column: dict, stories: list[dict],
+              bodies: dict[str, str] | None = None) -> dict | None:
     """The paper reads its column back and says what, if anything, to DO about it.
 
     This is the actual payload. The reader doesn't want news, he wants to know
     whether it's time to act — so a second pass re-reads the finished stories
     against the same rig facts the selector used, and answers that directly.
 
-    Two failure modes it is explicitly steered away from, both learned the hard way
-    on 2026-07-15: manufacturing urgency when the honest answer is "nothing changed
-    this week", and repeating a vendor's headline number without checking it applies
-    to THIS hardware (an NVFP4 checkpoint got recommended as an upgrade for a card
-    with no FP4 tensor cores).
+    Three failure modes it is explicitly steered away from. Two were learned on
+    2026-07-15: manufacturing urgency when the honest answer is "nothing changed this
+    week", and repeating a vendor's headline number without checking it applies to
+    THIS hardware (an NVFP4 checkpoint got recommended as an upgrade for a card with
+    no FP4 tensor cores).
+
+    The third was learned on 2026-08-24, and is the mirror image of the first: those
+    two fixes, plus a rig brief written almost entirely around FIT (24GB, sm_86,
+    GGUF-or-nothing), compounded into a recommender that could no longer say "yes".
+    Asking only "does this let him run something he could not run before?" makes a
+    same-size, same-quant, same-runtime successor answer *no* — so Qwen3.8-27B, a
+    free drop-in over the 3.6-27B he runs, was written off as "effectively a rebrand
+    ... no new capacity gain", two weeks running. Eight straight weeks of "nothing to
+    do" was the tell. Hence rules 5-7 below: capability is an axis, the section is
+    read as a whole, and numbers come from source lines rather than the calm prose.
     """
     if not stories or not cfg.get("recommend", {}).get("enabled"):
         return None
     brief = column.get("brief", "")
-    menu = "\n\n".join(
-        f"- {s['headline']}\n  {s['summary']}\n  ({s['source']})" for s in stories)
+    ev_chars = int(cfg.get("recommend", {}).get("evidence_chars", 1800))
+    bodies = bodies or {}
+    blocks = []
+    for st in stories:
+        block = f"- {st['headline']}\n  {st['summary']}\n  ({st['source']})"
+        ev = evidence_lines(bodies.get(st["url"], ""), ev_chars)
+        if ev:
+            block += ("\n  SOURCE LINES (verbatim from the article):\n"
+                      + "\n".join(f"    {ln}" for ln in ev.splitlines()))
+        blocks.append(block)
+    menu = "\n\n".join(blocks)
     system = (
         "You advise ONE reader whose exact setup is given. Your only job: say "
         "whether anything in this section is worth ACTING on, for him, now.\n"
         "Rules:\n"
         "1. Doing nothing is a real, common, and respectable answer. Most weeks "
         "nothing genuinely changes. Say so plainly rather than inventing a reason "
-        "to act. Never manufacture urgency.\n"
+        "to act. Never manufacture urgency. But 'nothing to do' is a finding about "
+        "THIS WEEK, not a safe default: if the section holds something he could run "
+        "tonight that is better than what he runs now, the honest answer is yes.\n"
         "2. Never recommend anything whose benefit depends on hardware or a file "
         "format he does not have. If a claimed speedup needs a different GPU "
         "architecture, or a format his runtime cannot load, it is NOT an upgrade "
@@ -360,6 +424,22 @@ def recommend(cfg: dict, column: dict, stories: list[dict]) -> dict | None:
         "3. If an item is promising but you cannot tell from the text whether it "
         "fits his rig, say what would have to be checked. Do not guess.\n"
         "4. Be concrete and specific. Name the thing. No vague 'keep an eye on AI'.\n"
+        "5. An upgrade does not have to be BIGGER. A drop-in successor — same "
+        "parameter count, same quantization, same VRAM, same runtime — that simply "
+        "scores better is the MOST actionable item you can find, not the least: it "
+        "costs one download and changes nothing else about his setup. Never dismiss "
+        "something as 'no gain', 'a rebrand', or 'no new capacity' merely because it "
+        "is the same size as what he already runs. Size is what it COSTS; benchmarks "
+        "are what it BUYS. Compare capability against his current model by name, and "
+        "say which way the numbers point.\n"
+        "6. Read the section as a whole, not item by item. Items gate each other: a "
+        "runtime release that adds support for a model named elsewhere in the section "
+        "is not a minor update, it is the prerequisite that makes that model runnable "
+        "at all. When two items combine into one action, say so and give the order.\n"
+        "7. Take every number from the SOURCE LINES, which are verbatim. The summaries "
+        "are written deliberately calm and understate gains; absence of a number in a "
+        "summary is not evidence that there was no gain. If the source lines show a "
+        "comparison, quote it.\n"
         "Reply ONLY as JSON."
     )
     user = (
@@ -367,8 +447,9 @@ def recommend(cfg: dict, column: dict, stories: list[dict]) -> dict | None:
         f"This week's '{column['name']}' section, as written:\n\n{menu}\n\n"
         'Return JSON: {"verdict": "<one line: the bottom line, e.g. \'Nothing to '
         'do this week.\' or \'One thing worth a look: X\'>", "notes": ["<a specific '
-        'point, naming the item and why it does or does not matter for HIS rig>", '
-        '"<another, if warranted>"]}'
+        'point, naming the item and why it does or does not matter for HIS rig; if '
+        'the answer is to install something, give the exact model tag or command and '
+        'any prerequisite version it depends on>", "<another, if warranted>"]}'
     )
     try:
         d = json.loads(llm(cfg, system, user, json_mode=True, temperature=0.2))
@@ -408,7 +489,7 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
             continue
         chosen = select(cfg, col["name"], candidates, col.get("brief"))
         log(f"[{col['name']}] selected {len(chosen)}")
-        stories = []
+        stories, bodies = [], {}
         for st in chosen:
             # Curated sources hand us the text (release notes, post body) or point
             # at plain text; those URLs (reddit, HF) resist scraping anyway. Only
@@ -430,11 +511,12 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                 s = verify_story(cfg, s, body)   # may correct it, or drop it entirely
             if s:
                 stories.append(s)
+                bodies[s["url"]] = body      # source lines for the recommend pass
                 if update_seen:
                     seen[st["url"]] = today
         if stories:
             out_col = {"name": col["name"], "stories": stories}
-            rec = recommend(cfg, col, stories)
+            rec = recommend(cfg, col, stories, bodies)
             if rec:
                 out_col["recommendation"] = rec
             columns_out.append(out_col)

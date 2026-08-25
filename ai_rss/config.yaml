@@ -46,6 +46,10 @@ verify:
 # This is the point of the whole thing — news is the input, the verdict is the output.
 recommend:
   enabled: true
+  # Verbatim source lines (digits + a benchmark/spec keyword) attached per story, so
+  # the verdict can cite numbers the calm summaries flatten out. 6 stories x 1800
+  # chars is ~2.7k tokens — comfortable inside num_ctx alongside the menu.
+  evidence_chars: 1800
 
 # Where the finished issue lands. Dry runs ignore this and write to ./out/.
 deliver:
@@ -63,6 +67,17 @@ columns:
         - ONE RTX 3090: 24GB VRAM, Ampere, compute capability 8.6.
         - Runs GGUF through ollama (+ OpenWebUI). Not vLLM, not SGLang, not TensorRT.
         - Today runs qwen3.6:27b at Q4_K_M (~17GB). He is not a cloud-API customer.
+
+      An upgrade is not only a BIGGER model. The most actionable thing this column can
+      ever carry is a drop-in successor: same parameter count, same quant, same VRAM,
+      same ollama — that simply scores better. It costs one `ollama pull` and changes
+      nothing else in the stack, which makes same-size the REASON to act, not a reason
+      to shrug. Weigh new releases on capability against the model he runs TODAY
+      (qwen3.6:27b), not merely on whether they fit.
+
+      A runtime release (ollama, llama.cpp) that ADDS SUPPORT for a model is not a
+      minor version bump — it is the prerequisite that makes that model pullable at
+      all. When a story depends on one, name the minimum version.
 
       Capacity is not capability — check BOTH:
         - "Fits in 24GB" does not mean it runs well. Ampere sm_86 has NO FP4 tensor
