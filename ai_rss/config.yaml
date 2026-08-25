@@ -4,15 +4,47 @@
 # This is an overnight batch job (systemd ai-rss.timer, Mondays 00:00) — nobody is
 # waiting on it, so it is tuned for QUALITY, not speed. Reasoning time is free here.
 model: qwen3.6-96k:latest          # tower 3090; long context for multi-article reads
+                                   #
+                                   # Moving to 3.8 (qwen3.8-64k is built and 100% GPU):
+                                   # `think` below carries over untouched. 3.8's card
+                                   # defaults to xhigh reasoning, but llm() always sends
+                                   # the field explicitly, so the default never applies —
+                                   # measured 2026-08-25: think:false on 3.8 spends 4
+                                   # output tokens on a sum where "low" spends 61. Note
+                                   # ollama takes high|medium|low|max|true|false; "xhigh"
+                                   # is rejected outright. The real cost of 3.8 is
+                                   # context, not thinking: it loads a CLIP projector and
+                                   # an MTP draft head alongside the weights, so 64k is
+                                   # the 100%-GPU ceiling on a 24GB card where 3.6 reaches
+                                   # 96k. num_ctx below is 32768, so that is headroom
+                                   # spare either way.
 ollama_host: http://127.0.0.1:11434
-think: false                       # MEASURED off (2026-07-15): the eval harness scored
-                                   # think:on and think:off identically (15/15 = 15/15) on
-                                   # correctness, and the prose comparison showed thinking
-                                   # writes *more*, not better — padded on thin sources,
-                                   # only marginally richer on deep ones — for ~5x runtime.
-                                   # Not worth it. Flip back to true only if a harder eval
-                                   # case ever separates the two. (ollama returns thinking in
-                                   # a separate field, so JSON mode is unaffected either way.)
+think: false                       # MEASURED off twice. 2026-07-15: think:on and think:off
+                                   # scored 15/15 = 15/15, and the prose comparison showed
+                                   # thinking writes *more*, not better — padded on thin
+                                   # sources, only marginally richer on deep ones — for ~5x
+                                   # runtime. That verdict said to revisit if a harder case
+                                   # ever separated the two.
+                                   #
+                                   # 2026-08-25 re-ran it on the condition it named. The
+                                   # suite now carries recommend-acts-on-drop-in-upgrade, a
+                                   # frozen replay of the week the column called Qwen3.8
+                                   # "effectively a rebrand" — the hardest judgment ai-rss
+                                   # makes, and the one it had actually got wrong. Result:
+                                   # 18/18 = 18/18. Thinking did not rescue the stage that
+                                   # failed; better evidence in the prompt did (see
+                                   # evidence_lines). Still off.
+                                   #
+                                   # Read that as "no evidence of a difference", not proof
+                                   # of equivalence: both arms are at ceiling, so the suite
+                                   # cannot resolve a gap in either direction. Two caveats
+                                   # on the 2026-07-15 number specifically — exclude-drops-fp4
+                                   # runs through drop_excluded(), which is pure code and
+                                   # calls no model, so it scored a free 3/3 on both sides;
+                                   # and write_story, the stage thinking was judged to HURT,
+                                   # has no case at all. Sharpen those before trusting a
+                                   # future tie. (ollama returns thinking in a separate
+                                   # field, so JSON mode is unaffected either way.)
 num_ctx: 32768                     # must hold the whole candidate menu + a full article.
                                    # Ceiling is VRAM, not the model: 17.4GB of weights on a
                                    # 24GB card leaves ~6GB for KV cache. Raise only with

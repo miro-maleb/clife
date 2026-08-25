@@ -46,8 +46,18 @@ LINT_DIR = KB / "_lint"
 
 # ── Layer 2 (LLM) config ──────────────────────────────────────────────────────
 # The deep pass runs on the tower's local qwen (sovereign, free), overnight, so it
-# isn't tuned for speed. think:false — thinking was measured not worth its cost on the
-# ai-rss pipeline; revisit only if an eval separates them here.
+# isn't tuned for speed. think:false — BORROWED, not measured here. The evidence is
+# ai-rss's, re-run 2026-08-25: think on vs off scored 18/18 = 18/18 across six frozen
+# cases, including its hardest judgment call, at ~5x the runtime. Two of those stages
+# (verify, recommend) are shaped like this one — hold a claim against a source and say
+# whether it stands — which is why the borrow is reasonable.
+#
+# Reasonable is not measured. kb-lint has no harness, so nothing here has ever been
+# scored either way, and overnight runtime means thinking would cost this job close to
+# nothing. That asymmetry is the argument FOR trying it; the standard this project
+# holds — measured, not argued — is the reason it stays off until frozen cases exist.
+# Build those (a note pair that genuinely contradicts, one that only looks like it
+# does) before touching this line.
 OLLAMA_HOST = os.environ.get("KB_LINT_OLLAMA", "http://127.0.0.1:11434")
 MODEL = os.environ.get("KB_LINT_MODEL", "qwen3.6:27b")
 NUM_CTX = 16384
