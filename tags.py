@@ -54,13 +54,25 @@ def strip_code(text):
     return _INLINE_CODE_RE.sub(" ", _FENCE_RE.sub(" ", text))
 
 
+# Stripping code spans isn't enough: `#define` written in prose, and a bare hex
+# colour like `#e8a34e`, both match "# then a letter". Surface's capture.py hit
+# this first and excludes them by name — mirrored here so the two parsers agree.
+# It decides routing now, not just the index: a note mentioning a hex colour
+# would count as TAGGED and drop out of the untagged inbox view untouched.
+_HEX_RE = re.compile(r'^[0-9a-fA-F]{3,8}$')
+_NOT_TAGS = {"include", "define", "ifdef", "ifndef", "endif", "pragma",
+             "elif", "undef", "import", "if", "else", "error", "warning"}
+
+
 def tags_in(text):
     """Distinct tags in a chunk of text, order-stable, trailing /- trimmed."""
     text = strip_code(text)
     seen = []
     for m in _TAG_RE.findall(text):
         t = m.rstrip('/-')
-        if t and t not in seen:
+        if not t or t.lower() in _NOT_TAGS or _HEX_RE.match(t):
+            continue
+        if t not in seen:
             seen.append(t)
     return seen
 
