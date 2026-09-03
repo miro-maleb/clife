@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 
+import fm
 from paths import KB
 
 # A block break: a line that is only 3+ of the same thematic-break char.
@@ -41,8 +42,21 @@ def is_break(line):
 _TAG_RE = re.compile(r'(?:^|(?<=[^\w#]))#([A-Za-z][\w/-]*)')
 
 
+# Code is not prose: `#define`, `#include`, a `#!/bin/sh` shebang and a `#`
+# comment inside a fenced block are not tags. Stripping code before matching
+# fixes the INDEX as well as the frontmatter sync — one rule, so `cl tags`
+# and `cl tags --sync` can never disagree about what a tag is.
+_FENCE_RE = re.compile(r"^\s*(```|~~~).*?^\s*\1", re.S | re.M)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def strip_code(text):
+    return _INLINE_CODE_RE.sub(" ", _FENCE_RE.sub(" ", text))
+
+
 def tags_in(text):
     """Distinct tags in a chunk of text, order-stable, trailing /- trimmed."""
+    text = strip_code(text)
     seen = []
     for m in _TAG_RE.findall(text):
         t = m.rstrip('/-')
@@ -140,7 +154,10 @@ def _iter_files(scope):
                 continue
             yield p
         return
-    for p in sorted(scope.glob('*.md')):
+    # rglob, not glob: a --path directory was scanned only one level deep, so
+    # `cl tags --path ~/kb/writing/_stream` silently found nothing once the
+    # notes moved into YYYY/MM subfolders. Only the --all branch recursed.
+    for p in sorted(scope.rglob('*.md')):
         if not _skip(p):
             yield p
 
@@ -158,6 +175,50 @@ def _matches(block_tags, query):
     return any(t == q or t.startswith(q + '/') for t in block_tags)
 
 
+# ── writing side: fold inline tags into frontmatter ─────────────────────────
+# `cl tags` has always been read-only — it indexes inline tags but nothing ever
+# wrote them anywhere. That left two tag systems side by side that never agreed:
+# inline `#tag` in the body, and frontmatter `tags: [...]`. It matters now that
+# "the inbox" is a QUERY over untagged notes rather than a folder: a note tagged
+# `#home` inline but empty in frontmatter reads as untagged forever, so tagging
+# it does nothing.
+#
+# Union, not replace. Replace would make frontmatter purely derived (cleaner,
+# always regenerable) but would delete hand-added frontmatter tags that have no
+# inline twin — e.g. `tags: [network, hardware, purchase]` on a note whose body
+# never says `#network`. Union's cost is that deleting an inline tag doesn't
+# remove it from frontmatter; that's the imperfection we chose, deliberately,
+# because it is non-destructive.
+def sync_file(path: Path):
+    """Union body #tags into frontmatter `tags:`. Returns (added, final) or None."""
+    _, body, had_fm = fm.split(path)
+    found = tags_in(body)
+    if not found:
+        return None
+
+    existing = fm.read(path).get('tags') if had_fm else []
+    if isinstance(existing, str):
+        existing = [existing] if existing else []
+    existing = list(existing or [])
+
+    merged, added = list(existing), []
+    for t in found:
+        if t not in merged:
+            merged.append(t)
+            added.append(t)
+    if not added:
+        return None
+
+    if not had_fm:
+        # No frontmatter to edit — give the file a minimal block. fm.set_fields
+        # refuses (correctly) to invent a fence, so do it here where the intent
+        # is explicit.
+        text = path.read_text()
+        path.write_text("---\ntags: []\n---\n\n" + text)
+    fm.set_fields(path, {'tags': merged})
+    return added, merged
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog='cl tags',
@@ -171,7 +232,28 @@ def main():
     ap.add_argument('--path', metavar='PATH',
                     help='scan a specific file or directory instead')
     ap.add_argument('--json', action='store_true', help='machine output')
+    ap.add_argument('--sync', action='store_true',
+                    help='fold body #tags into frontmatter tags: (union)')
     args = ap.parse_args()
+
+    if args.sync:
+        scope = Path(args.path).expanduser() if args.path else KB
+        changed = 0
+        for f in _iter_files(scope):
+            r = sync_file(f)
+            if r:
+                changed += 1
+                if not args.json:
+                    try:
+                        rel = f.relative_to(KB)
+                    except ValueError:
+                        rel = f          # --path may point outside the kb
+                    print(f"{rel}: +{', '.join(r[0])}")
+        if args.json:
+            print(json.dumps({'changed': changed}))
+        else:
+            print(f"{changed} file(s) updated")
+        return
 
     if args.path:
         scope = Path(args.path).expanduser()
