@@ -118,7 +118,7 @@ There's a `kbsync` alias mentioned in your global CLAUDE.md — set it up in Ter
 
 ### 8. Grocery list
 
-Edit `~/kb/shopping/grocery.md` directly in Termux's `nano` or `nvim`. Or pair Termux with Obsidian Mobile pointed at the same `~/kb/` directory and use Obsidian's friendlier UI.
+Edit `~/kb/life/shopping/grocery.md` directly in Termux's `nano` or `nvim`. Or pair Termux with Obsidian Mobile pointed at the same `~/kb/` directory and use Obsidian's friendlier UI.
 
 ## Notes & limitations
 

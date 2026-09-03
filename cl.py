@@ -66,7 +66,7 @@ HELP = """
   cl projects show SLUG [--json]   one project's fields (status, goals, tasks, staleness)
   cl projects set SLUG [--status --deadline --goals --orientations --tags --reviewed]
   cl projects new --project SLUG --area AREA [--status --goals --orientations --tags --title]
-  cl projects archive SLUG    move a project to ~/kb/archive (status → archived)
+  cl projects archive SLUG    move a project to ~/kb-archive/projects (status → archived)
   cl review                   full review pipeline — projects (incl. sleeping) → notes
   cl chat [SLUG]              flesh out a project with local qwen — .t toggles think, ?msg thinks once
   cl tree [--full] [--active] bird's-eye view: areas → projects (--full adds sub-projects, goals, orientations)

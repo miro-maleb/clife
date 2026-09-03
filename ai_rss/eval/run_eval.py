@@ -6,7 +6,7 @@ pass) was justified by argument, not measurement. This turns that around: it fee
 FROZEN inputs into a single pipeline stage and asserts checkable properties of the
 output — no live web, so a run is reproducible and a regression is visible.
 
-Scope, deliberately narrow (see ~/kb/ideas/overnight-local-ai-jobs.md): ai-rss only,
+Scope, deliberately narrow (see ~/kb/notes/ideas/overnight-local-ai-jobs.md): ai-rss only,
 graded by deterministic assertions. No LLM-as-judge — we do not trust a model to score
 a model. Every check here is plain code over the stage's output.
 

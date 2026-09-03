@@ -19,7 +19,11 @@ console = Console()
 
 from paths import KB
 project_path = KB / "projects"
-archive_path = KB / "archive"
+# Archives live OUTSIDE the kb (moved 2026-09-03): 322 archived notes and
+# 44MB of PDFs were matching every search Hermes ran over the ~423 live
+# files. ~/kb-archive is its own git repo — still versioned, still greppable
+# when you mean to, just not in the way.
+archive_path = Path.home() / "kb-archive" / "projects"
 goals_path = KB / "goals"
 orientations_path = KB / "orientations"
 
@@ -203,7 +207,7 @@ def mark_reviewed(md_file):
 
 
 def archive_project(md_file):
-    """Move project dir to ~/kb/archive/<area>/<project>/.
+    """Move project dir to ~/kb-archive/projects/<area>/<project>/.
 
     Preserves the area folder structure. Status flipped to 'archived' before
     the move. Returns the new path, or None if move was skipped.

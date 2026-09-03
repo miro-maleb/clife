@@ -6,3 +6,8 @@ __pycache__/
 *.swo
 .DS_Store
 ai_rss/out/
+
+# ai-rss crawl state — machine-written every run, not source
+ai_rss/state/seen.json
+*.bak
+*.bak.[0-9]*

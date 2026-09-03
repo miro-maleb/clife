@@ -5,7 +5,7 @@ Layer 1 (this file): no LLM, so nothing here can hallucinate. It reports only wh
 mechanically true — a link points at nothing, a deadline has passed. That is the whole
 design: the checks that can't be wrong ship first, and a contradiction/stale-claim pass
 (Layer 2, LLM) can layer on later without ever touching these. See
-~/kb/ideas/overnight-local-ai-jobs.md.
+~/kb/notes/ideas/overnight-local-ai-jobs.md.
 
 Checks:
   broken-link       a [[wikilink]] resolving to no file/folder in the vault
@@ -25,7 +25,7 @@ folder, no hearth.md) as unresolved — but it's intentional. So a directory-nam
 counts as resolved; otherwise 24 intentional [[hearth]] links would drown the one real
 signal ([[calm-interface]], referenced but never written).
 
-    kb_lint.py                 # scan, write ~/kb/_lint/latest.md + dated, print summary
+    kb_lint.py                 # scan, write ~/kb/log/_lint/latest.md + dated, print summary
     kb_lint.py --stdout        # print the report, don't write it
 """
 from __future__ import annotations
