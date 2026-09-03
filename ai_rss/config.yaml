@@ -3,10 +3,12 @@
 
 # This is an overnight batch job (systemd ai-rss.timer, Mondays 00:00) — nobody is
 # waiting on it, so it is tuned for QUALITY, not speed. Reasoning time is free here.
-model: qwen3.6-96k:latest          # tower 3090; long context for multi-article reads
+model: qwen3.8-112k                 # tower 3090; long context for multi-article reads
                                    #
-                                   # Moving to 3.8 (qwen3.8-64k is built and 100% GPU):
-                                   # `think` below carries over untouched. 3.8's card
+                                   # MOVED to 3.8 on 2026-08-26, as the note below planned.
+                                   # It is now the one resident model for the whole box —
+                                   # cl ai, opencode and this job all name it, so nothing
+                                   # evicts anything. `think` below carried over untouched. 3.8's card
                                    # defaults to xhigh reasoning, but llm() always sends
                                    # the field explicitly, so the default never applies —
                                    # measured 2026-08-25: think:false on 3.8 spends 4
@@ -45,11 +47,15 @@ think: false                       # MEASURED off twice. 2026-07-15: think:on an
                                    # has no case at all. Sharpen those before trusting a
                                    # future tie. (ollama returns thinking in a separate
                                    # field, so JSON mode is unaffected either way.)
-num_ctx: 32768                     # must hold the whole candidate menu + a full article.
-                                   # Ceiling is VRAM, not the model: 17.4GB of weights on a
-                                   # 24GB card leaves ~6GB for KV cache. Raise only with
-                                   # `ollama ps` showing 100% GPU — any CPU spill is a cliff,
-                                   # not a slowdown.
+num_ctx: 114688                     # must hold the whole candidate menu + a full article;
+                                   # 32768 was ample for that and still is. Raised to 65536
+                                   # to MATCH the pinned qwen3.8-112k instance: ollama keys a
+                                   # loaded model by its context too, so asking for the same
+                                   # model at a different num_ctx forces a full unload and
+                                   # ~25s reload — and leaves the assistant cold afterwards.
+                                   # Verified 2026-08-26: 64k is 100% GPU (1113 tok/s prefill,
+                                   # 54 tok/s gen). Any CPU spill is a cliff, not a slowdown,
+                                   # so re-check `ollama ps` before raising further.
 
 search:
   results_per_query: 8

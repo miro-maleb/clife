@@ -11,7 +11,13 @@ import os
 import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL = os.environ.get("CL_AI_MODEL", "qwen3:8b")
+# One model for everything on this box, deliberately. The tower has a single
+# 24 GB card and a 27B at 64k holds ~21.7 GiB of it, so a second model is not a
+# second option — it is a full evict-and-reload (~25 s) every time the caller
+# changes. qwen3.8-112k resident beats qwen3:8b plus thrash even on the small,
+# frequent calls this default serves. See the Surface /ai lens for what is
+# actually on the card. Override with CL_AI_MODEL.
+MODEL = os.environ.get("CL_AI_MODEL", "qwen3.8-112k")
 
 # ── inbox coarse pruning ─────────────────────────────────────────────────────
 #
@@ -33,7 +39,7 @@ def prune_inbox(items):
         parts.append(it["text"][:500])
         return " | ".join(parts)
     listing = "\n".join(f'{i+1}. [{it["file"]}] {blob(it)}' for i, it in enumerate(items))
-    prompt = f"""/no_think
+    prompt = f"""
 You help triage a personal inbox. A HUMAN does all the routing — do NOT route,
 categorize, or guess where an item should go. Two jobs per item:
 
@@ -73,7 +79,7 @@ def pool_item_from_text(text, areas=None):
             "\nPick `area` from this list if one clearly fits, else \"\":\n"
             + ", ".join(areas)
         )
-    prompt = f"""/no_think
+    prompt = f"""
 Turn ONE freeform personal capture into a schedulable to-do item.
 
 Capture: {text[:400]}
@@ -104,11 +110,21 @@ def title_from_text(text):
     inbox timestamp. Keeps the AI coarse: it names the file, the human/editor
     can always rename later."""
     import re as _re
-    prompt = f"""/no_think
+    # The note is fenced and the model is told not to ask for more. qwen3.8 is
+    # markedly more literal than 3.6/8b: given a bare short line under "Note:" it
+    # judges the input to be a *description* of a note rather than a note, and
+    # returns {"error": "content is empty or missing"} instead of a name. Measured
+    # 2026-08-26 — 3/3 failures before this wording, 3/3 clean names after.
+    prompt = f"""
 Name a personal note file from its content.
 
-Note:
+The note's full text is between the markers. It may be short, fragmentary, or
+read like a description — that is normal for a captured note. Name it from
+whatever text is there, and never ask for more content.
+
+<note>
 {text[:600]}
+</note>
 
 - title: a concise topic title, <= 8 words, sentence case, no quotes or dates.
 - slug: lowercase-kebab (a-z, 0-9, hyphens only) from the title, <= 6 words.
@@ -195,7 +211,7 @@ def event_from_text(text, today=None):
         return {}
 
     # ── 1) classify: is a day/date named? ──
-    gate = _generate_json(f"""/no_think
+    gate = _generate_json(f"""
 Does this note name a specific day or date to do the thing on? A weekday
 ("friday"), "today"/"tomorrow", or an explicit date = yes. No day mentioned = no.
 
@@ -206,7 +222,7 @@ Return ONLY JSON: {{"dated": true or false}}""")
 
     if dated:
         # ── 2a) extract a dated item (phrase only; we resolve the date) ──
-        out = _generate_json(f"""/no_think
+        out = _generate_json(f"""
 This note names a day. Extract its parts. Do NOT compute a date; copy the day phrase.
 
 Note: {text[:400]}
@@ -232,7 +248,7 @@ Return ONLY JSON:
         }
 
     # ── 2b) extract an undated item (→ pool) ──
-    out = _generate_json(f"""/no_think
+    out = _generate_json(f"""
 This note has no day/date. Turn it into a to-do.
 
 Note: {text[:400]}
@@ -275,7 +291,7 @@ def triage_watchdog(report, previous=None):
                          f'{cp.get("etime")} {cp.get("cmd", "")}')
         return " | ".join(parts)
 
-    prompt = f"""/no_think
+    prompt = f"""
 You triage a Linux tower's health-watchdog events for its owner. You do NOT fix
 anything — you explain what changed and suggest ONE next step for the human.
 
@@ -313,7 +329,7 @@ def plan_remediation(problem, allowed_actions):
                           for c in problem.get("culprits", [])) or "(none)"
     menu = "\n".join(f'- {a["action"]}({a.get("args_hint","")}): {a["description"]}'
                      for a in allowed_actions)
-    prompt = f"""/no_think
+    prompt = f"""
 You are the remediation step of a Linux tower's health watchdog. The owner just
 pressed "fix it", authorizing you to act — but ONLY through the fixed action menu
 below. You cannot run arbitrary commands. Choose the smallest set of actions that
@@ -345,19 +361,201 @@ Return ONLY JSON:
     return out
 
 
-# ── (room for more calls: draft_reply(), propose_blocks(), weekly_review(), … ) ──
+# ── the mail/message composer ────────────────────────────────────────────────
+#
+# Four calls, all EXPLICITLY invoked from the composer's leader menu — nothing
+# ambient, nothing that suggests while you type. That constraint is the whole
+# design: an assistant that interrupts writing has been tried here twice and
+# rejected twice. These run when asked and show you a result you accept or throw
+# away; the draft is never edited behind your back.
+#
+# Historically a BIGGER model than the default: proofreading and rewriting are
+# exactly where 8b starts inventing, and 27b-without-thinking beats
+# 8b-with-thinking on this kind of work. As of 2026-08-26 the default IS the 27b,
+# so this is the same model — kept as its own knob because composing is the one
+# job that would justify reaching for something heavier again, and because a
+# separate name documents which calls are quality-critical.
+# Override with CL_COMPOSE_MODEL.
+COMPOSE_MODEL = os.environ.get("CL_COMPOSE_MODEL", "qwen3.8-112k")
+
+
+def proofread(text):
+    """Spelling/grammar only. Returns [{"before","after","why"}] — never a rewrite.
+
+    Deliberately narrow: the model is told it is NOT an editor. Every suggestion
+    has to be a literal substring of the draft so the UI can apply it exactly and
+    the user can see precisely what changes."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    prompt = f"""
+You are a proofreader for something a person is writing to someone they know —
+an email or a text message. Find ONLY objective errors:
+misspellings, wrong/missing punctuation, subject-verb disagreement, doubled
+words, obvious typos.
+
+You are NOT an editor. Do NOT improve style, tone, word choice, or structure.
+Do NOT rephrase anything that is merely informal — this is a person writing to
+someone they know. Contractions, sentence fragments, lowercase 'i' in casual
+writing, and starting a sentence with 'And' are all FINE, not errors.
+
+Each fix corrects exactly ONE error. Never bundle two changes into one fix — a
+misspelling and a capitalization are two fixes, because the person may want one
+and not the other, and a bundled fix can only be taken whole.
+
+If there are no real errors, return an empty list. An empty list is a good
+answer; inventing corrections is not.
+
+Each fix's "before" MUST be copied EXACTLY from the draft, character for
+character, and must be long enough to appear only once (include a word or two of
+surrounding context if the mistake is a short word).
+
+DRAFT:
+---
+{text[:6000]}
+---
+
+Return ONLY JSON:
+{{"fixes": [{{"before": "<exact text from the draft>", "after": "<corrected>", "why": "<3-6 words>"}}]}}"""
+    out = _generate_json(prompt, model=COMPOSE_MODEL)
+    fixes = out.get("fixes") if isinstance(out, dict) else None
+    if not isinstance(fixes, list):
+        return []
+    # Drop anything that isn't literally present, or that changes nothing. A fix
+    # the UI can't apply exactly is worse than no fix at all.
+    clean = []
+    for f in fixes:
+        if not isinstance(f, dict):
+            continue
+        b, a = (f.get("before") or "").strip(), (f.get("after") or "").strip()
+        if not b or not a or b == a or b not in text:
+            continue
+        clean.append({"before": b, "after": a, "why": (f.get("why") or "").strip()[:40]})
+    return clean[:20]
+
+
+def revise(text, instruction):
+    """Rewrite the draft to an instruction ('tighten', 'warmer'). Returns text."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    prompt = f"""
+Rewrite the draft below according to this instruction: {instruction}
+
+Rules:
+- Keep the writer's voice. This is a real person writing to someone they know,
+  not a corporate email. Do not make it more formal unless asked. If the draft is
+  a text message, keep it a text message — do not grow it into a letter.
+- Keep every fact, name, date, number and commitment exactly as written.
+- Do not add greetings, sign-offs, or pleasantries that aren't already there.
+- Return the rewritten draft and NOTHING else — no preamble, no explanation,
+  no quotes around it.
+
+DRAFT:
+---
+{text[:6000]}
+---"""
+    return _generate_text(prompt, model=COMPOSE_MODEL, num_predict=900)
+
+
+def summarize_thread(messages):
+    """A reading aid for a long thread: what happened, what's being asked of you.
+
+    messages: [{"who","body"}] oldest first. Never touches the draft."""
+    if not messages:
+        return {}
+    convo = "\n\n".join(f'{m.get("who", "?")}: {(m.get("body") or "")[:1200]}'
+                         for m in messages[-14:])
+    prompt = f"""
+Summarize this conversation for the person about to reply to it.
+
+Be concrete and short. Name people and specifics rather than describing the
+thread abstractly. If nothing is actually being asked of the reader, say so
+plainly instead of inventing a task.
+
+CONVERSATION:
+---
+{convo[:9000]}
+---
+
+Return ONLY JSON:
+{{"gist": "<1-2 sentences: what this thread is about>",
+  "asks": ["<something the reader is being asked to do or answer>", ...],
+  "open": "<what is still unresolved, or empty string>"}}"""
+    out = _generate_json(prompt, model=COMPOSE_MODEL)
+    if not isinstance(out, dict):
+        return {}
+    asks = out.get("asks")
+    return {"gist": (out.get("gist") or "").strip(),
+            "asks": [str(a).strip() for a in asks][:6] if isinstance(asks, list) else [],
+            "open": (out.get("open") or "").strip()}
+
+
+def draft_reply(messages, style_samples=None):
+    """An opening draft in the user's voice. A starting point to edit, not a send.
+
+    style_samples: things the user has actually written, so the draft sounds like
+    them rather than like an assistant."""
+    if not messages:
+        return ""
+    convo = "\n\n".join(f'{m.get("who", "?")}: {(m.get("body") or "")[:1000]}'
+                         for m in messages[-10:])
+    samples = [s.strip() for s in (style_samples or []) if s and s.strip()][:12]
+    style = "\n".join(f'- "{s[:300]}"' for s in samples) or "(no samples available)"
+    prompt = f"""
+Write the opening draft of a reply to the email thread below. The person will
+edit it before sending — a decent starting point beats a polished wrong one.
+
+Match the voice in these samples of how this person actually writes:
+{style}
+
+Rules:
+- Answer what was actually asked. Do not pad.
+- Never invent facts, commitments, dates or numbers. If something needs a
+  detail the thread doesn't contain, leave an obvious [bracket] for it.
+- No corporate filler ("I hope this email finds you well", "Please don't
+  hesitate"). No sign-off unless the samples show one.
+- Return the draft body only — no subject line, no preamble, no quotes.
+
+THREAD:
+---
+{convo[:8000]}
+---"""
+    return _generate_text(prompt, model=COMPOSE_MODEL, num_predict=700, temperature=0.6)
+
+
+# ── (room for more calls: propose_blocks(), weekly_review(), … ) ──
 
 
 # ── shared transport ─────────────────────────────────────────────────────────
+#
+# Thinking is off everywhere here, set once via the "think" field below — the
+# supported switch. Prompts used to ALSO open with a literal `/no_think` line,
+# the Qwen3-era soft switch; that is now removed. Measured 2026-08-25: qwen3:8b
+# still swallows the token, but qwen3.6:27b (the qwen3.5 renderer) echoes it back
+# verbatim as the first line of the prompt — so on COMPOSE_MODEL it was not a
+# switch at all, just noise at the top of every proofread and rewrite. With the
+# field alone, both models return an empty `thinking` and no <think> block.
+#
+# Off, not on, is the measured choice: the ai-rss eval scored think on/off at
+# 18/18 = 18/18 across six frozen cases for ~5x the runtime (see
+# ai_rss/config.yaml). Proofreading is further from thinking's strength than any
+# of those stages — a reasoning pass here invents edits rather than finding them.
 
-def _generate_json(prompt, timeout=180):
+def _generate_json(prompt, timeout=180, model=None):
     """POST to ollama with JSON-constrained output; return parsed dict ({} on failure)."""
     body = json.dumps({
-        "model": MODEL,
+        "model": model or MODEL,
         "prompt": prompt,
         "stream": False,
         "format": "json",
         "think": False,
+        # -1, not a duration: this is the ONE resident model on a 24GB card, and
+        # ollama takes the last keep_alive it was given. A "30m" here silently
+        # DOWNGRADES the boot-time pin (ollama-pin.service) every time a
+        # background job runs, so the assistant would quietly expire overnight
+        # and the next request would pay a ~25s cold load of 21.7 GiB.
+        "keep_alive": -1,
         "options": {"temperature": 0.1},
     }).encode()
     req = urllib.request.Request(OLLAMA_URL, data=body,
@@ -368,3 +566,28 @@ def _generate_json(prompt, timeout=180):
         return json.loads(raw)
     except Exception:
         return {}
+
+
+def _generate_text(prompt, timeout=180, model=None, num_predict=600, temperature=0.3):
+    """Same transport, free text out. Returns "" on any failure — every caller
+    treats an empty answer as "the model had nothing", which is a fine outcome."""
+    body = json.dumps({
+        "model": model or MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "think": False,
+        # -1, not a duration: this is the ONE resident model on a 24GB card, and
+        # ollama takes the last keep_alive it was given. A "30m" here silently
+        # DOWNGRADES the boot-time pin (ollama-pin.service) every time a
+        # background job runs, so the assistant would quietly expire overnight
+        # and the next request would pay a ~25s cold load of 21.7 GiB.
+        "keep_alive": -1,
+        "options": {"temperature": temperature, "num_predict": num_predict},
+    }).encode()
+    req = urllib.request.Request(OLLAMA_URL, data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return (json.load(r).get("response") or "").strip()
+    except Exception:
+        return ""
