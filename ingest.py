@@ -28,7 +28,11 @@ from rich.rule import Rule
 
 console = Console()
 
-INBOX_DIR = KB / "inbox"
+# No inbox folder — captures go in the month shard and "inbox" means untagged.
+# This said _stream/inbox and unique_inbox_path() mkdir'd it, so the next email
+# to arrive would have RECREATED the retired directory and dropped mail where
+# none of the readers look. Caught 2026-09-03 with 34 seconds to the next run.
+STREAM_DIR = KB / "writing" / "_stream"
 DEFAULT_MAILDIR = Path.home() / "mail" / "kb-capture" / "Inbox"
 
 
@@ -181,13 +185,15 @@ def message_to_inbox_md(msg, captured_at):
 
 
 def unique_inbox_path(stamp):
-    INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    base = INBOX_DIR / f"{stamp}-email.md"
+    from datetime import datetime as _dt
+    d = STREAM_DIR / _dt.now().strftime("%Y") / _dt.now().strftime("%m")
+    d.mkdir(parents=True, exist_ok=True)
+    base = d / f"{stamp}-email.md"
     if not base.exists():
         return base
     i = 1
     while True:
-        p = INBOX_DIR / f"{stamp}-email-{i}.md"
+        p = d / f"{stamp}-email-{i}.md"
         if not p.exists():
             return p
         i += 1

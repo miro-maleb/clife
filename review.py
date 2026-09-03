@@ -33,7 +33,20 @@ console = Console()
 
 from paths import KB
 PROJECTS_DIR = KB / "projects"
-INBOX_DIR = KB / "inbox"
+# "Inbox" is the set of stream notes with no tags, not a directory.
+STREAM_DIR = KB / "writing" / "_stream"
+
+
+def _unplaced(f):
+    try:
+        head = f.read_text(errors="replace")[:400]
+    except OSError:
+        return False
+    if not head.startswith("---"):
+        return True
+    import re as _re
+    m = _re.search(r"^tags:(.*)$", head, _re.M)
+    return not (m and m.group(1).strip(" []"))
 STALE_DAYS = 30
 
 
@@ -65,9 +78,9 @@ def stats():
         counts[s] = counts.get(s, 0) + 1
 
     inbox_count = 0
-    if INBOX_DIR.exists():
+    if STREAM_DIR.exists():
         inbox_count = sum(
-            1 for f in INBOX_DIR.iterdir()
+            1 for f in STREAM_DIR.rglob("*.md") if _unplaced(f)
             if f.is_file() and f.name != ".gitkeep"
         )
 
@@ -152,10 +165,11 @@ def section_open_questions():
 
 def section_inbox():
     console.print(Rule("[bold steel_blue1]  Inbox[/bold steel_blue1]", style="grey23"))
-    if not INBOX_DIR.exists():
+    if not STREAM_DIR.exists():
         console.print("\n  [grey50]inbox dir doesn't exist[/grey50]\n")
         return
-    files = [f for f in INBOX_DIR.iterdir() if f.is_file() and f.name != ".gitkeep"]
+    files = [f for f in STREAM_DIR.rglob("*.md")
+             if f.is_file() and f.name != ".gitkeep" and _unplaced(f)]
     if not files:
         console.print("\n  [grey50]inbox empty[/grey50]\n")
         return

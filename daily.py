@@ -24,12 +24,29 @@ from pathlib import Path
 from paths import KB
 from tags import is_break, tags_in
 
-DAILY = KB / "daily"
+# Daily notes live in the writing stream, sharded by month like every other
+# note — ~/kb/daily was retired 2026-09-03 (its entries were moved into the
+# shards) and nine code references were still writing into the empty stub.
+DAILY = KB / "writing" / "_stream"
 
 
 def day_path(date=None):
     d = date or _date.today().isoformat()
-    return DAILY / f"{d}.md", d
+    return DAILY / d[:4] / d[5:7] / f"{d}.md", d
+
+
+def split_frontmatter(raw):
+    """(frontmatter, rest). Daily notes carry `tags: [journal]` so they do NOT
+    show up in the inbox view, which is the set of UNTAGGED notes. That block is
+    delimited by `---`, the same marker this file uses to separate blocks, so it
+    has to come off before any block parsing — and be put back on write, or an
+    append would silently strip the tag and park the note in the routing queue."""
+    if not raw.startswith("---\n"):
+        return "", raw
+    end = raw.find("\n---\n", 4)
+    if end == -1:
+        return "", raw
+    return raw[:end + 5], raw[end + 5:].lstrip("\n")
 
 
 def split_header(raw):
@@ -73,6 +90,7 @@ def _default_header(d):
 def model(date=None):
     path, d = day_path(date)
     raw = path.read_text(errors="replace") if path.exists() else ""
+    fm, raw = split_frontmatter(raw)
     header, body = split_header(raw)
     blocks = split_blocks(body)
     return {
@@ -80,16 +98,18 @@ def model(date=None):
         "path": str(path),
         "exists": path.exists(),
         "mtime": (path.stat().st_mtime if path.exists() else 0.0),
+        "frontmatter": fm,
         "header": header,
         "blocks": [{"i": i, "tags": tags_in(t), "text": t}
                    for i, t in enumerate(blocks)],
     }
 
 
-def _reassemble(header, blocks):
+def _reassemble(header, blocks, frontmatter=""):
     body = "\n\n---\n\n".join(b.strip() for b in blocks if b.strip())
     text = (header.rstrip("\n") + "\n\n" + body) if header else body
-    return text.rstrip("\n") + "\n"
+    text = text.rstrip("\n") + "\n"
+    return (frontmatter.rstrip("\n") + "\n\n" + text) if frontmatter else text
 
 
 def _write(path, text):
@@ -103,7 +123,7 @@ def append_block(date, text):
     header = m["header"] or _default_header(d)
     blocks = [b["text"] for b in m["blocks"]]
     blocks.append(text.strip())
-    _write(path, _reassemble(header, blocks))
+    _write(path, _reassemble(header, blocks, m.get("frontmatter", "")))
     return model(date)
 
 
@@ -122,7 +142,7 @@ def set_block(date, index, text, if_mtime=None):
         blocks[index] = text.strip()
     else:
         del blocks[index]          # a blanked-out edit deletes the block
-    _write(path, _reassemble(header, blocks))
+    _write(path, _reassemble(header, blocks, m.get("frontmatter", "")))
     return {"ok": True, **model(date)}
 
 

@@ -91,17 +91,27 @@ def kb_push(stamp):
     else:
         print(f"Push failed: {result.stderr.strip() or 'unknown error'}")
 
-inbox_path = KB / "inbox"
+# There is no inbox FOLDER — "inbox" is the set of stream notes with no tags.
+# This path said _stream/inbox until 2026-09-03, which meant every $mod+c
+# capture recreated a retired directory and landed outside the month shards.
+stream_path = KB / "writing" / "_stream"
+
+
+def _shard():
+    from datetime import datetime as _dt
+    d = stream_path / _dt.now().strftime("%Y") / _dt.now().strftime("%m")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def unique_inbox_path(stamp, index=None):
     suffix = f"-{index}" if index is not None else ""
-    path = inbox_path / f"{stamp}{suffix}.md"
+    path = _shard() / f"{stamp}{suffix}.md"
     # If collision (same second, no index), add -1, -2...
     if path.exists() and index is None:
         n = 1
         while True:
-            path = inbox_path / f"{stamp}-{n}.md"
+            path = _shard() / f"{stamp}-{n}.md"
             if not path.exists():
                 break
             n += 1
@@ -118,8 +128,14 @@ def log_capture(text, stamp):
 
 
 def write_inbox(text, stamp, index=None):
+    """Frontmatter matters: `tags: []` is the ONLY thing marking this as an
+    inbox item now that the inbox is a view. A bare file with no frontmatter
+    still reads as unplaced, but writing the fields keeps every capture door
+    ($mod+c, nvim-write, Surface, kb-inbox) emitting the same shape."""
+    from datetime import datetime as _dt
     path = unique_inbox_path(stamp, index)
-    path.write_text(text)
+    path.write_text(f"---\ncreated: {_dt.now().strftime('%Y-%m-%d %H:%M')}\n"
+                    f"tags: []\n---\n\n{text.strip()}\n")
     log_capture(text, stamp)
     return path
 
@@ -129,7 +145,7 @@ def append_journal(text):
 
 
 def text_mode(journal=False):
-    inbox_path.mkdir(parents=True, exist_ok=True)
+    stream_path.mkdir(parents=True, exist_ok=True)
     count = 0
 
     console.print()
@@ -172,7 +188,7 @@ def text_mode(journal=False):
 
 def voice_mode_termux(journal=False):
     """Voice capture for Termux: each round → separate file(s). 'break'/'brake' splits within a round."""
-    inbox_path.mkdir(parents=True, exist_ok=True)
+    stream_path.mkdir(parents=True, exist_ok=True)
     tmpwav = str(Path.home() / "capture.wav")
 
     # Kill any stale recording
@@ -306,7 +322,7 @@ def voice_mode(journal=False):
         voice_mode_termux(journal=journal)
         return
 
-    inbox_path.mkdir(parents=True, exist_ok=True)
+    stream_path.mkdir(parents=True, exist_ok=True)
 
     # Clean up any stale temp files
     for f in [TMPWAV, TMPOUT + ".txt"]:
@@ -410,7 +426,7 @@ def main():
         if not text:
             print("(empty — nothing captured)")
             return
-        inbox_path.mkdir(parents=True, exist_ok=True)
+        stream_path.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         if args.journal:
             append_journal(text)

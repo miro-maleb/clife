@@ -24,8 +24,28 @@ console = Console()
 
 notes_path = KB / "notes"
 project_path = KB / "projects"
-inbox_path = KB / "inbox"
-pinned_path = inbox_path / "pinned"   # inbox items pinned as todos (kept out of the route queue)
+# There is no inbox FOLDER. Untagged captures live in the stream's YYYY/MM
+# shards like every other note, and "inbox" is the set of notes nobody has
+# placed yet — no tags in frontmatter. The folder this used to name moved twice
+# on 2026-09-03 and emptied this command silently both times; a filter cannot
+# desync from a path that no longer decides anything.
+inbox_path = KB / "writing/_stream"
+pinned_path = KB / "writing/_stream/.pinned"   # vestigial: no pinned items exist
+
+
+_UNPLACED_TAGS_RE = re.compile(r"^tags:(.*)$", re.M)
+
+
+def _is_unplaced(f):
+    """An inbox item is a note with no tags — unplaced, still needing a decision."""
+    try:
+        head = f.read_text(errors="replace")[:400]
+    except OSError:
+        return False
+    if not head.startswith("---"):
+        return True                      # no frontmatter at all = unplaced
+    m = _UNPLACED_TAGS_RE.search(head)
+    return not (m and m.group(1).strip(" []"))
 shopping_path = KB / "shopping"
 system_improvements_path = (
     KB / "projects" / "infrastructure" / "clife" / "system-improvements.md"
@@ -462,8 +482,8 @@ def process_file(file, index, total):
 
 def inbox_files():
     return sorted([
-        f for f in inbox_path.iterdir()
-        if f.is_file() and f.name != ".gitkeep"
+        f for f in inbox_path.rglob("*.md")
+        if f.is_file() and f.name != ".gitkeep" and _is_unplaced(f)
     ])
 
 
@@ -782,8 +802,8 @@ def main():
     try_ingest_email()
 
     files = sorted([
-        f for f in inbox_path.iterdir()
-        if f.is_file() and f.name != ".gitkeep"
+        f for f in inbox_path.rglob("*.md")
+        if f.is_file() and f.name != ".gitkeep" and _is_unplaced(f)
     ])
 
     if not files:
