@@ -375,31 +375,67 @@ class TriageApp(App):
         self._paint_vocab(box.value)
 
     def _paint_vocab(self, typed: str) -> None:
-        """The vocabulary, filtered to the fragment being typed.
+        """Two jobs on one panel, and they are not the same job.
 
-        This is the affordance half of the reuse rule — the guard in
-        `cl stream set` is the floor, and a floor you only meet as a refusal
-        teaches nothing. Seeing `groceries 1` while you type `grocer` is what
-        stops `grocery` being coined in the first place."""
-        frag = (typed.split(",")[-1] if typed else "").strip().lstrip("#").lower()
-        items = [(t, n) for t, n in self.vocab.items() if frag in t] if frag \
-            else list(self.vocab.items())
+        The tag you are still TYPING gets the vocabulary filtered to it — the
+        affordance half of the reuse rule, so seeing `groceries·7` while typing
+        `grocer` stops `grocery` being coined at all.
+
+        Every tag you have already FINISHED (anything before the last comma)
+        gets a real verdict from `stream.classify_tag` — the same call
+        `cl stream set` makes. This used to look only at the fragment in
+        progress, so `dharma, hermes` said nothing at all: `hermes` matched the
+        vocabulary, and `dharma` — the one actually being coined — was never
+        examined. A warning that goes quiet as soon as you type a second tag is
+        worse than none, because the silence reads as approval.
+
+        Classifier, not substring matching. The old test was `frag in tag`,
+        which is a different rule from the one that decides the write, and two
+        rules that can disagree about whether a tag is new is exactly the drift
+        this design spends its effort avoiding.
+        """
+        parts = typed.split(",")
+        frag = parts[-1].strip().lstrip("#").lower()
+        done = [x.strip() for x in parts[:-1] if x.strip()]
+
         t = Text()
+        lines = 0
+
+        verdicts = []
+        for raw in done:
+            c = stream.classify_tag(raw, self.vocab)
+            v = c["verdict"]
+            if v == "variant" and c["tag"] != stream.norm_tag(raw):
+                verdicts.append((f"{c['input']} → {c['tag']}", ACCENT))
+            elif v == "near":
+                verdicts.append(
+                    (f"{c['input']} ≈ {c['candidates'][0]} — will refuse", RUST))
+            elif v == "new":
+                verdicts.append((f"{c['tag']} is NEW", ACCENT))
+            # `exact` says nothing: a tag that is already in use is the normal
+            # case, and narrating it would bury the one line that matters.
+        if verdicts:
+            for n, (txt, colour) in enumerate(verdicts):
+                if n:
+                    t.append("  ", FAINT)
+                t.append(txt, colour)
+            t.append("\n")
+            lines = 1
+
+        items = ([(x, n) for x, n in self.vocab.items() if frag in x] if frag
+                 else list(self.vocab.items()))
         t.append("vocab  ", FAINT)
-        if not items:
-            t.append(f"no tag contains '{frag}' — it would be NEW", RUST)
-        # Budgeted by width, not a fixed count: in the deck this column is ~41
-        # columns, where fourteen tags is five wrapped lines eating the note
-        # preview. Three lines' worth, then a count of the rest.
+        if frag and not items:
+            t.append(f"'{frag}' would be NEW", ACCENT)
         # Two guards, because either alone has failed: a width budget (this
         # panel is ~39 columns in the deck) AND a hard count. `size.width` is 0
         # at first paint, before layout — trusting it alone printed twenty tags
-        # into a three-line box on the very first frame.
+        # into a three-line box on the very first frame. The budget halves when
+        # a verdict line is already using one of the three rows.
         w = self.query_one("#vocab", Static).size.width or 39
-        budget = w * 2
-        limit = 10 if frag else 8
+        budget = w * (2 - lines)
         used, shown = 7, 0
-        for tag, n in items[:limit]:
+        for tag, n in items[:10 if frag else 8]:
             cost = len(tag) + len(str(n)) + 3
             if used + cost > budget:
                 break
