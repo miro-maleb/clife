@@ -99,6 +99,163 @@ def _tags(meta) -> list:
     return [str(x).strip().lstrip("#") for x in t if str(x).strip()]
 
 
+# ── tag identity ───────────────────────────────────────────────────────────
+# The whole point of tags-as-routing is that a note's placement is a WORD, and
+# words drift: bridge/Bridge/bridges/bridge_ui are four spellings of one idea,
+# and a vocabulary that accumulates all four stops being able to answer "what
+# is this about". Nothing downstream can repair that later — `cl stream tag x`
+# is an exact-or-prefix match, so a near-duplicate is simply a tag whose notes
+# have gone missing.
+#
+# So reuse is enforced HERE, in the writer, rather than asked for in a prompt.
+# A human typing a variant and a model proposing one hit the same guard, and it
+# keeps working as the vocabulary grows — which is the opposite of a prompt
+# that says "prefer existing tags" and degrades as the list gets longer than
+# the model's attention.
+
+def norm_tag(raw) -> str:
+    """The canonical stored spelling: lowercase, dashes, no leading #."""
+    t = str(raw or "").strip().lstrip("#").lower()
+    t = re.sub(r"[\s_]+", "-", t)
+    t = re.sub(r"-{2,}", "-", t)
+    t = re.sub(r"/{2,}", "/", t)
+    return t.strip("-/")
+
+
+def _cmp_key(t: str) -> str:
+    """The form two tags are the SAME idea in. Drops separators and a trailing
+    plural per segment, so bridge/Bridge/bridges/bridge_ui vs bridge-ui all
+    collapse together. Never stored — only compared."""
+    segs = []
+    for seg in norm_tag(t).split("/"):
+        seg = seg.replace("-", "")
+        # -ies before -s, or `groceries` stems to `grocerie` and never meets
+        # `grocery` — the exact near-duplicate already sitting in the kb, and
+        # the one that proved a bare trailing-s rule is not enough.
+        if len(seg) > 4 and seg.endswith("ies"):
+            seg = seg[:-3] + "y"
+        elif len(seg) > 3 and seg.endswith("s") and not seg.endswith("ss"):
+            seg = seg[:-1]
+        segs.append(seg)
+    return "/".join(segs)
+
+
+def _lev(a: str, b: str) -> int:
+    """Levenshtein. Small strings, called against a vocabulary of tens — a
+    dependency would cost more than the twelve lines."""
+    if a == b:
+        return 0
+    if not a or not b:
+        return len(a) + len(b)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def vocabulary(items=None) -> dict:
+    """Every frontmatter tag in the stream → how many notes carry it.
+
+    Daily notes are INCLUDED, unlike every view in this file. They are not
+    agenda items, but `journal` is a real tag with real weight, and a
+    vocabulary that omitted it would report the system's most-used word as
+    novel the next time anything proposed it."""
+    items = items if items is not None else load(include_daily=True)
+    counts = {}
+    for it in items:
+        for t in it["tags"]:
+            t = norm_tag(t)
+            if t:
+                counts[t] = counts.get(t, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+# Below this length an edit distance of 1 is noise, not a typo: ui/up/id are
+# all one edit apart and all mean different things.
+_NEAR_MIN_LEN = 4
+
+
+def classify_tag(raw: str, vocab: dict) -> dict:
+    """Where one proposed tag sits against the vocabulary already in use.
+
+      exact    already a tag, spelled the same way            → apply
+      variant  the same idea, spelled differently             → apply the
+                                                                EXISTING spelling
+      near     close enough to be a typo or a near-duplicate  → refuse, list
+                                                                candidates
+      new      nothing like it                                → apply, and say
+                                                                it is new
+
+    `variant` resolving to the vocabulary's spelling rather than the caller's
+    is the load-bearing choice: it means the first spelling of an idea wins and
+    every later caller converges on it, without anyone having to look it up.
+
+    A hierarchical relative is NEVER near: `blog` and `blog/kids` are a parent
+    and a child, and `cl stream tag blog` already returns both. Treating that
+    as a collision would make the hierarchy unusable."""
+    tag = norm_tag(raw)
+    out = {"input": str(raw or "").strip(), "tag": tag, "verdict": "new",
+           "candidates": []}
+    if not tag:
+        out["verdict"] = "empty"
+        return out
+    if tag in vocab:
+        out["verdict"] = "exact"
+        return out
+
+    key = _cmp_key(tag)
+    for known in vocab:
+        if _cmp_key(known) == key:
+            out.update(verdict="variant", tag=known, candidates=[known])
+            return out
+
+    near = []
+    for known in vocab:
+        if tag.startswith(known + "/") or known.startswith(tag + "/"):
+            continue                      # parent/child, not a collision
+        if max(len(tag), len(known)) < _NEAR_MIN_LEN:
+            continue
+        d = _lev(tag, known)
+        if d <= (1 if min(len(tag), len(known)) < 6 else 2):
+            near.append((d, known))
+    if near:
+        near.sort()
+        out.update(verdict="near", candidates=[n for _d, n in near[:5]])
+    return out
+
+
+def resolve_tags(raws, vocab, *, allow_new=False) -> tuple[list, list, list]:
+    """Run every proposed tag through the guard.
+
+    Returns (tags-to-apply, notes-for-the-human, blockers). A non-empty
+    blocker list means apply NOTHING — a partial tagging that silently dropped
+    the one tag you were unsure about is worse than a refusal that says so."""
+    apply, notes, blocked = [], [], []
+    for raw in raws:
+        c = classify_tag(raw, vocab)
+        v = c["verdict"]
+        if v == "empty":
+            continue
+        if v == "exact":
+            apply.append(c["tag"])
+        elif v == "variant":
+            apply.append(c["tag"])
+            if c["tag"] != norm_tag(raw):
+                notes.append(f"'{c['input']}' → existing tag '{c['tag']}'")
+        elif v == "near" and not allow_new:
+            blocked.append(c)
+        elif v == "near":
+            apply.append(c["tag"])
+            notes.append(f"'{c['tag']}' created despite {', '.join(c['candidates'])}")
+        else:
+            apply.append(c["tag"])
+            notes.append(f"'{c['tag']}' is a NEW tag")
+    return list(dict.fromkeys(apply)), notes, blocked
+
+
 def load(include_daily=False) -> list:
     """Every stream note as a plain dict. Cheap enough to do on every call —
     the stream is a few hundred small files — which keeps every face reading
@@ -118,8 +275,12 @@ def load(include_daily=False) -> list:
         except OSError:
             continue
         # `captured:` wins over `created:` where both exist — the stream's own
-        # rule, and some notes carry both with different values.
-        created = _norm_dt(meta.get("captured") or meta.get("created"))
+        # rule, and some notes carry both with different values. `date:` is a
+        # fourth spelling three hand-written notes use; read-tolerant here,
+        # because the alternative is that they sort to the top of every view
+        # with no age forever. Nothing WRITES it — kb-inbox emits `created:`.
+        created = _norm_dt(meta.get("captured") or meta.get("created")
+                           or meta.get("date"))
         status = str(meta.get("status", "") or "").strip().lower()
         when = _norm_date(meta.get("when"))
         items.append({
@@ -212,19 +373,31 @@ def find(slug, items=None):
     raise SystemExit(f"cl stream: '{slug}' matches {len(part)} notes:\n  {names}")
 
 
-def apply_set(item, *, status=None, when="__keep__", add_tags=None):
+def apply_set(item, *, status=None, when="__keep__", add_tags=None,
+              rm_tags=None):
     """One targeted frontmatter edit. fm.set_fields rewrites only the keys named
     and leaves the body plus untouched keys byte-identical — which is why no
-    surface here ever needs to re-emit a whole note."""
+    surface here ever needs to re-emit a whole note.
+
+    Removal exists because tagging is now how a note gets placed. While `--tag`
+    was the only verb, every write was additive and a wrong tag was permanent
+    short of opening the file — survivable while you were the only one tagging,
+    not once anything proposes tags for you. The fix for a bad suggestion has
+    to be another command."""
     path = Path(item["path"])
     updates = {}
     if status is not None:
         updates["status"] = status
     if when != "__keep__":
         updates["when"] = when.isoformat() if when else ""
+    tags = list(item["tags"])
     if add_tags:
-        merged = list(dict.fromkeys(item["tags"] + list(add_tags)))
-        updates["tags"] = merged
+        tags = list(dict.fromkeys(tags + list(add_tags)))
+    if rm_tags:
+        drop = {norm_tag(t) for t in rm_tags}
+        tags = [t for t in tags if norm_tag(t) not in drop]
+    if tags != item["tags"]:
+        updates["tags"] = tags
     if not updates:
         return {}
     fm.set_fields(path, updates)
@@ -320,6 +493,9 @@ def main(argv=None):
     l.add_argument("--stale", type=int, default=None, metavar="DAYS")
     l.add_argument("--json", action="store_true")
 
+    v = sub.add_parser("tags", help="the tag vocabulary in use, most-used first")
+    v.add_argument("--json", action="store_true")
+
     s = sub.add_parser("set", help="edit one note's status / when / tags")
     s.add_argument("slug")
     s.add_argument("--todo", action="store_true")
@@ -328,6 +504,9 @@ def main(argv=None):
     s.add_argument("--status", default=None)
     s.add_argument("--when", default=None, help="today|tomorrow|fri|+3d|2026-09-08|none")
     s.add_argument("--tag", default=None, help="comma-separated tags to ADD")
+    s.add_argument("--untag", default=None, help="comma-separated tags to REMOVE")
+    s.add_argument("--new", action="store_true",
+                   help="allow a tag the guard flagged as a near-duplicate")
     s.add_argument("--json", action="store_true")
 
     r = sub.add_parser("render", help="write the read-only agenda artifact to outbox/")
@@ -359,6 +538,23 @@ def main(argv=None):
         rows.sort(key=lambda i: i["created"] or "", reverse=True)
         _emit(rows, args, render_list(rows, color, f"#{q} ({len(rows)})"))
 
+    elif args.cmd == "tags":
+        # include_daily: `journal` is the most-used tag in the system and lives
+        # only on notes every other view here filters out.
+        vocab = vocabulary(load(include_daily=True))
+        c = _color(color)
+        lines = [c(f"VOCABULARY ({len(vocab)} tags)", "bold")]
+        if not vocab:
+            lines.append(c("  nothing tagged yet", "dim"))
+        width = max((len(t) for t in vocab), default=0)
+        for t, n in vocab.items():
+            kids = [k for k in vocab if k.startswith(t + "/")]
+            tail = c(f"  +{len(kids)} under it", "dim") if kids else ""
+            lines.append(f"  {c(t.ljust(width), 'cyan')}  "
+                         f"{c(str(n).rjust(3), 'dim')}{tail}")
+        _emit({"tags": [{"tag": t, "count": n} for t, n in vocab.items()]},
+              args, "\n".join(lines))
+
     elif args.cmd == "ls":
         rows = items
         if args.status is not None:
@@ -382,11 +578,41 @@ def main(argv=None):
         if args.archive:
             status = ARCHIVED
         when = "__keep__" if args.when is None else resolve_when(args.when)
-        tags = [x.strip().lstrip("#") for x in (args.tag or "").split(",") if x.strip()]
-        got = apply_set(it, status=status, when=when, add_tags=tags or None)
+        raw_add = [x for x in (args.tag or "").split(",") if x.strip()]
+        rm = [norm_tag(x) for x in (args.untag or "").split(",") if x.strip()]
+
+        add, notes, blocked = resolve_tags(
+            raw_add, vocabulary(load(include_daily=True)), allow_new=args.new)
+        if blocked:
+            # Refuse the WHOLE command, not just the flagged tag. A partial
+            # apply that quietly dropped the one tag you were unsure about
+            # reads as success and leaves the note half-placed.
+            payload = {"ok": False, "error": "near-duplicate tag(s)",
+                       "blocked": blocked}
+            if args.json:
+                print(json.dumps(payload, indent=2 if sys.stdout.isatty() else None))
+            else:
+                for b in blocked:
+                    print(f"  '{b['input']}' looks like: "
+                          f"{', '.join(b['candidates'])}")
+                print("  nothing written. use one of those, or --new to "
+                      "create it anyway.")
+            raise SystemExit(2)
+
+        # Removing a tag the note does not carry is a mistake worth naming —
+        # silence here means a typo'd --untag reports success and changes
+        # nothing, which is the failure mode this flag exists to end.
+        missing = [t for t in rm if t not in [norm_tag(x) for x in it["tags"]]]
+
+        got = apply_set(it, status=status, when=when,
+                        add_tags=add or None, rm_tags=rm or None)
         changed = ", ".join(f"{k}: {v or '(cleared)'}" for k, v in got.items())
-        _emit({"slug": it["slug"], "path": it["path"], "applied": got}, args,
-              f"  {it['title']}\n  → {changed or 'nothing to change'}")
+        text = [f"  {it['title']}", f"  → {changed or 'nothing to change'}"]
+        text += [f"  · {n}" for n in notes]
+        text += [f"  · not on this note: {t}" for t in missing]
+        _emit({"ok": True, "slug": it["slug"], "path": it["path"],
+               "applied": got, "notes": notes, "not_present": missing},
+              args, "\n".join(text))
 
     elif args.cmd == "render":
         g = agenda_groups(items)
