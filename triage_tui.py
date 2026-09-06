@@ -92,6 +92,19 @@ Screen { background: #000000; }
 #hermes { height: auto; padding: 0 1; margin: 1 0; background: #221809; }
 #hermes.flag { background: #241213; }
 #preview { height: 1fr; color: #8a8580; }
+/* Thin and quiet. Textual's default vertical scrollbar is 2 cells of solid
+   accent, which in a 27-column queue is 7% of the width shouting for attention
+   it does not deserve — the bar is a position readout, not a control anyone
+   here reaches for. One cell, near-invisible until the pointer is on it. */
+#queue, #preview, #vocab {
+    scrollbar-size-vertical: 1;
+    scrollbar-background: #000000;
+    scrollbar-color: #3a3833;
+    scrollbar-background-hover: #000000;
+    scrollbar-color-hover: #5f5a54;
+    scrollbar-background-active: #000000;
+    scrollbar-color-active: #e8a34e;
+}
 #tagbox { border: round #272320; background: #0a0a0a; color: #d8d4cf; }
 #tagbox:focus { border: round #e8a34e; }
 #vocab { height: auto; max-height: 3; color: #8a8580; padding: 0 1; }
@@ -163,14 +176,14 @@ class TriageApp(App):
                             id="tagbox")
                 yield Static("", id="vocab")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.register_theme(HEARTH)
         self.theme = "hearth"
-        self.reload()
+        await self.reload()
         self.set_focus(self.query_one("#queue", ListView))
 
     # ── data ────────────────────────────────────────────────────────────────
-    def reload(self) -> None:
+    async def reload(self) -> None:
         """Read from the modules, not the CLI: this is a read of live files on
         every keystroke-driven refresh, and paying a subprocess for it would
         make the list lag the write that caused it. Writes still go out through
@@ -179,7 +192,12 @@ class TriageApp(App):
         self.vocab = stream.vocabulary(stream.load(include_daily=True))
         view = self.query_one("#queue", ListView)
         keep = view.index
-        view.clear()
+        # AWAITED. `clear()` hands back an AwaitRemove and takes the rows out
+        # on a later frame; without the await, the index set at the bottom of
+        # this method was applied first and then wiped to None when the removal
+        # finally landed. On screen that read as the highlight vanishing after
+        # every `d` until an arrow key put it back.
+        await view.clear()
         for r in self.rows:
             age = f"{r['age_days']}d" if r["age_days"] is not None else "—"
             t = Text()
@@ -317,21 +335,22 @@ class TriageApp(App):
         if self._current():
             self.query_one("#tagbox", Input).focus()
 
-    def action_accept(self) -> None:
+    async def action_accept(self) -> None:
         row = self._current()
         if not row:
             return
         if not row["suggested"]:
             self.notify("no suggestion on this note", severity="warning")
             return
-        self._apply(row, row["suggested"])
+        await self._apply(row, row["suggested"])
 
-    def action_todo(self) -> None:
+    async def action_todo(self) -> None:
         row = self._current()
         if row:
             self._write(row, "--todo")
+            await self.reload()
 
-    def action_trash(self) -> None:
+    async def action_trash(self) -> None:
         """`d` — this was never a note. No confirmation prompt: it goes to
         ~/kb/.trash, `u` puts it straight back, and a yes/no on each of sixty
         would make the pass slower than not doing it."""
@@ -344,9 +363,9 @@ class TriageApp(App):
             return
         self._undo.append(("trash", res["trashed"], row["slug"]))
         self.notify(f"trashed {row['slug']}  ·  u to undo")
-        self._advance()
+        await self._advance()
 
-    def action_undo(self) -> None:
+    async def action_undo(self) -> None:
         """Take back the last write, whatever it was.
 
         The guard refuses near-duplicates but cannot know a correctly-spelled
@@ -368,19 +387,19 @@ class TriageApp(App):
             msg = f"untagged {' '.join(tags)}" if res.get("ok") else \
                   f"undo failed: {res.get('error')}"
         self.notify(msg, severity="information" if res.get("ok") else "error")
-        self.reload()
+        await self.reload()
 
-    def action_open(self) -> None:
+    async def action_open(self) -> None:
         row = self._current()
         if not row:
             return
         editor = shutil.which("nvim-write") or "nvim"
         with self.suspend():
             subprocess.call([editor, str(KB / row["relpath"])])
-        self.reload()
+        await self.reload()
 
-    def action_reload(self) -> None:
-        self.reload()
+    async def action_reload(self) -> None:
+        await self.reload()
         self.notify("reloaded")
 
     def action_help(self) -> None:
@@ -389,7 +408,7 @@ class TriageApp(App):
                     "r reload · q quit", timeout=9)
 
     # ── writing ─────────────────────────────────────────────────────────────
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         row = self._current()
         if not row:
@@ -399,9 +418,9 @@ class TriageApp(App):
         if not tags:
             self.set_focus(self.query_one("#queue", ListView))
             return
-        self._apply(row, tags)
+        await self._apply(row, tags)
 
-    def _apply(self, row: dict, tags: list) -> None:
+    async def _apply(self, row: dict, tags: list) -> None:
         res = self._write(row, "--tag", ",".join(tags))
         if not res.get("ok"):
             return                     # text stays in the box, ready to fix
@@ -414,15 +433,15 @@ class TriageApp(App):
         # definition of placed. Clearing its slot keeps the sidecar from
         # accumulating suggestions for notes nobody will see again.
         triage.clear(row["slug"])
-        self._advance()
+        await self._advance()
 
-    def _advance(self) -> None:
+    async def _advance(self) -> None:
         """The note just left the queue; land on whatever slid up into its
         place, focus on the list. Triage is decide-next-decide-next, and
         leaving focus in the tag box meant `u`, `d` and `j` all typed
         themselves into it instead of moving on."""
         i = self.query_one("#queue", ListView).index or 0
-        self.reload()
+        await self.reload()
         view = self.query_one("#queue", ListView)
         if self.rows:
             view.index = min(i, len(self.rows) - 1)
