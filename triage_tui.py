@@ -162,6 +162,7 @@ class TriageApp(App):
         # is most likely to be needed.
         self._undo: list[tuple] = []
         self._asked = False
+        self._slots_seen = 0.0
 
     # ── layout ──────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -185,6 +186,11 @@ class TriageApp(App):
         self.theme = "hearth"
         await self.reload()
         self.set_focus(self.query_one("#queue", ListView))
+        # Hermes fills slots from the pane next door and has no way to tell
+        # this app it did. One stat every two seconds is cheaper than making
+        # him press `r` to find out — and a suggestion he never sees is the
+        # same as one that was never written.
+        self.set_interval(2.0, self._poll_slots)
 
     # ── data ────────────────────────────────────────────────────────────────
     async def reload(self) -> None:
@@ -194,6 +200,14 @@ class TriageApp(App):
         `cl` — read cheap, write guarded."""
         self.rows = triage.queue()
         self.vocab = stream.vocabulary(stream.load(include_daily=True))
+        # Stamp the baseline HERE, where the sidecar is actually read. Taking
+        # it on the first poll instead made that poll always look like a
+        # change, which swallowed the notification for any suggestion that
+        # landed in the first two seconds.
+        try:
+            self._slots_seen = triage.SLOTS.stat().st_mtime
+        except OSError:
+            self._slots_seen = 0.0
         view = self.query_one("#queue", ListView)
         keep = view.index
         # AWAITED. `clear()` hands back an AwaitRemove and takes the rows out
@@ -220,6 +234,32 @@ class TriageApp(App):
         self._paint_status()
         self._paint_detail()
 
+    async def _poll_slots(self) -> None:
+        """Re-read when the sidecar changes underneath us.
+
+        mtime only, not the file contents: this fires every two seconds for as
+        long as the pane is open, and a full reload re-reads every note in the
+        stream. The stat is the cheap question; the reload is the expensive
+        answer, and it only runs when the answer changed.
+
+        Never while the tag box has focus — a repaint rewrites that box from
+        the row's suggestions, so an auto-reload mid-word would eat what he was
+        typing. The poll comes back around in two seconds.
+        """
+        if isinstance(self.focused, Input):
+            return
+        try:
+            m = triage.SLOTS.stat().st_mtime
+        except OSError:
+            return                       # no sidecar yet — nothing to notice
+        if m == self._slots_seen:
+            return
+        before = sum(1 for r in self.rows if r["suggested"] or r["note"])
+        await self.reload()             # re-stamps _slots_seen
+        after = sum(1 for r in self.rows if r["suggested"] or r["note"])
+        if after > before:
+            self.notify(f"{after - before} new suggestion(s) from the chat")
+
     def _current(self) -> dict | None:
         i = self.query_one("#queue", ListView).index
         if i is None or not self.rows or i >= len(self.rows):
@@ -232,6 +272,9 @@ class TriageApp(App):
             ("TRIAGE  ", f"bold {ACCENT}"),
             (f"{n} tags", DIM),
             ("  i tag · a accept · d trash · u undo · c chat · ?", FAINT)))
+        # `r` is deliberately absent from the hint: suggestions arrive on their
+        # own now, and advertising a key for something that happens anyway
+        # spends width teaching a habit nobody needs.
 
     def _paint_detail(self) -> None:
         row = self._current()
@@ -467,6 +510,9 @@ class TriageApp(App):
         await self.reload()
 
     async def action_reload(self) -> None:
+        """`r`. Kept even though the sidecar is polled: notes also change on
+        disk from the writer, `kb-inbox`, the ingest timer and the other
+        machine, and none of those touch the file being watched."""
         await self.reload()
         self.notify("reloaded")
 
