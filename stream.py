@@ -569,7 +569,13 @@ def main(argv=None):
         _emit(rows, args, render_list(rows, color, f"STREAM ({len(rows)})"))
 
     elif args.cmd == "set":
-        it = find(args.slug, items)
+        # include_daily: excluding daily notes is right for a VIEW — a daily
+        # note is a writing surface, not an agenda item or something to route.
+        # It is wrong for a WRITE. There is no reason a daily note cannot carry
+        # tags (most of them do), and `find` searching only the view meant
+        # `cl stream set 2026-07-17 --tag journal` answered "no stream note
+        # matching", which is false: the note is right there.
+        it = find(args.slug, load(include_daily=True))
         status = args.status
         if args.todo:
             status = TODO
