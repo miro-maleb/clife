@@ -146,7 +146,7 @@ class TriageApp(App):
         Binding("d", "trash", "Trash", show=False),
         Binding("u", "undo", "Undo last", show=False),
         Binding("c", "chat", "Jump to chat", show=False),
-        Binding("C", "kickoff", "Ask Hermes to work the queue", show=False),
+        Binding("C", "kickoff", "Ask Hermes again", show=False),
         Binding("o", "open", "Open in writer", show=False),
         Binding("r", "reload", "Reload", show=False),
         Binding("q", "quit", "Quit", show=False),
@@ -161,6 +161,7 @@ class TriageApp(App):
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
         self._undo: list[tuple] = []
+        self._asked = False
 
     # ── layout ──────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -230,7 +231,7 @@ class TriageApp(App):
         self.query_one("#status", Static).update(Text.assemble(
             ("TRIAGE  ", f"bold {ACCENT}"),
             (f"{n} tags", DIM),
-            ("  i tag · a accept · d trash · u undo · c/C chat · ?", FAINT)))
+            ("  i tag · a accept · d trash · u undo · c chat · ?", FAINT)))
 
     def _paint_detail(self) -> None:
         row = self._current()
@@ -424,32 +425,37 @@ class TriageApp(App):
             return False
 
     def action_kickoff(self) -> None:
-        """`C` — ask the pane next door to start filling slots.
-
-        The skill teaches Hermes HOW to work this queue; nothing was telling it
-        WHEN, so every pass began by retyping the same request. This types it,
-        through the same box a human would, and moves you over to watch — a
-        model working unwatched on sixty of his notes is not what this is for.
-
-        Come back with M-h and press `r` to pull the slots in.
-        """
+        """`C` — ask again, whatever the queue looks like. For a second pass
+        over notes Hermes left empty the first time."""
         if self._send_to_chat(self.KICKOFF):
+            self._asked = True
             self.notify("asked Hermes to work the queue — M-h back, r to reload")
 
     def action_chat(self) -> None:
         """`c` — hand the keyboard to the Hermes pane beside this one.
 
-        The note you cannot tag is the one worth talking about, and reaching
-        for M-l meant leaving the app's keymap to use the deck's. This is the
-        deck's own `select-pane -t {top-right}`, called rather than
-        reimplemented, so `c` and M-l land in exactly the same place.
+        The first `c` of a pass also STARTS one: the skill teaches Hermes how
+        to work this queue but nothing was telling it when, so every session
+        began by retyping the same request. One key does the obvious thing.
 
-        No -L bridge: inside a pane tmux reads $TMUX and finds its own server,
-        which also means this does the right thing if the deck is ever moved
-        to another socket. Outside tmux there is no pane to jump to, and
-        saying so beats a silent no-op.
+        It asks only when nothing has been suggested yet, which is the honest
+        reading of "start a pass" — with slots already filled, `c` is just
+        walk-over-and-talk, and re-sending the request would bury the answer
+        you went there to read under a fresh one. State decides, not a counter:
+        empty queue-of-suggestions means no pass has happened. `C` re-asks
+        deliberately.
+
+        The jump itself is the deck's own `select-pane -t {top-right}`, called
+        rather than reimplemented, so `c` and M-l land in the same place. No
+        -L bridge: inside a pane tmux reads $TMUX and finds its own server.
         """
-        self._send_to_chat()
+        fresh = not self._asked and not any(
+            r["suggested"] or r["note"] for r in self.rows)
+        if not self._send_to_chat(self.KICKOFF if fresh else ""):
+            return
+        if fresh:
+            self._asked = True
+            self.notify("asked Hermes to work the queue — M-h back, r to reload")
 
     async def action_open(self) -> None:
         row = self._current()
@@ -466,8 +472,9 @@ class TriageApp(App):
 
     def action_help(self) -> None:
         self.notify("j/k move · i tag · a accept suggestion · t todo · "
-                    "d trash (recoverable) · u undo · c chat pane · "
-                    "C ask Hermes to fill the slots · o open in writer · "
+                    "d trash (recoverable) · u undo · "
+                    "c chat (first one starts a pass) · C re-ask · "
+                    "o open in writer · "
                     "r reload · q quit", timeout=10)
 
     # ── writing ─────────────────────────────────────────────────────────────
