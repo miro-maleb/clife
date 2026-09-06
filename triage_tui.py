@@ -26,7 +26,8 @@ rule, two places: the guard is the floor, this is the affordance.
 WHAT IT DELIBERATELY CANNOT DO
 ------------------------------
 Route and promote. Those file a note somewhere specific, and belong to
-`cl inbox` and the writer's <leader>sp.
+`cl inbox` and the writer's <leader>sp. `c` hands off to the Hermes pane next
+door for the notes that need a conversation rather than a keystroke.
 
 `d` (trash) IS here, having been argued out of the first cut on the grounds
 that a surface which can destroy things is one you use carefully and therefore
@@ -144,6 +145,8 @@ class TriageApp(App):
         Binding("t", "todo", "Mark todo", show=False),
         Binding("d", "trash", "Trash", show=False),
         Binding("u", "undo", "Undo last", show=False),
+        Binding("c", "chat", "Jump to chat", show=False),
+        Binding("C", "kickoff", "Ask Hermes to work the queue", show=False),
         Binding("o", "open", "Open in writer", show=False),
         Binding("r", "reload", "Reload", show=False),
         Binding("q", "quit", "Quit", show=False),
@@ -227,7 +230,7 @@ class TriageApp(App):
         self.query_one("#status", Static).update(Text.assemble(
             ("TRIAGE  ", f"bold {ACCENT}"),
             (f"{n} tags", DIM),
-            ("  i tag · a accept · d trash · u undo · o open · ? keys", FAINT)))
+            ("  i tag · a accept · d trash · u undo · c/C chat · ?", FAINT)))
 
     def _paint_detail(self) -> None:
         row = self._current()
@@ -389,6 +392,65 @@ class TriageApp(App):
         self.notify(msg, severity="information" if res.get("ok") else "error")
         await self.reload()
 
+    # Short on purpose: the `triage` skill in the chat pane carries the whole
+    # procedure (which commands, reuse before coining, when to ask instead of
+    # tag). Restating it here would be a second copy to drift — this only has
+    # to say GO.
+    KICKOFF = ("Work the triage queue: read `cl triage --json`, then fill slots "
+               "with `cl triage suggest`. Reuse tags from `cl stream tags` "
+               "before coining new ones. Leave a --note instead of guessing.")
+
+    def _send_to_chat(self, text: str = "") -> bool:
+        """Focus the Hermes pane, optionally typing a line into it first."""
+        if not os.environ.get("TMUX"):
+            self.notify("only inside the Bridge deck — this talks to the pane "
+                        "beside it", severity="warning")
+            return False
+        try:
+            if text:
+                # -l is literal: the text carries backticks and colons, and
+                # without it tmux would read parts of the line as key names.
+                subprocess.run(["tmux", "send-keys", "-t", "{top-right}",
+                                "-l", text], capture_output=True,
+                               timeout=5, check=True)
+                subprocess.run(["tmux", "send-keys", "-t", "{top-right}",
+                                "Enter"], capture_output=True,
+                               timeout=5, check=True)
+            subprocess.run(["tmux", "select-pane", "-t", "{top-right}"],
+                           capture_output=True, timeout=5, check=True)
+            return True
+        except Exception as exc:                   # noqa: BLE001
+            self.notify(f"no pane to talk to: {exc}", severity="warning")
+            return False
+
+    def action_kickoff(self) -> None:
+        """`C` — ask the pane next door to start filling slots.
+
+        The skill teaches Hermes HOW to work this queue; nothing was telling it
+        WHEN, so every pass began by retyping the same request. This types it,
+        through the same box a human would, and moves you over to watch — a
+        model working unwatched on sixty of his notes is not what this is for.
+
+        Come back with M-h and press `r` to pull the slots in.
+        """
+        if self._send_to_chat(self.KICKOFF):
+            self.notify("asked Hermes to work the queue — M-h back, r to reload")
+
+    def action_chat(self) -> None:
+        """`c` — hand the keyboard to the Hermes pane beside this one.
+
+        The note you cannot tag is the one worth talking about, and reaching
+        for M-l meant leaving the app's keymap to use the deck's. This is the
+        deck's own `select-pane -t {top-right}`, called rather than
+        reimplemented, so `c` and M-l land in exactly the same place.
+
+        No -L bridge: inside a pane tmux reads $TMUX and finds its own server,
+        which also means this does the right thing if the deck is ever moved
+        to another socket. Outside tmux there is no pane to jump to, and
+        saying so beats a silent no-op.
+        """
+        self._send_to_chat()
+
     async def action_open(self) -> None:
         row = self._current()
         if not row:
@@ -404,8 +466,9 @@ class TriageApp(App):
 
     def action_help(self) -> None:
         self.notify("j/k move · i tag · a accept suggestion · t todo · "
-                    "d trash (recoverable) · u undo · o open in writer · "
-                    "r reload · q quit", timeout=9)
+                    "d trash (recoverable) · u undo · c chat pane · "
+                    "C ask Hermes to fill the slots · o open in writer · "
+                    "r reload · q quit", timeout=10)
 
     # ── writing ─────────────────────────────────────────────────────────────
     async def on_input_submitted(self, event: Input.Submitted) -> None:
