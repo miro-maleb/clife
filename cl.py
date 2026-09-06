@@ -4,7 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 TERMUX = "com.termux" in os.environ.get("PREFIX", "")
-TUI_COMMANDS = {"inbox", "notes", "projects", "capture", "review"}
+TUI_COMMANDS = {"inbox", "notes", "projects", "capture", "review", "triage"}
 
 COMMANDS = {
     "init":        "onboard",
