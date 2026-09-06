@@ -172,7 +172,12 @@ _cl() {
       triage)
         if (( CURRENT == 3 )); then
           _values "triage subcommand" \
-            "suggest[fill one note's slot]" "clear[empty a slot]"
+            "suggest[fill one note's slot]" "clear[empty a slot]" \
+            "trash[move a note to .trash — recoverable]" \
+            "restore[put a trashed note back]"
+        elif [[ "$words[3]" == (trash|restore) ]]; then
+          (( CURRENT == 4 )) && _cl_stream_slugs \
+            || _values "options" "--list[what is recoverable]" "--json[machine output]"
         elif [[ "$words[3]" == suggest ]]; then
           if (( CURRENT == 4 )); then
             _cl_stream_slugs

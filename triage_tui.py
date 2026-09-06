@@ -25,10 +25,18 @@ rule, two places: the guard is the floor, this is the affordance.
 
 WHAT IT DELIBERATELY CANNOT DO
 ------------------------------
-Route, promote, or delete. Those move or consume the file and belong to
-`cl inbox` and the writer's <leader>sp. This tags, dates, and opens — the three
-verbs that leave the note where it is. A triage surface that could also destroy
-things is one you use more carefully and therefore less.
+Route and promote. Those file a note somewhere specific, and belong to
+`cl inbox` and the writer's <leader>sp.
+
+`d` (trash) IS here, having been argued out of the first cut on the grounds
+that a surface which can destroy things is one you use carefully and therefore
+less. That was wrong in the face of the actual backlog: most of a real queue is
+test captures and specs whose work is done, notes with no answer to "what is
+this about" because they are not about anything. Tag-only, they can only be
+cleared by coining a junk tag — which poisons the vocabulary with precisely the
+near-duplicates the guard exists to prevent. So the queue gets a verb meaning
+"this was never a note", and it is recoverable three ways: the undo stack here,
+`cl triage restore`, and the kb's git history behind both.
 """
 
 from __future__ import annotations
@@ -121,6 +129,7 @@ class TriageApp(App):
         Binding("i", "focus_tags", "Tag", show=False),
         Binding("a", "accept", "Accept suggestion", show=False),
         Binding("t", "todo", "Mark todo", show=False),
+        Binding("d", "trash", "Trash", show=False),
         Binding("u", "undo", "Undo last", show=False),
         Binding("o", "open", "Open in writer", show=False),
         Binding("r", "reload", "Reload", show=False),
@@ -132,7 +141,10 @@ class TriageApp(App):
         super().__init__()
         self.rows: list[dict] = []
         self.vocab: dict = {}
-        self._undo: tuple[str, list] | None = None
+        # A stack, not one slot. A purge pass is dozens of `d` in a row, and
+        # single-level undo means "three back" is unreachable exactly when it
+        # is most likely to be needed.
+        self._undo: list[tuple] = []
 
     # ── layout ──────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -197,7 +209,7 @@ class TriageApp(App):
         self.query_one("#status", Static).update(Text.assemble(
             ("TRIAGE  ", f"bold {ACCENT}"),
             (f"{n} tags", DIM),
-            ("  i tag · a accept · t todo · u undo · o open · ? keys", FAINT)))
+            ("  i tag · a accept · d trash · u undo · o open · ? keys", FAINT)))
 
     def _paint_detail(self) -> None:
         row = self._current()
@@ -319,19 +331,43 @@ class TriageApp(App):
         if row:
             self._write(row, "--todo")
 
+    def action_trash(self) -> None:
+        """`d` — this was never a note. No confirmation prompt: it goes to
+        ~/kb/.trash, `u` puts it straight back, and a yes/no on each of sixty
+        would make the pass slower than not doing it."""
+        row = self._current()
+        if not row:
+            return
+        res = _run("triage", "trash", row["slug"])
+        if not res.get("ok"):
+            self.notify(f"trash failed: {res.get('error')}", severity="error")
+            return
+        self._undo.append(("trash", res["trashed"], row["slug"]))
+        self.notify(f"trashed {row['slug']}  ·  u to undo")
+        self._advance()
+
     def action_undo(self) -> None:
-        """Untag what the last apply added. The guard refuses near-duplicates,
-        but it cannot know a correctly-spelled tag was the wrong idea — so the
-        surface that applies tags has to be the one that takes them back."""
+        """Take back the last write, whatever it was.
+
+        The guard refuses near-duplicates but cannot know a correctly-spelled
+        tag was the wrong idea, and nothing can know a trashed note was wanted
+        — so the surface that makes those changes has to be the one that
+        reverses them."""
         if not self._undo:
             self.notify("nothing to undo", severity="warning")
             return
-        slug, tags = self._undo
-        self._undo = None
-        res = _run("stream", "set", slug, "--untag", ",".join(tags))
-        self.notify(f"untagged {' '.join(tags)}" if res.get("ok")
-                    else f"undo failed: {res.get('error')}",
-                    severity="information" if res.get("ok") else "error")
+        kind, *rest = self._undo.pop()
+        if kind == "trash":
+            name, slug = rest
+            res = _run("triage", "restore", name)
+            msg = f"restored {slug}" if res.get("ok") else \
+                  f"restore failed: {res.get('error')}"
+        else:
+            slug, tags = rest
+            res = _run("stream", "set", slug, "--untag", ",".join(tags))
+            msg = f"untagged {' '.join(tags)}" if res.get("ok") else \
+                  f"undo failed: {res.get('error')}"
+        self.notify(msg, severity="information" if res.get("ok") else "error")
         self.reload()
 
     def action_open(self) -> None:
@@ -349,7 +385,8 @@ class TriageApp(App):
 
     def action_help(self) -> None:
         self.notify("j/k move · i tag · a accept suggestion · t todo · "
-                    "u undo · o open in writer · r reload · q quit", timeout=8)
+                    "d trash (recoverable) · u undo · o open in writer · "
+                    "r reload · q quit", timeout=9)
 
     # ── writing ─────────────────────────────────────────────────────────────
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -371,16 +408,19 @@ class TriageApp(App):
         # Everything in this queue is untagged by definition, so whatever the
         # writer reports as the note's tags is exactly what this apply added —
         # which is what undo has to take back off again.
-        self._undo = (row["slug"],
-                      (res.get("applied") or {}).get("tags") or tags)
+        self._undo.append(("tag", row["slug"],
+                           (res.get("applied") or {}).get("tags") or tags))
         # The note has left the queue: it is tagged, which is the whole
         # definition of placed. Clearing its slot keeps the sidecar from
         # accumulating suggestions for notes nobody will see again.
         triage.clear(row["slug"])
-        # Back to the list, on the row that slid up into this one's place.
-        # Triage is tag-next-tag-next, and leaving focus in the box after a
-        # successful apply meant `u`, `j` and `a` all typed themselves into it
-        # instead of moving on.
+        self._advance()
+
+    def _advance(self) -> None:
+        """The note just left the queue; land on whatever slid up into its
+        place, focus on the list. Triage is decide-next-decide-next, and
+        leaving focus in the tag box meant `u`, `d` and `j` all typed
+        themselves into it instead of moving on."""
         i = self.query_one("#queue", ListView).index or 0
         self.reload()
         view = self.query_one("#queue", ListView)

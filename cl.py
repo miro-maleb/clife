@@ -68,6 +68,8 @@ HELP = """
                               already in use; --new overrides, --untag removes
   cl triage                   the unplaced queue, one suggestion slot per note
   cl triage suggest SLUG --tags a,b [--note "..."] [--flag dup|junk|ask]
+  cl triage trash SLUG        move a note to ~/kb/.trash (recoverable)
+  cl triage restore [NAME]    put a trashed note back; no NAME lists them
   cl stream render            write the read-only agenda artifact to outbox/reports
   cl stream ... --json        every view emits JSON (nvim / Surface / Hermes)
   cl tags                     index inline #tags across daily notes + block counts

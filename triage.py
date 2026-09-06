@@ -8,6 +8,8 @@ The scaffolding half of tags-as-routing. This owns the QUEUE and the SLOTS;
   cl triage suggest SLUG --tags a,b [--note "..."] [--flag dup]
                                   fill one slot
   cl triage clear SLUG | --all    empty a slot (or all of them)
+  cl triage trash SLUG            move a note to ~/kb/.trash (recoverable)
+  cl triage restore NAME          put a trashed note back where it came from
 
 WHY A SLOT AND NOT A CONVERSATION
 ---------------------------------
@@ -30,6 +32,28 @@ maybe-placed), and the inbox view is exactly the query "is tags empty". One
 speculative write and a note silently leaves the queue it is still waiting in.
 So slots live in ~/kb/_state/, which is where clife's other machine state
 already lives, and the notes stay clean.
+
+WHY THERE IS A DELETE HERE AT ALL
+---------------------------------
+Tagging alone cannot empty this queue, and pretending otherwise was a design
+mistake. A large part of any real backlog is test captures, throwaways and
+specs whose work is long since done — notes with no answer to "what is this
+about" because they are not about anything. Forcing those out through the tag
+box means coining a junk tag to clear them, which poisons the vocabulary with
+exactly the near-duplicates the guard exists to prevent. So the queue needs a
+verb that means "this was never a note".
+
+It is `trash`, not `delete`: `inbox._trash_file` moves the file to ~/kb/.trash/
+and hands back where it went, so this is reversible three ways over — the undo
+stack in the TUI, `cl triage restore`, and the kb's own git history behind both.
+That is what buys the absence of a confirmation prompt. A purge pass is dozens
+of keystrokes and a yes/no on each one would make it slower than doing nothing,
+which is how a backlog stays a backlog.
+
+Restore needs to know where the note CAME from, and a trashed file cannot say —
+the stream is sharded by month, and a slug like `test-capture` carries no date
+to shard on. So trash records the origin relpath in the same sidecar the slots
+live in.
 
 THE GUARD RUNS AT SUGGEST TIME, NOT APPLY TIME
 ----------------------------------------------
@@ -62,6 +86,16 @@ FLAGS = ("dup", "junk", "ask", "done")
 
 # ── the slot file ──────────────────────────────────────────────────────────
 
+def load_state() -> dict:
+    """The whole sidecar. Never raises — a corrupt or missing file degrades to
+    an empty queue-state, never to a broken queue."""
+    try:
+        data = json.loads(SLOTS.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def load_slots() -> dict:
     """Never raises. A corrupt or missing slot file must degrade to "no
     suggestions", never to a broken queue — the queue is the part that has to
@@ -74,11 +108,17 @@ def load_slots() -> dict:
     return slots if isinstance(slots, dict) else {}
 
 
-def save_slots(slots: dict) -> None:
+def load_trashed() -> dict:
+    t = load_state().get("trashed")
+    return t if isinstance(t, dict) else {}
+
+
+def save_slots(slots: dict, trashed: dict | None = None) -> None:
     STATE.mkdir(parents=True, exist_ok=True)
     payload = {"version": VERSION,
                "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
-               "notes": slots}
+               "notes": slots,
+               "trashed": load_trashed() if trashed is None else trashed}
     tmp = SLOTS.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n")
     tmp.replace(SLOTS)                      # atomic: a half-written slot file
@@ -168,6 +208,54 @@ def suggest(slug, tags=(), note="", flag="", by="hermes", allow_new=False):
             "flag": flag, "vocabulary_notes": notes}
 
 
+def trash(slug):
+    """Move one note out of the stream, remembering where it was.
+
+    Deliberately not `cl inbox --route <f> delete`: that path is the routing
+    command this whole design is replacing, and it resolves notes by basename
+    rather than by the slug everything else here speaks. Same `_trash_file`
+    underneath, so there is still one implementation of "move it to .trash"."""
+    try:
+        it = stream.find(slug)
+    except SystemExit as e:
+        return {"ok": False, "error": str(e)}
+    import inbox                             # cheap (~50ms) and only on demand
+    src = Path(it["path"])
+    if not src.is_file():
+        return {"ok": False, "error": f"gone: {it['relpath']}"}
+    dest = inbox._trash_file(src)
+    tr = load_trashed()
+    tr[dest.name] = {"from": it["relpath"], "slug": it["slug"],
+                     "at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    slots = load_slots()
+    slots.pop(it["slug"], None)              # its slot goes with it
+    save_slots(slots, tr)
+    return {"ok": True, "slug": it["slug"], "trashed": dest.name,
+            "from": it["relpath"]}
+
+
+def restore(name):
+    """Put a trashed note back at the path it was taken from."""
+    tr = load_trashed()
+    rec = tr.get(name)
+    if rec is None:
+        return {"ok": False, "error": f"nothing trashed under '{name}'",
+                "known": sorted(tr)[:10]}
+    src = KB / ".trash" / name
+    if not src.is_file():
+        tr.pop(name, None)
+        save_slots(load_slots(), tr)
+        return {"ok": False, "error": f"no longer in .trash: {name}"}
+    dest = KB / rec["from"]
+    if dest.exists():
+        return {"ok": False, "error": f"already back: {rec['from']}"}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dest)
+    tr.pop(name, None)
+    save_slots(load_slots(), tr)
+    return {"ok": True, "slug": rec.get("slug", ""), "restored": rec["from"]}
+
+
 def clear(slug=None, all_=False):
     slots = load_slots()
     if all_:
@@ -207,6 +295,15 @@ def main(argv=None):
     k.add_argument("--all", action="store_true")
     k.add_argument("--json", action="store_true")
 
+    d = sub.add_parser("trash", help="move a note to ~/kb/.trash (recoverable)")
+    d.add_argument("slug")
+    d.add_argument("--json", action="store_true")
+
+    rs = sub.add_parser("restore", help="put a trashed note back")
+    rs.add_argument("name", nargs="?", help="the filename in .trash")
+    rs.add_argument("--list", action="store_true", help="what is recoverable")
+    rs.add_argument("--json", action="store_true")
+
     args = ap.parse_args(argv)
     as_json = getattr(args, "json", False)
 
@@ -226,6 +323,35 @@ def main(argv=None):
                 print(f"    '{b['input']}' looks like: {', '.join(b['candidates'])}")
             if res.get("hint"):
                 print(f"  {res['hint']}")
+        raise SystemExit(0 if res.get("ok") else 2)
+
+    if args.cmd == "trash":
+        res = trash(args.slug)
+        if as_json:
+            print(json.dumps(res, indent=2 if sys.stdout.isatty() else None))
+        elif res.get("ok"):
+            print(f"  trashed {res['slug']} → .trash/{res['trashed']}")
+            print(f"  back:   cl triage restore {res['trashed']}")
+        else:
+            print(f"  {res['error']}")
+        raise SystemExit(0 if res.get("ok") else 2)
+
+    if args.cmd == "restore":
+        tr = load_trashed()
+        if args.list or not args.name:
+            if as_json:
+                print(json.dumps(tr, indent=2 if sys.stdout.isatty() else None))
+            elif not tr:
+                print("  nothing trashed from the queue")
+            else:
+                for n, rec in sorted(tr.items(), key=lambda kv: kv[1].get("at", "")):
+                    print(f"  {rec.get('at', ''):16}  {rec.get('slug') or n}")
+                    print(f"                    cl triage restore {n}")
+            raise SystemExit(0)
+        res = restore(args.name)
+        print(json.dumps(res) if as_json else
+              (f"  restored → {res['restored']}" if res.get("ok")
+               else f"  {res['error']}"))
         raise SystemExit(0 if res.get("ok") else 2)
 
     if args.cmd == "clear":
