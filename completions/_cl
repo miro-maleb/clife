@@ -18,6 +18,26 @@ _cl_projects() {
   _describe "projects" projs
 }
 
+_cl_stream_tags() {
+  # The tag vocabulary already in use. Offering it at the prompt is the human
+  # half of the same rule the writer enforces: reuse an existing tag rather
+  # than coin a near-duplicate. ~50ms, local, no network.
+  local -a tg
+  tg=(${(f)"$(cl stream tags --json 2>/dev/null | python3 -c 'import json,sys
+try: print("\n".join(t["tag"] for t in json.load(sys.stdin)["tags"]))
+except Exception: pass')"})
+  _describe "tags" tg
+}
+
+_cl_stream_slugs() {
+  local -a sl
+  local d
+  for d in $HOME/kb/writing/_stream/*/*/*.md(N); do
+    sl+=("${${d##*/}%.md}")
+  done
+  _describe "stream notes" sl
+}
+
 _cl_blocks() {
   local -a bl
   local d
@@ -70,6 +90,8 @@ _cl() {
     "projects:project review"
     "notes:notes browser"
     "tags:index inline #tags across daily notes"
+    "stream:views over the capture stream — agenda / inbox / tag / tags / set"
+    "triage:the unplaced queue, one suggestion slot per note"
     "review:full review pipeline"
     "chat:flesh out a project with local qwen (.t toggles think)"
     "tree:bird's-eye view of areas/projects"
@@ -115,6 +137,58 @@ _cl() {
           "--journal[capture to journal]" \
           "-j[capture to journal]"
         ;;
+      stream)
+        if (( CURRENT == 3 )); then
+          _values "stream subcommand" \
+            "agenda[todo items by intent date]" \
+            "inbox[untagged notes — nobody has decided yet]" \
+            "tag[every note carrying a tag]" \
+            "tags[the tag vocabulary in use]" \
+            "ls[filter the whole stream]" \
+            "set[edit one note's status / when / tags]" \
+            "render[write the agenda artifact to outbox/]"
+        else
+          case "$words[3]" in
+            set)
+              if (( CURRENT == 4 )); then
+                _cl_stream_slugs
+              else
+                _values "set options" \
+                  "--todo[status: todo]" "--done[status: done]" \
+                  "--archive[status: archived]" \
+                  "--when[intent date: today|fri|+3d|none]:when:" \
+                  "--tag[tags to ADD (guarded)]:tags:_cl_stream_tags" \
+                  "--untag[tags to REMOVE]:tags:_cl_stream_tags" \
+                  "--new[allow a flagged near-duplicate]" \
+                  "--json[machine output]"
+              fi
+              ;;
+            tag) (( CURRENT == 4 )) && _cl_stream_tags || _values "opts" "--json[machine output]" ;;
+            *) _values "options" "--json[machine output]" ;;
+          esac
+        fi
+        ;;
+
+      triage)
+        if (( CURRENT == 3 )); then
+          _values "triage subcommand" \
+            "suggest[fill one note's slot]" "clear[empty a slot]"
+        elif [[ "$words[3]" == suggest ]]; then
+          if (( CURRENT == 4 )); then
+            _cl_stream_slugs
+          else
+            _values "suggest options" \
+              "--tags[proposed tags (guarded)]:tags:_cl_stream_tags" \
+              "--note[a question or comment]:text:" \
+              "--flag[dup|junk|ask|done]:flag:(dup junk ask done)" \
+              "--new[allow a flagged near-duplicate]" \
+              "--json[machine output]"
+          fi
+        else
+          _values "options" "--all[every slot]" "--json[machine output]"
+        fi
+        ;;
+
       inbox)
         _values "options" "--tui[use TUI]"
         ;;

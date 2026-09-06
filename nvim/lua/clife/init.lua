@@ -14,9 +14,12 @@ local M = {}
 
 local KB = vim.fn.expand("~/kb")
 local PROJECTS = KB .. "/projects"
-local INBOX = KB .. "/inbox"
 local TEMPLATES = KB .. "/templates"
 local CL = vim.fn.expand("~/clife/cl")
+-- THE capture door. Not a path: `kb-inbox` owns where a capture lands, writes
+-- the frontmatter, and is the one thing every door is supposed to call.
+local KB_INBOX = vim.fn.exepath("kb-inbox")
+if KB_INBOX == "" then KB_INBOX = vim.fn.expand("~/.local/bin/kb-inbox") end
 
 local default_keymaps = {
   capture           = "<leader>cc",
@@ -58,15 +61,25 @@ local function current_project_dir()
   return find_project_dir(vim.api.nvim_buf_get_name(0))
 end
 
-local function timestamp()
-  return os.date("%Y-%m-%d-%H%M%S")
-end
-
+-- Shells out to kb-inbox and returns the path it printed, or nil.
+--
+-- This used to compose the path itself: `mkdir -p ~/kb/inbox` then
+-- <stamp>.md into it. That folder was retired 2026-09-03 and does not exist,
+-- so the next capture through <leader>cc would have RECREATED it and dropped
+-- the note somewhere no reader looks — the sixth component to desync on that
+-- path, and the exact failure kb-inbox's header describes. It also wrote no
+-- frontmatter at all, so the note had no `created:` for anything to sort on.
+--
+-- `-s nvim` records provenance WITHOUT placing the note: it writes `source:`
+-- and leaves `tags:` empty, so the capture stays in the inbox view where a
+-- capture belongs.
 local function write_inbox(text)
-  vim.fn.mkdir(INBOX, "p")
-  local path = INBOX .. "/" .. timestamp() .. ".md"
-  vim.fn.writefile(vim.split(text, "\n", { plain = true }), path)
-  return path
+  local out = vim.fn.system({ KB_INBOX, "-s", "nvim" }, text)
+  if vim.v.shell_error ~= 0 then
+    notify("capture FAILED: " .. vim.trim(out), vim.log.levels.ERROR)
+    return nil
+  end
+  return vim.trim(out)
 end
 
 local function get_visual_selection()
@@ -106,7 +119,7 @@ function M.capture()
   vim.ui.input({ prompt = "capture: " }, function(input)
     if not input or input == "" then return end
     local path = write_inbox(input)
-    notify("→ " .. vim.fn.fnamemodify(path, ":t"))
+    if path then notify("→ " .. vim.fn.fnamemodify(path, ":t")) end
   end)
 end
 
@@ -124,7 +137,7 @@ function M.capture_selection()
   local line = vim.fn.line(".")
   local body = string.format("[from %s:%d]\n\n%s", rel, line, sel)
   local path = write_inbox(body)
-  notify("→ " .. vim.fn.fnamemodify(path, ":t"))
+  if path then notify("→ " .. vim.fn.fnamemodify(path, ":t")) end
 end
 
 -- ------------------------------------------------------------------
@@ -202,6 +215,7 @@ end
 -- ------------------------------------------------------------------
 
 function M.inbox()    term_run(CL .. " inbox")    end
+function M.triage()   term_run(CL .. " triage")   end
 function M.review()   term_run(CL .. " review")   end
 function M.week()     term_run(CL .. " week")     end
 function M.view()     term_run(CL .. " view")     end
@@ -452,9 +466,19 @@ end
 -- Quick file openers
 -- ------------------------------------------------------------------
 
+-- `new-daily-note` owns where the daily note lives and what header it gets,
+-- the same way kb-inbox owns a capture. This composed KB/journal/<date>.md,
+-- a directory that does not exist and never gets read — so <leader>cj opened
+-- an empty buffer in a phantom folder, and saving it would have created one.
+-- Today's note is a stream note tagged `journal`, and that tag is what keeps
+-- it out of the triage queue every morning.
 function M.journal()
-  local path = KB .. "/journal/" .. os.date("%Y-%m-%d") .. ".md"
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  local out = vim.fn.system({ vim.fn.exepath("new-daily-note") })
+  if vim.v.shell_error ~= 0 then
+    notify("daily note FAILED: " .. vim.trim(out), vim.log.levels.ERROR)
+    return
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(vim.trim(out)))
 end
 
 -- ------------------------------------------------------------------
@@ -468,6 +492,7 @@ local subcommands = {
   ["new-project"]   = M.new_project,
   ["new-sub-project"] = M.new_sub_project,
   inbox             = M.inbox,
+  triage            = M.triage,
   projects          = M.projects,
   notes             = M.notes,
   week              = M.week,

@@ -28,6 +28,9 @@ Commands:
 | `cl lint` | check kb frontmatter against the canonical schema (`--fix` for mechanical repairs) |
 | `cl notes` | notes browser |
 | `cl tags` | index inline `#tags` across daily notes; `cl tags TAG` shows every block carrying it |
+| `cl stream` | views over the capture stream — `agenda`, `inbox`, `tag`, `ls`, `set`. A view is a query, never a file |
+| `cl stream tags` | the tag vocabulary already in use, most-used first — the list `--tag` is guarded against |
+| `cl triage` | the unplaced queue, one suggestion slot per note; `cl triage suggest` fills a slot |
 | `cl new-project` | scaffold a new project |
 | `cl show` | overview for an area / project / sub-project |
 | `cl dashboard` | persistent dashboard TUI |

@@ -2,7 +2,7 @@
 
 You're working in `~/clife/` — the code for the CLIfe CLI tool.
 
-**Companion design docs live in the kb at `~/kb/projects/infrastructure/clife/`.** Each sub-project has its own folder (`01-foundation/sub-project.md`, etc.) with goal, status, tasks, open questions. Those docs are the source of truth for what's shipped vs pending. Code lives here; the *plan* lives in kb.
+**Companion design docs live in the kb at `~/kb/projects/infrastructure/clife/`.** That folder is now FLAT — `project.md`, `system-improvements.md`, `activity-log.md` (deprecated 2026-06-23; day logs live in `~/kb/log/`). The numbered sub-project folders described below were flattened in the 2026 cleanups and no longer exist; don't go looking for `04-inbox-triage/sub-project.md`. Code lives here; the *plan* lives in `project.md`.
 
 ## Things that drift if you don't watch them
 
@@ -11,14 +11,21 @@ When you change behavior of a `cl` subcommand, **four places** likely need to st
 1. The Python module (e.g. `inbox.py`)
 2. `cl.py` — `COMMANDS` dict and `HELP` text
 3. `completions/_cl` — zsh tab-completion
-4. The relevant sub-project doc in kb (`~/kb/projects/infrastructure/clife/<NN>-<name>/sub-project.md`) — update Tasks list, mark items complete
+4. `~/kb/projects/infrastructure/clife/project.md` — if the change alters what the system IS, not just how a flag behaves
 
 When you add a *new* subcommand, also touch:
 
 5. `README.md` — the command table
 6. `nvim/lua/clife/init.lua` — if it should have an `:Cl <name>` ex-command
 
-When a sub-project finishes a task, mark it complete in its own doc AND check whether the parent `project.md` table needs a status bump.
+Paths are the thing that actually drifts here, not docs. The inbox is a VIEW
+(notes with empty `tags:`), not a folder, and daily notes live in the stream —
+so any code that composes `~/kb/inbox/...`, `~/kb/daily/...` or
+`~/kb/journal/...` is broken by construction. Call the doors instead:
+`kb-inbox` to drop a capture, `new-daily-note` for today's note, `cl stream
+set` to change a note's tags/status/when. Three components in this repo were
+found composing retired paths on 2026-09-06 (`clife.nvim` capture and journal
+openers, and `cl tags`' default scan root).
 
 ## What lives elsewhere
 
@@ -54,7 +61,7 @@ Reload patterns:
 
 Failure mode to watch: if a peer's file has diverged locally, a blind patch can clobber. Always grep first to confirm anchor lines exist and the change isn't already applied.
 
-## Sub-project map
+## Sub-project map (HISTORICAL — these folders are gone; kept as a map of intent)
 
 | # | Folder | What |
 |---|---|---|

@@ -26,6 +26,8 @@ COMMANDS = {
     "notes":       "notes",
     "daily":       "daily",
     "tags":        "tags",
+    "stream":      "stream",
+    "triage":      "triage",
     "review":      "review",
     "chat":        "chat",
     "tree":        "tree",
@@ -55,6 +57,19 @@ HELP = """
   cl notes --tag NAME         filter to one tag
   cl daily [--date D]         the daily writing surface as ordered blocks (--json for machines)
   cl daily --append           append a block (text on stdin) · --set N replaces block N
+  cl stream [agenda]          the agenda view — todo items grouped by intent date
+  cl stream inbox             untagged notes (the inbox view, over whole notes)
+  cl stream tag TAG           every stream note carrying TAG (hierarchical)
+  cl stream ls [--status --tag --stale N]   filter the whole stream
+  cl stream tags              the tag vocabulary in use, most-used first
+  cl stream set SLUG [--todo|--done|--archive] [--when fri|+3d|none]
+                     [--tag a,b] [--untag a] [--new]
+                              --tag is guarded against near-duplicates of tags
+                              already in use; --new overrides, --untag removes
+  cl triage                   the unplaced queue, one suggestion slot per note
+  cl triage suggest SLUG --tags a,b [--note "..."] [--flag dup|junk|ask]
+  cl stream render            write the read-only agenda artifact to outbox/reports
+  cl stream ... --json        every view emits JSON (nvim / Surface / Hermes)
   cl tags                     index inline #tags across daily notes + block counts
   cl tags TAG                 show every daily block carrying TAG (hierarchical: book → book/x)
   cl tags [--all|--path P] [--json]   scan whole kb / a path; JSON for the nvim picker
