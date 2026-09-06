@@ -110,6 +110,12 @@ Screen { background: #000000; }
 #tagbox:focus { border: round #e8a34e; }
 #vocab { height: auto; max-height: 3; color: #8a8580; padding: 0 1; }
 #status { height: 1; background: #141210; color: #8a8580; padding: 0 1; }
+/* The message line. One row at the bottom, right-aligned, dim — and it can
+   never overlap anything, which is the whole complaint about the toasts it
+   replaces: they landed on the tag box and the note you were reading, to
+   report something you had just done on purpose. */
+#msg { height: 1; background: #000000; color: #5f5a54; padding: 0 1;
+       text-align: right; text-wrap: nowrap; text-overflow: ellipsis; }
 """
 
 
@@ -162,6 +168,7 @@ class TriageApp(App):
         # is most likely to be needed.
         self._undo: list[tuple] = []
         self._asked = False
+        self._msg_timer = None
         self._slots_seen = 0.0
 
     # ── layout ──────────────────────────────────────────────────────────────
@@ -180,6 +187,7 @@ class TriageApp(App):
                 yield Input(placeholder="tags…  (Enter applies · Esc back)",
                             id="tagbox")
                 yield Static("", id="vocab")
+        yield Static("", id="msg")
 
     async def on_mount(self) -> None:
         self.register_theme(HEARTH)
@@ -191,6 +199,48 @@ class TriageApp(App):
         # him press `r` to find out — and a suggestion he never sees is the
         # same as one that was never written.
         self.set_interval(2.0, self._poll_slots)
+
+    # ── messages ────────────────────────────────────────────────────────────
+    def notify(self, message, *, title: str = "",                 # type: ignore[override]
+               severity: str = "information", timeout: float | None = None,
+               markup: bool = True, **kw) -> None:
+        """No toasts.
+
+        Textual's notification is a card floating over the layout, and in a
+        71-column pane it lands squarely on the tag box and the note body —
+        covering the thing you are working on in order to announce something
+        you just did deliberately. Nearly everything here is a confirmation of
+        a keystroke, which is the weakest possible claim on the middle of the
+        screen.
+
+        So it goes to one dim right-aligned row at the bottom that cannot
+        overlap anything. Severity picks the colour and nothing else.
+
+        A confirmation clears after 2.5s — long enough to catch out of the
+        corner of an eye, short enough that a fast pass never has the last
+        note's line still sitting there. An error does NOT time out: a refusal
+        is the one message worth still being there when you look up.
+        """
+        # `markup` and **kw keep this a drop-in for App.notify: Textual 8
+        # passes markup=, and an override narrower than the method it replaces
+        # fails at the one call site nobody tested.
+        colour = {"error": RUST, "warning": ACCENT}.get(severity, DIM)
+        try:
+            self.query_one("#msg", Static).update(Text(str(message), style=colour))
+        except Exception:  # noqa: BLE001 — before compose, or after unmount
+            return
+        if self._msg_timer is not None:
+            self._msg_timer.stop()
+            self._msg_timer = None
+        if severity != "error":
+            self._msg_timer = self.set_timer(timeout or 2.5, self._clear_msg)
+
+    def _clear_msg(self) -> None:
+        self._msg_timer = None
+        try:
+            self.query_one("#msg", Static).update("")
+        except Exception:  # noqa: BLE001
+            pass
 
     # ── data ────────────────────────────────────────────────────────────────
     async def reload(self) -> None:
