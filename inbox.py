@@ -721,9 +721,27 @@ def ni_complete(filename):
     return {"ok": True, "msg": "done"}
 
 
+def _resolve_inbox_file(filename):
+    """Find a stream note from whatever the caller has.
+
+    `_item_from` emits a bare BASENAME, but notes have lived in month shards
+    (_stream/YYYY/MM/) since 2026-09-03. Composing inbox_path/basename stopped
+    resolving that day, so every --route call returned "file gone" — silently,
+    because the JSON says ok:false and the callers rendered nothing. Accept a
+    path relative to the stream, an absolute path, or a basename we go find."""
+    p = Path(filename)
+    if p.is_absolute() and p.exists():
+        return p
+    direct = inbox_path / filename
+    if direct.exists():
+        return direct
+    hits = sorted(inbox_path.rglob(p.name))
+    return hits[0] if len(hits) == 1 else None
+
+
 def ni_route(filename, dest, value="", area=""):
-    file = inbox_path / filename
-    if not file.exists():
+    file = _resolve_inbox_file(filename)
+    if file is None:
         return {"ok": False, "msg": "file gone"}
     if dest == "todo":         return ni_todo(file)
     if dest == "note":         return ni_note(file)
