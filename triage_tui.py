@@ -237,16 +237,19 @@ class TagChips(Static):
     editing a SERIALIZATION tolerable; tags are a set, and the punctuation
     between them is not content anyone should have to steer a cursor through.
 
-    So: h/l walk the tags, `d` removes the one under the cursor, `a` opens the
-    vocabulary picker — which is the TAGS column that is already on screen,
+    So: w/b (or h/l) walk the tags, `d` removes the one under the cursor, `a`
+    opens the vocabulary picker — which is the TAGS column that is already on screen,
     already filtered as you type, already showing counts. One widget, two
     jobs, and no second place where a tag can be misspelled into existence.
     """
     can_focus = True
 
     BINDINGS = [
-        Binding("h,left",  "prev",   "Prev tag",   show=False),
-        Binding("l,right", "next",   "Next tag",   show=False),
+        # w/b as well as h/l, and they are not an analogy: a chip IS a word,
+        # so word-motion is the literally correct verb for moving between
+        # them. h/l stay because they match the column movement one pane over.
+        Binding("w,l,right", "next", "Next tag",   show=False),
+        Binding("b,h,left",  "prev", "Prev tag",   show=False),
         Binding("d,x",     "remove", "Remove",     show=False),
         Binding("a,i",     "add",    "Add",        show=False),
         Binding("escape",  "leave",  "Back",       show=False),
@@ -282,7 +285,9 @@ class TagChips(Static):
             t.append(" " + tag + " ",
                      f"black on {ACCENT}" if focused else f"{ACCENT}")
             t.append(" ")
-        t.append("  a add" + ("  ·  d remove" if self.tags else ""), FAINT)
+        hint = "  a add" + ("  ·  d remove  ·  w/b move" if len(self.tags) > 1
+                            else ("  ·  d remove" if self.tags else ""))
+        t.append(hint, FAINT)
         self.update(t)
 
     def on_focus(self) -> None:
@@ -1123,7 +1128,7 @@ class TriageApp(App):
     def action_help(self) -> None:
         self.notify("h/l move between columns · j/k within one · "
                     "/ filter tags · ⏎ descends (tag→notes, note→writer) · "
-                    "g back to unplaced · i tags (h/l move · d remove · a add) · "
+                    "g back to unplaced · i tags (w/b move · d remove · a add) · "
                     "a accept suggestion · t todo · "
                     "d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
