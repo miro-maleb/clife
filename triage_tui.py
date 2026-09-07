@@ -39,14 +39,30 @@ in the writer; this shows the list while you type, filtered to what you have
 typed so far, so the reuse is visible before the refusal has to happen. Same
 rule, two places: the guard is the floor, this is the affordance.
 
-TAGS ARE EDITED AS A SET
-------------------------
-`i` opens the tag box holding the note's CURRENT tags, and Enter applies what
-is in the box as the whole set — what you added is added, what you deleted is
-removed, in one `cl stream set` call carrying both --tag and --untag. It used
-to be add-only, on the assumption that everything in the queue was untagged;
-the navigator broke that assumption, and with no way to remove a tag from
-here, hand-editing frontmatter was genuinely the faster path.
+TAGS ARE OBJECTS, NOT A STRING
+------------------------------
+`i` focuses the CHIPS: h/l walk the note's tags, `d` removes the one under the
+cursor, `a` picks a new one from the vocabulary. There is no text field.
+
+Two earlier versions failed, and both failed the same way. The first was
+add-only, so a tag could never be removed from here at all. The second held a
+comma-separated list you edited as text — better, but his verdict was exact:
+"they're still not necessarily easier than going into the frontmatter because
+I don't have vim commands." That is a correct diagnosis of the wrong layer.
+Motions would have made editing a SERIALIZATION bearable; a tag set has no
+punctuation anyone should have to steer a cursor through.
+
+`a` does not open a second box. It hands the TAGS column its other job — the
+column is already on screen, already filters as you type, already shows how
+many notes carry each tag, which IS the reuse affordance. A word matching
+nothing is still offered, and `cl stream set` gets the last word: it resolves
+`recipes` to the existing `recipe` and refuses a genuine near-duplicate with
+candidates. One vocabulary, one guard, no second place to misspell a tag into
+existence.
+
+This also retired the `#vocab` strip, whose whole job was showing the
+vocabulary while you typed. The column does that better and permanently, and
+the four rows come back to the prose.
 
 WHAT IT DELIBERATELY CANNOT DO
 ------------------------------
@@ -86,6 +102,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
@@ -163,7 +180,7 @@ Screen { background: #000000; }
    accent, which in a 27-column queue is 7% of the width shouting for attention
    it does not deserve — the bar is a position readout, not a control anyone
    here reaches for. One cell, near-invisible until the pointer is on it. */
-#queue, #taglist, #preview, #vocab {
+#queue, #taglist, #preview {
     scrollbar-size-vertical: 1;
     scrollbar-background: #000000;
     scrollbar-color: #3a3833;
@@ -172,9 +189,11 @@ Screen { background: #000000; }
     scrollbar-background-active: #000000;
     scrollbar-color-active: #e8a34e;
 }
-#tagbox { border: round #272320; background: #0a0a0a; color: #d8d4cf; }
-#tagbox:focus { border: round #e8a34e; }
-#vocab { height: auto; max-height: 3; color: #8a8580; padding: 0 1; }
+/* The chips sit directly under the meta line, above the prose — where the
+   note's tags already read as part of its header. One row, no border at rest
+   so it costs nothing on a note you are only reading. */
+#tagchips { height: auto; min-height: 1; padding: 0 0 1 0; }
+#tagchips:focus { background: #141210; }
 #status { height: 1; background: #141210; color: #8a8580; padding: 0 1; }
 /* The message line. One row at the bottom, right-aligned, dim — and it can
    never overlap anything, which is the whole complaint about the toasts it
@@ -203,6 +222,91 @@ def _run(*args) -> dict:
     if isinstance(data, dict) and "ok" not in data:
         data["ok"] = p.returncode == 0
     return data if isinstance(data, dict) else {"ok": True, "rows": data}
+
+
+class TagChips(Static):
+    """The note's tags as OBJECTS you move between, not a string you edit.
+
+    The tag box this replaces was a comma-separated Input, and his verdict on
+    it was exact: "they're still not necessarily easier than going into the
+    frontmatter because I don't have vim commands." That is the right
+    diagnosis of the wrong layer. Adding motions to the box would have made
+    editing a SERIALIZATION tolerable; tags are a set, and the punctuation
+    between them is not content anyone should have to steer a cursor through.
+
+    So: h/l walk the tags, `d` removes the one under the cursor, `a` opens the
+    vocabulary picker — which is the TAGS column that is already on screen,
+    already filtered as you type, already showing counts. One widget, two
+    jobs, and no second place where a tag can be misspelled into existence.
+    """
+    can_focus = True
+
+    BINDINGS = [
+        Binding("h,left",  "prev",   "Prev tag",   show=False),
+        Binding("l,right", "next",   "Next tag",   show=False),
+        Binding("d,x",     "remove", "Remove",     show=False),
+        Binding("a,i",     "add",    "Add",        show=False),
+        Binding("escape",  "leave",  "Back",       show=False),
+    ]
+
+    class Remove(Message):
+        def __init__(self, tag: str) -> None:
+            super().__init__()
+            self.tag = tag
+
+    class Add(Message):
+        pass
+
+    class Leave(Message):
+        pass
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.tags: list = []
+        self.cursor = 0
+
+    def show(self, tags: list) -> None:
+        self.tags = list(tags)
+        self.cursor = min(self.cursor, max(0, len(self.tags) - 1))
+        self.render_chips()
+
+    def render_chips(self) -> None:
+        t = Text()
+        if not self.tags:
+            t.append("(no tags)", DIM)
+        for i, tag in enumerate(self.tags):
+            focused = self.has_focus and i == self.cursor
+            t.append(" " + tag + " ",
+                     f"black on {ACCENT}" if focused else f"{ACCENT}")
+            t.append(" ")
+        t.append("  a add" + ("  ·  d remove" if self.tags else ""), FAINT)
+        self.update(t)
+
+    def on_focus(self) -> None:
+        self.render_chips()
+
+    def on_blur(self) -> None:
+        self.render_chips()
+
+    def action_prev(self) -> None:
+        if self.tags:
+            self.cursor = (self.cursor - 1) % len(self.tags)
+            self.render_chips()
+
+    def action_next(self) -> None:
+        if self.tags:
+            self.cursor = (self.cursor + 1) % len(self.tags)
+            self.render_chips()
+
+    def action_remove(self) -> None:
+        if self.tags:
+            self.post_message(self.Remove(self.tags[self.cursor]))
+
+    def action_add(self) -> None:
+        self.post_message(self.Add())
+
+    def action_leave(self) -> None:
+        self.post_message(self.Leave())
 
 
 class TriageApp(App):
@@ -248,6 +352,10 @@ class TriageApp(App):
         self._preview_timer = None
         self._items: list = []
         self._items_at = 0.0
+        # slug of the note we are picking a tag FOR, or None when the tag
+        # column is being used to navigate. One flag, because the column does
+        # both jobs and must not guess which.
+        self._picking = None
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -284,10 +392,8 @@ class TriageApp(App):
                     yield Static("", id="title")
                     yield Static("", id="meta")
                     yield Static("", id="hermes")
+                    yield TagChips(id="tagchips")
                     yield VerticalScroll(Static("", id="previewtext"), id="preview")
-                    yield Input(placeholder="tags…  (Enter applies · Esc back)",
-                                id="tagbox")
-                    yield Static("", id="vocab")
         yield Static("", id="msg")
 
     async def on_mount(self) -> None:
@@ -511,6 +617,36 @@ class TriageApp(App):
         if self.tag_names:
             lst.index = min(keep or 0, len(self.tag_names) - 1)
 
+    async def _add_picked(self, tag: str, allow_new: bool = False) -> None:
+        """Add one tag to the note we are picking for, then hand focus back to
+        its chips — you are almost always adding two, and returning to the
+        list would make the second one a journey."""
+        slug, self._picking = self._picking, None
+        self.query_one("#tagfilter", Input).value = ""
+        self._tag_filter = ""
+        self._close_tags_if_narrow()
+        row = next((r for r in self.rows if r["slug"] == slug), None) or self._current()
+        if not row:
+            self._paint_status()
+            return
+        tags = list(row.get("tags") or [])
+        if stream.norm_tag(tag) in [stream.norm_tag(t) for t in tags]:
+            self.notify(f"already tagged #{tag}")
+        else:
+            flags = ["--tag", tag] + (["--new"] if allow_new else [])
+            res = self._write(row, *flags)
+            if res.get("ok"):
+                self._undo.append(("retag", row["slug"],
+                                   [stream.norm_tag(t) for t in tags]))
+                if not tags:
+                    triage.clear(row["slug"])
+                self.notify(f"+{tag}")
+        await self.reload()
+        r = self._current()
+        chips = self.query_one("#tagchips", TagChips)
+        chips.show((r or {}).get("tags") or [])
+        self.set_focus(chips)
+
     async def _switch_view(self, tag) -> None:
         self._close_tags_if_narrow()
         self._load_view(tag)
@@ -545,6 +681,16 @@ class TriageApp(App):
             self.query_one("#body").remove_class("tags-open")
 
     def _paint_status(self) -> None:
+        if self._picking:
+            # The tag column means something different right now, and a column
+            # that silently changes verb is how a navigation keystroke becomes
+            # an edit.
+            self.query_one("#status", Static).update(Text.assemble(
+                ("PICK A TAG  ", f"bold {ACCENT}"),
+                (f"for {self._picking}", ACCENT),
+                ("   type to filter · ⏎ adds it · a new word is offered · "
+                 "Esc cancels", FAINT)))
+            return
         where = ("unplaced" if self.view_tag is triage.UNTAGGED
                  else f"#{self.view_tag}")
         mode = getattr(self, "_layout_mode", None)
@@ -571,6 +717,7 @@ class TriageApp(App):
             self.query_one("#meta", Static).update("")
             hermes.update("")
             hermes.display = False
+            self.query_one("#tagchips", TagChips).show([])
             empty = ("nothing unplaced — every note carries tags"
                      if self.view_tag is triage.UNTAGGED
                      else f"nothing tagged #{self.view_tag}")
@@ -589,6 +736,7 @@ class TriageApp(App):
         # #hearth looks like it belongs only to #hearth, and the one thing a
         # navigator has to show is that a note lives in several places at once
         # — that is the whole argument for tags over directories.
+        self.query_one("#tagchips", TagChips).show(row.get("tags") or [])
         others = [t for t in row.get("tags", []) if t != self.view_tag]
         if others:
             meta.append("   ")
@@ -615,84 +763,7 @@ class TriageApp(App):
         self.query_one("#previewtext", Static).update(
             Text(body.strip()[:4000] or "(empty)", no_wrap=False, overflow="fold"))
 
-        box = self.query_one("#tagbox", Input)
-        box.value = ", ".join(row["suggested"])
-        self._paint_vocab(box.value)
 
-    def _paint_vocab(self, typed: str) -> None:
-        """Two jobs on one panel, and they are not the same job.
-
-        The tag you are still TYPING gets the vocabulary filtered to it — the
-        affordance half of the reuse rule, so seeing `groceries·7` while typing
-        `grocer` stops `grocery` being coined at all.
-
-        Every tag you have already FINISHED (anything before the last comma)
-        gets a real verdict from `stream.classify_tag` — the same call
-        `cl stream set` makes. This used to look only at the fragment in
-        progress, so `dharma, hermes` said nothing at all: `hermes` matched the
-        vocabulary, and `dharma` — the one actually being coined — was never
-        examined. A warning that goes quiet as soon as you type a second tag is
-        worse than none, because the silence reads as approval.
-
-        Classifier, not substring matching. The old test was `frag in tag`,
-        which is a different rule from the one that decides the write, and two
-        rules that can disagree about whether a tag is new is exactly the drift
-        this design spends its effort avoiding.
-        """
-        parts = typed.split(",")
-        frag = parts[-1].strip().lstrip("#").lower()
-        done = [x.strip() for x in parts[:-1] if x.strip()]
-
-        t = Text()
-        lines = 0
-
-        verdicts = []
-        for raw in done:
-            c = stream.classify_tag(raw, self.vocab)
-            v = c["verdict"]
-            if v == "variant" and c["tag"] != stream.norm_tag(raw):
-                verdicts.append((f"{c['input']} → {c['tag']}", ACCENT))
-            elif v == "near":
-                verdicts.append(
-                    (f"{c['input']} ≈ {c['candidates'][0]} — will refuse", RUST))
-            elif v == "new":
-                verdicts.append((f"{c['tag']} is NEW", ACCENT))
-            # `exact` says nothing: a tag that is already in use is the normal
-            # case, and narrating it would bury the one line that matters.
-        if verdicts:
-            for n, (txt, colour) in enumerate(verdicts):
-                if n:
-                    t.append("  ", FAINT)
-                t.append(txt, colour)
-            t.append("\n")
-            lines = 1
-
-        items = ([(x, n) for x, n in self.vocab.items() if frag in x] if frag
-                 else list(self.vocab.items()))
-        t.append("vocab  ", FAINT)
-        if frag and not items:
-            t.append(f"'{frag}' would be NEW", ACCENT)
-        # Two guards, because either alone has failed: a width budget (this
-        # panel is ~39 columns in the deck) AND a hard count. `size.width` is 0
-        # at first paint, before layout — trusting it alone printed twenty tags
-        # into a three-line box on the very first frame. The budget halves when
-        # a verdict line is already using one of the three rows.
-        w = self.query_one("#vocab", Static).size.width or 39
-        budget = w * (2 - lines)
-        used, shown = 7, 0
-        for tag, n in items[:10 if frag else 8]:
-            cost = len(tag) + len(str(n)) + 3
-            if used + cost > budget:
-                break
-            t.append(tag, ACCENT if frag else DIM)
-            t.append(f"·{n}  ", FAINT)
-            used += cost
-            shown += 1
-        if shown < len(items):
-            t.append(f"+{len(items) - shown}", FAINT)
-        self.query_one("#vocab", Static).update(t)
-
-    # ── actions ─────────────────────────────────────────────────────────────
     def _focused_list(self) -> ListView:
         """j/k move within whichever column has focus. Hard-wiring them to the
         queue made the tag column navigable only by arrow keys, which in a vim
@@ -786,6 +857,10 @@ class TriageApp(App):
         event.stop()
         if getattr(event.list_view, "id", "") == "taglist":
             i = event.list_view.index
+            if self._picking:
+                if i is not None and 0 < i < len(self.tag_names):
+                    self.run_worker(self._add_picked(self.tag_names[i]))
+                return
             if i is not None and i < len(self.tag_names):
                 # The view is already loaded by the highlight preview; Enter
                 # is the focus change, and only re-queries if you got here
@@ -795,35 +870,45 @@ class TriageApp(App):
         self.run_worker(self.action_open())
 
     def action_focus_tags(self) -> None:
-        """`i` — edit the note's tags, prefilled with the ones it already has.
+        """`i` — edit this note's tags.
 
-        The box used to be add-only, on the assumption that everything in the
-        queue was untagged. The navigator broke that: in a tag view every note
-        already carries tags, and typing into an add-only box silently
-        appended to them. There was no way to REMOVE a tag from here at all,
-        which is why editing frontmatter by hand was the faster path.
-
-        So the box now holds the note's complete tag set and Enter applies it
-        as such — what you added is added, what you deleted is removed. Same
-        mental model as editing the frontmatter line, minus opening the file,
-        and it still goes through `cl stream set` so the vocabulary guard
-        still refuses a near-duplicate.
+        Focus moves to the CHIPS, not to a text field. See TagChips: tags are
+        a set, and editing a comma-separated serialization of one was the
+        thing that kept sending him back to the frontmatter.
         """
         row = self._current()
         if not row:
             return
-        box = self.query_one("#tagbox", Input)
-        current = row.get("tags") or []
-        # A suggestion is only offered when the note has nothing yet — it is a
-        # proposal for an unplaced note, not something to bolt onto a set the
-        # note already has.
-        if not current and row.get("suggested"):
-            current = row["suggested"]
-        box.value = ", ".join(current)
-        box.focus()
-        # Cursor to the end: you are almost always appending, and landing at
-        # column 0 means every edit starts with a jump.
-        box.cursor_position = len(box.value)
+        chips = self.query_one("#tagchips", TagChips)
+        chips.show(row.get("tags") or [])
+        chips.cursor = 0
+        self.set_focus(chips)
+
+    # ── chip verbs ──────────────────────────────────────────────────────────
+    async def on_tag_chips_remove(self, event: TagChips.Remove) -> None:
+        row = self._current()
+        if not row:
+            return
+        await self._apply(row, [t for t in (row.get("tags") or [])
+                                if t != event.tag], stay=True)
+
+    def on_tag_chips_add(self, event: TagChips.Add) -> None:
+        """`a` — pick a tag from the vocabulary that is already on screen.
+
+        The TAGS column is the picker: filtered as you type, showing how many
+        notes each tag already has, which is the whole reuse affordance. A tag
+        you type that matches nothing is still offered — `cl stream set` gets
+        the last word and refuses a near-duplicate with candidates.
+        """
+        row = self._current()
+        if not row:
+            return
+        self._picking = row["slug"]
+        self._paint_status()
+        self.action_focus_filter()
+
+    def on_tag_chips_leave(self, event: TagChips.Leave) -> None:
+        self.set_focus(self.query_one("#queue", ListView))
 
     async def action_accept(self) -> None:
         row = self._current()
@@ -1028,7 +1113,7 @@ class TriageApp(App):
     def action_help(self) -> None:
         self.notify("h/l move between columns · j/k within one · "
                     "/ filter tags · ⏎ descends (tag→notes, note→writer) · "
-                    "g back to unplaced · i edit tags (add AND remove) · "
+                    "g back to unplaced · i tags (h/l move · d remove · a add) · "
                     "a accept suggestion · t todo · "
                     "d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
@@ -1038,8 +1123,31 @@ class TriageApp(App):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         if event.input.id == "tagfilter":
-            # Enter in the filter jumps to the list it just narrowed, rather
-            # than leaving you typing at a result you cannot reach.
+            typed = event.value.strip().lstrip("#")
+            if self._picking and typed and typed not in self.vocab:
+                # A tag the vocabulary has never seen. Offered rather than
+                # refused here — `cl stream set` gets the last word and turns
+                # a near-duplicate back with candidates, which is the one
+                # place that judgement should live.
+                await self._add_picked(typed, allow_new=True)
+                return
+            if self._picking:
+                # Land on the first REAL tag, never on the `unplaced`
+                # pseudo-row that heads the column — it is a view, not a tag,
+                # and Enter on it did nothing at all, which reads as the key
+                # being broken. With exactly one match, skip the list entirely:
+                # you have already said which tag you mean by typing it.
+                real = self.tag_names[1:]
+                if len(real) == 1:
+                    await self._add_picked(real[0])
+                    return
+                lst = self.query_one("#taglist", ListView)
+                if real:
+                    lst.index = 1
+                self.set_focus(lst)
+                return
+            # Otherwise Enter jumps to the list it just narrowed, rather than
+            # leaving you typing at a result you cannot reach.
             self.set_focus(self.query_one("#taglist", ListView))
             return
         row = self._current()
@@ -1052,7 +1160,7 @@ class TriageApp(App):
             return
         await self._apply(row, tags)
 
-    async def _apply(self, row: dict, tags: list) -> None:
+    async def _apply(self, row: dict, tags: list, stay: bool = False) -> None:
         """`tags` is the note's COMPLETE new set, not an addition.
 
         Diffed against what it carries, so one Enter both adds and removes —
@@ -1094,6 +1202,20 @@ class TriageApp(App):
         if rm:
             bits.append("-" + " -".join(rm))
         self.notify(" ".join(bits))
+        if stay:
+            # A chip edit is a correction to the note you are READING, not a
+            # decision that files it — advancing would yank the note out from
+            # under you mid-edit.
+            keep = self.query_one("#queue", ListView).index
+            await self.reload()
+            v = self.query_one("#queue", ListView)
+            if self.rows:
+                v.index = min(keep or 0, len(self.rows) - 1)
+            r = self._current()
+            chips = self.query_one("#tagchips", TagChips)
+            chips.show((r or {}).get("tags") or [])
+            self.set_focus(chips)
+            return
         await self._advance()
 
     async def _advance(self) -> None:
@@ -1133,33 +1255,45 @@ class TriageApp(App):
 
     # ── keys ────────────────────────────────────────────────────────────────
     def on_key(self, event: events.Key) -> None:
-        box = self.query_one("#tagbox", Input)
         filt = self.query_one("#tagfilter", Input)
         if self.focused is filt:
             if event.key == "escape":
-                self.set_focus(self.query_one("#taglist", ListView))
+                if self._picking:
+                    self._picking = None
+                    self._close_tags_if_narrow()
+                    self._paint_status()
+                    # AFTER the refresh, not now: focusing the chips inside
+                    # this handler puts them in focus while the same Escape is
+                    # still being processed, and their own escape binding then
+                    # fires and bounces you out to the queue.
+                    self.call_after_refresh(
+                        self.set_focus, self.query_one("#tagchips", TagChips))
+                else:
+                    self.set_focus(self.query_one("#taglist", ListView))
                 event.stop()
             return
         if self.focused is self.query_one("#taglist", ListView) \
                 and event.key == "escape":
+            if self._picking:
+                self._picking = None
+                self._paint_status()
+                self._close_tags_if_narrow()
+                self.call_after_refresh(
+                    self.set_focus, self.query_one("#tagchips", TagChips))
+                event.stop()
+                return
             self._close_tags_if_narrow()
             self.set_focus(self.query_one("#queue", ListView))
             event.stop()
             return
-        if self.focused is box:
-            if event.key == "escape":
-                self.set_focus(self.query_one("#queue", ListView))
-                event.stop()
-            return
-        # Single-letter bindings must not fire while typing a tag; Input eats
-        # printable keys itself, so only escape needs handling above.
+        # Single-letter bindings must not fire while typing in the filter;
+        # Input eats printable keys itself, so only escape needs handling
+        # above.
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "tagfilter":
             self._tag_filter = event.value
             self._paint_tags()
-            return
-        self._paint_vocab(event.value)
 
 
 def main() -> None:
