@@ -207,6 +207,8 @@ class TriageApp(App):
         self.view_tag = triage.UNTAGGED
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
+        self._n_unplaced = 0
+        self._tag_sig = None
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -300,8 +302,14 @@ class TriageApp(App):
         every keystroke-driven refresh, and paying a subprocess for it would
         make the list lag the write that caused it. Writes still go out through
         `cl` — read cheap, write guarded."""
-        self.rows = triage.queue(tag=self.view_tag)
-        self.vocab = stream.vocabulary(stream.load(include_daily=True))
+        # ONE read of the store per refresh, shared three ways. _paint_tags
+        # used to call triage.queue() again just to count the unplaced, which
+        # re-read all 238 files on every repaint — and this method runs on
+        # every keystroke-driven refresh.
+        items = stream.load(include_daily=True)
+        self.rows = triage.queue(items, tag=self.view_tag)
+        self.vocab = stream.vocabulary(items)
+        self._n_unplaced = sum(1 for i in items if not i["tags"])
         # Stamp the baseline HERE, where the sidecar is actually read. Taking
         # it on the first poll instead made that poll always look like a
         # change, which swallowed the notification for any suggestion that
@@ -383,15 +391,24 @@ class TriageApp(App):
         --prune-noise` feeds on. It should never sort down under `#log` just
         because there are more log notes than unplaced ones.
         """
+        # Signature-diffed, like the rail's inbox rows. The vocabulary is 240
+        # items and rebuilding that ListView cost ~170ms of the ~190ms every
+        # refresh took — on a surface where refresh runs after every keystroke
+        # that writes. The vocabulary changes only when a tag is applied, so
+        # the common repaint is a no-op.
+        sig = (tuple(self.vocab.items()), self._tag_filter, self.view_tag,
+               self._n_unplaced)
+        if sig == getattr(self, "_tag_sig", None):
+            return
+        self._tag_sig = sig
         lst = self.query_one("#taglist", ListView)
         keep = lst.index
         lst.clear()
         self.tag_names = [triage.UNTAGGED]
-        n_unplaced = len(triage.queue()) if self.view_tag is not triage.UNTAGGED \
-            else len(self.rows)
+        here = self.view_tag is triage.UNTAGGED
         t = Text()
-        t.append("unplaced", f"bold {ACCENT}" if self.view_tag is triage.UNTAGGED else ACCENT)
-        t.append(f"  {n_unplaced}".rjust(max(1, 18 - len("unplaced"))), FAINT)
+        t.append("unplaced", f"bold {ACCENT}" if here else ACCENT)
+        t.append(f"  {self._n_unplaced}".rjust(10), FAINT)
         lst.append(ListItem(Static(t)))
         q = self._tag_filter.lower()
         for name, count in self.vocab.items():
@@ -403,8 +420,9 @@ class TriageApp(App):
             row.append(name[:15], style)
             row.append(f"{count}".rjust(max(1, 18 - len(name[:15]))), FAINT)
             lst.append(ListItem(Static(row)))
+        shown = len(self.tag_names) - 1
         self.query_one("#taghdr", Label).update(
-            f"TAGS — {len(self.tag_names) - 1}" + (f" / {len(self.vocab)}" if q else ""))
+            f"TAGS — {shown}" + (f" / {len(self.vocab)}" if q else ""))
         if self.tag_names:
             lst.index = min(keep or 0, len(self.tag_names) - 1)
 
