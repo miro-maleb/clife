@@ -853,35 +853,80 @@ class TriageApp(App):
                "with `cl triage suggest`. Reuse tags from `cl stream tags` "
                "before coining new ones. Leave a --note instead of guessing.")
 
-    def _send_to_chat(self, text: str = "") -> bool:
-        """Focus the Hermes pane, optionally typing a line into it first."""
+    def _hermes_pane(self) -> str:
+        """The Hermes pane's id, resolved by its `@app` option.
+
+        NOT `{top-right}`. The deck's own rule is that panes are found by
+        `@app`, never by position, and this file was the exception — which
+        broke the moment M-4 started opening zoomed: `{top-right}` resolves to
+        the ZOOMED pane, so a kickoff typed itself into the triage app instead
+        of into Hermes. Position is not identity.
+        """
+        try:
+            out = subprocess.run(
+                ["tmux", "list-panes", "-s", "-F", "#{pane_id} #{@app}"],
+                capture_output=True, text=True, timeout=5).stdout
+        except Exception:                              # noqa: BLE001
+            return ""
+        for line in out.splitlines():
+            pid, _, app = line.partition(" ")
+            if app.strip() == "hermes_triage":
+                return pid
+        return ""
+
+    def _send_to_chat(self, text: str = "", reveal: bool = True) -> bool:
+        """Type a line into the Hermes pane; optionally bring it on screen.
+
+        `reveal=False` is the point of M-4 opening zoomed: the request goes
+        out and the navigator keeps the full width. You do not need to watch
+        the conversation, because the suggestions arrive in the queue on their
+        own — `_poll_slots` notices the sidecar change within two seconds.
+        Reading Hermes' reasoning is the only reason to look at the pane, so
+        looking is now a choice rather than a permanent third of the screen.
+        """
         if not os.environ.get("TMUX"):
-            self.notify("only inside the Bridge deck — this talks to the pane "
-                        "beside it", severity="warning")
+            self.notify("only inside the Bridge deck — this talks to the "
+                        "Hermes pane", severity="warning")
+            return False
+        pane = self._hermes_pane()
+        if not pane:
+            self.notify("no hermes_triage pane in this deck",
+                        severity="warning")
             return False
         try:
             if text:
                 # -l is literal: the text carries backticks and colons, and
                 # without it tmux would read parts of the line as key names.
-                subprocess.run(["tmux", "send-keys", "-t", "{top-right}",
-                                "-l", text], capture_output=True,
-                               timeout=5, check=True)
-                subprocess.run(["tmux", "send-keys", "-t", "{top-right}",
-                                "Enter"], capture_output=True,
-                               timeout=5, check=True)
-            subprocess.run(["tmux", "select-pane", "-t", "{top-right}"],
-                           capture_output=True, timeout=5, check=True)
+                subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text],
+                               capture_output=True, timeout=5, check=True)
+                subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"],
+                               capture_output=True, timeout=5, check=True)
+            if reveal:
+                # Unzoom explicitly — select-pane does NOT unzoom on its own,
+                # so without this the pane is focused but still invisible.
+                zoomed = subprocess.run(
+                    ["tmux", "display", "-p", "#{window_zoomed_flag}"],
+                    capture_output=True, text=True, timeout=5).stdout.strip()
+                if zoomed == "1":
+                    subprocess.run(["tmux", "resize-pane", "-Z"],
+                                   capture_output=True, timeout=5)
+                subprocess.run(["tmux", "select-pane", "-t", pane],
+                               capture_output=True, timeout=5, check=True)
             return True
-        except Exception as exc:                   # noqa: BLE001
+        except Exception as exc:                       # noqa: BLE001
             self.notify(f"no pane to talk to: {exc}", severity="warning")
             return False
 
     def action_kickoff(self) -> None:
         """`C` — ask again, whatever the queue looks like. For a second pass
         over notes Hermes left empty the first time."""
-        if self._send_to_chat(self.KICKOFF):
+        # `C` asks WITHOUT revealing the pane: the answer comes back into
+        # this list by itself, so the full width is worth more than watching
+        # it think.
+        if self._send_to_chat(self.KICKOFF, reveal=False):
             self._asked = True
-            self.notify("asked Hermes to work the queue — M-h back, r to reload")
+            self.notify("asked Hermes to work the queue — "
+                        "suggestions land here on their own · c to watch")
 
     def action_chat(self) -> None:
         """`c` — hand the keyboard to the Hermes pane beside this one.
