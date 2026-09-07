@@ -69,6 +69,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -245,6 +246,8 @@ class TriageApp(App):
         self._tag_sig = None
         self._layout_mode = None
         self._preview_timer = None
+        self._items: list = []
+        self._items_at = 0.0
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -335,36 +338,10 @@ class TriageApp(App):
             pass
 
     # ── data ────────────────────────────────────────────────────────────────
-    async def reload(self) -> None:
-        """Read from the modules, not the CLI: this is a read of live files on
-        every keystroke-driven refresh, and paying a subprocess for it would
-        make the list lag the write that caused it. Writes still go out through
-        `cl` — read cheap, write guarded."""
-        # ONE read of the store per refresh, shared three ways. _paint_tags
-        # used to call triage.queue() again just to count the unplaced, which
-        # re-read all 238 files on every repaint — and this method runs on
-        # every keystroke-driven refresh.
-        items = stream.load(include_daily=True)
-        self.rows = triage.queue(items, tag=self.view_tag)
-        self.vocab = stream.vocabulary(items)
-        self._n_unplaced = sum(1 for i in items if not i["tags"])
-        # Stamp the baseline HERE, where the sidecar is actually read. Taking
-        # it on the first poll instead made that poll always look like a
-        # change, which swallowed the notification for any suggestion that
-        # landed in the first two seconds.
-        try:
-            self._slots_seen = triage.SLOTS.stat().st_mtime
-        except OSError:
-            self._slots_seen = 0.0
-        self._paint_tags()
-        view = self.query_one("#queue", ListView)
-        keep = view.index
-        # AWAITED. `clear()` hands back an AwaitRemove and takes the rows out
-        # on a later frame; without the await, the index set at the bottom of
-        # this method was applied first and then wiped to None when the removal
-        # finally landed. On screen that read as the highlight vanishing after
-        # every `d` until an arrow key put it back.
-        await view.clear()
+    def _queue_items(self) -> list:
+        """Build the note rows. Pure — no widget touched, so the list can be
+        assembled before anything on screen is disturbed."""
+        out = []
         for r in self.rows:
             age = f"{r['age_days']}d" if r["age_days"] is not None else "—"
             t = Text()
@@ -374,17 +351,54 @@ class TriageApp(App):
                 t.append(f"  {' '.join(r['suggested'])}", ACCENT)
             elif r["note"]:
                 t.append("  ?", ACCENT)
-            view.append(ListItem(Static(t)))
+            out.append(ListItem(Static(t)))
+        return out
+
+    def _repaint_queue(self, keep=None) -> None:
+        """Swap the note list in ONE frame.
+
+        The old path did `await view.clear()` and then appended row by row,
+        which yields to the compositor with the list empty — on screen that is
+        a black flash through the middle column on every hover. Building the
+        rows first and handing clear/extend to the same frame removes it. The
+        original await was there because an index set before a deferred
+        removal landed got wiped; extend() resolves that without the yield.
+        """
+        view = self.query_one("#queue", ListView)
+        keep = view.index if keep is None else keep
+        items = self._queue_items()
+        view.clear()
+        if items:
+            view.extend(items)
+            view.index = min(keep or 0, len(items) - 1)
         if self.view_tag is triage.UNTAGGED:
             filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
             hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
         else:
             hdr = f"#{self.view_tag} — {len(self.rows)}"
         self.query_one("#queuehdr", Label).update(hdr)
-        if self.rows:
-            view.index = min(keep or 0, len(self.rows) - 1)
         self._paint_status()
         self._paint_detail()
+
+    async def reload(self) -> None:
+        """Read from the modules, not the CLI: this is a read of live files on
+        every keystroke-driven refresh, and paying a subprocess for it would
+        make the list lag the write that caused it. Writes still go out through
+        `cl` — read cheap, write guarded."""
+        # ONE read of the store per refresh, shared four ways: the rows, the
+        # vocabulary, the unplaced count, and the preview, which reuses it
+        # rather than re-reading 238 files to answer a cursor move.
+        self._items = stream.load(include_daily=True)
+        self._items_at = time.monotonic()
+        self.rows = triage.queue(self._items, tag=self.view_tag)
+        self.vocab = stream.vocabulary(self._items)
+        self._n_unplaced = sum(1 for i in self._items if not i["tags"])
+        try:
+            self._slots_seen = triage.SLOTS.stat().st_mtime
+        except OSError:
+            self._slots_seen = 0.0
+        self._paint_tags()
+        self._repaint_queue()
 
     async def _poll_slots(self) -> None:
         """Re-read when the sidecar changes underneath us.
@@ -455,8 +469,12 @@ class TriageApp(App):
         # refresh took — on a surface where refresh runs after every keystroke
         # that writes. The vocabulary changes only when a tag is applied, so
         # the common repaint is a no-op.
-        sig = (tuple(self.vocab.items()), self._tag_filter, self.view_tag,
-               self._n_unplaced)
+        # view_tag is deliberately NOT in this signature. It only decided
+        # which row rendered bold — and the cursor bar already says which tag
+        # you are on, so the bold was redundant with it. Including it meant
+        # every hover rebuilt all 240 rows, which is most of what made the
+        # preview flash.
+        sig = (tuple(self.vocab.items()), self._tag_filter, self._n_unplaced)
         if sig == getattr(self, "_tag_sig", None):
             return
         self._tag_sig = sig
@@ -470,9 +488,8 @@ class TriageApp(App):
         # cursor back where it was.
         lst.clear()
         self.tag_names = [triage.UNTAGGED]
-        here = self.view_tag is triage.UNTAGGED
         t = Text()
-        t.append("unplaced", f"bold {ACCENT}" if here else ACCENT)
+        t.append("unplaced", ACCENT)
         t.append(f"  {self._n_unplaced}".rjust(10), FAINT)
         lst.append(ListItem(Static(t)))
         q = self._tag_filter.lower()
@@ -481,8 +498,7 @@ class TriageApp(App):
                 continue
             self.tag_names.append(name)
             row = Text()
-            style = f"bold {ACCENT}" if name == self.view_tag else "#d8d4cf"
-            row.append(name[:15], style)
+            row.append(name[:15], "#d8d4cf")
             row.append(f"{count}".rjust(max(1, 18 - len(name[:15]))), FAINT)
             lst.append(ListItem(Static(row)))
         shown = len(self.tag_names) - 1
@@ -493,15 +509,15 @@ class TriageApp(App):
 
     async def _switch_view(self, tag) -> None:
         self._close_tags_if_narrow()
-        self.view_tag = tag
-        self.query_one("#queue", ListView).index = 0
-        await self.reload()
+        self._load_view(tag)
         self.set_focus(self.query_one("#queue", ListView))
 
     async def action_view_untagged(self) -> None:
         """`g` — back to the unplaced queue from anywhere."""
         if self.view_tag is not triage.UNTAGGED:
             await self._switch_view(triage.UNTAGGED)
+        else:
+            self.set_focus(self.query_one("#queue", ListView))
 
     def action_col_left(self) -> None:
         """`h`. At `narrow` the tag column is not on screen, so this opens it
@@ -731,16 +747,29 @@ class TriageApp(App):
             return
         if self._preview_timer is not None:
             self._preview_timer.stop()
-        self._preview_timer = self.set_timer(
-            0.09, lambda: self.run_worker(self._load_view(tag)))
+        self._preview_timer = self.set_timer(0.09, lambda: self._load_view(tag))
 
-    async def _load_view(self, tag) -> None:
-        """Load a view WITHOUT taking focus — the caller is still browsing."""
+    def _load_view(self, tag) -> None:
+        """Show a tag's notes WITHOUT taking focus and WITHOUT re-reading the
+        store.
+
+        A cursor move cannot have changed any file, so re-running
+        stream.load() for one — 238 files — and then rebuilding the 240-row
+        tag list was paying the full refresh price to answer a question the
+        last read already contains. The store snapshot is reused while it is
+        fresh; only the note list is rebuilt.
+
+        Not a coroutine any more: there is nothing to await, and going through
+        run_worker added a frame boundary of its own.
+        """
         if tag == self.view_tag:
             return
+        if not self._items or time.monotonic() - self._items_at > 2.0:
+            self._items = stream.load(include_daily=True)
+            self._items_at = time.monotonic()
         self.view_tag = tag
-        self.query_one("#queue", ListView).index = 0
-        await self.reload()
+        self.rows = triage.queue(self._items, tag=tag)
+        self._repaint_queue(keep=0)
 
     def on_list_view_selected(self, event) -> None:
         """Enter means "go one level deeper", and what that is depends on the
