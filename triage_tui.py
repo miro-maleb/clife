@@ -76,6 +76,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
 from textual.widgets import Input, Label, ListItem, ListView, Static
@@ -102,6 +103,39 @@ RUST, MOSS = "#d87a7a", "#7dc47d"
 CSS = """
 Screen { background: #000000; }
 #body { height: 1fr; }
+
+/* RESPONSIVE. Three columns need ~110 cols, and M-4 only gets about two
+   thirds of the terminal because the rail takes the rest — so an 80-col ssh
+   session left the note pane 7 cells wide. The layout has three shapes and
+   picks one from its own width, rather than being tuned for the monitor it
+   was written on.
+
+   `#leftcol` holds tags and notes. Wide, it is transparent scaffolding and
+   the two sit side by side; narrower, it becomes a column and they stack —
+   which is the right trade, because a tag list and a note list are both
+   scannable at half height, while a note being READ is not readable at 18
+   columns. */
+#leftcol { width: 60%; height: 1fr; layout: horizontal; }
+#body.medium #leftcol { width: 34; layout: vertical; }
+#body.medium #detailcol { width: 1fr; }
+#body.medium #tagcol  { width: 1fr; height: 40%; border-right: none;
+                        border-bottom: solid #272320; }
+#body.medium #queuecol { width: 1fr; height: 1fr; }
+#body.narrow { layout: vertical; }
+#body.narrow #leftcol { width: 1fr; height: 45%; layout: vertical; }
+#body.narrow #tagcol  { display: none; }
+/* At `narrow` the tag column is hidden, so `/` has to bring it back or the
+   only door to the vocabulary is walled up. It returns as a temporary
+   half-height pane over the note list rather than a modal: you are choosing
+   a tag by watching the list under it change, and a modal would cover the
+   one thing you are reading. Picking or Esc puts it away. */
+#body.narrow.tags-open #leftcol { height: 78%; }
+#body.narrow.tags-open #tagcol { display: block; height: 1fr; width: 1fr;
+                                 border-bottom: solid #272320; }
+#body.narrow.tags-open #queuecol { height: 7; }
+#body.narrow #queuecol { width: 1fr; height: 1fr; border-right: none;
+                         border-bottom: solid #272320; }
+#body.narrow #detailcol { width: 1fr; height: 1fr; }
 #tagcol { width: 22; min-width: 16; border-right: solid #272320; }
 #tagfilter { border: none; height: 1; background: #0a0a0a; color: #d8d4cf;
              padding: 0 1; }
@@ -110,7 +144,7 @@ Screen { background: #000000; }
 #taglist > ListItem { padding: 0 1; }
 #taglist Static { text-wrap: nowrap; text-overflow: ellipsis; }
 #taglist > ListItem.--highlight { background: #241809; }
-#queuecol { width: 40%; min-width: 24; border-right: solid #272320; }
+#queuecol { width: 1fr; min-width: 22; border-right: solid #272320; }
 #detailcol { width: 1fr; padding: 0 1; }
 .hdr { background: #141210; color: #e8a34e; text-style: bold; padding: 0 1; height: 1; }
 #queue { height: 1fr; background: #000000; }
@@ -209,6 +243,8 @@ class TriageApp(App):
         self._tag_filter = ""
         self._n_unplaced = 0
         self._tag_sig = None
+        self._layout_mode = None
+        self._preview_timer = None
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -225,13 +261,14 @@ class TriageApp(App):
             # The tag column is what turns this from a triage queue into a
             # navigator. Before it, the middle list could only ever ask "what
             # is unplaced?" — everything that left the inbox left the app.
-            with Vertical(id="tagcol"):
-                yield Label("TAGS", classes="hdr", id="taghdr")
-                yield Input(placeholder="filter…", id="tagfilter")
-                yield ListView(id="taglist")
-            with Vertical(id="queuecol"):
-                yield Label("QUEUE", classes="hdr", id="queuehdr")
-                yield ListView(id="queue")
+            with Horizontal(id="leftcol"):
+                with Vertical(id="tagcol"):
+                    yield Label("TAGS", classes="hdr", id="taghdr")
+                    yield Input(placeholder="filter…", id="tagfilter")
+                    yield ListView(id="taglist")
+                with Vertical(id="queuecol"):
+                    yield Label("QUEUE", classes="hdr", id="queuehdr")
+                    yield ListView(id="queue")
             with Vertical(id="detailcol"):
                 yield Label("", classes="hdr", id="detailhdr")
                 yield Static("", id="title")
@@ -246,6 +283,7 @@ class TriageApp(App):
     async def on_mount(self) -> None:
         self.register_theme(HEARTH)
         self.theme = "hearth"
+        self._apply_layout(self.size.width)
         await self.reload()
         self.set_focus(self.query_one("#queue", ListView))
         # Hermes fills slots from the pane next door and has no way to tell
@@ -380,6 +418,27 @@ class TriageApp(App):
             return None
         return self.rows[i]
 
+    # ── responsive ──────────────────────────────────────────────────────────
+    # Measured against what each pane needs to do its job, not round numbers:
+    # a note pane below ~34 columns wraps prose into gibberish, the tag column
+    # is 22, and the note list wants ~26 to show an age and a title. Below 72
+    # even the stacked shape cannot give the note pane 34, so the tag column
+    # goes away entirely and `/` becomes the only way to reach it.
+    WIDE, MEDIUM = 100, 72
+
+    def _apply_layout(self, width: int) -> None:
+        body = self.query_one("#body")
+        mode = "" if width >= self.WIDE else (
+            "medium" if width >= self.MEDIUM else "narrow")
+        body.set_class(mode == "medium", "medium")
+        body.set_class(mode == "narrow", "narrow")
+        if mode != getattr(self, "_layout_mode", None):
+            self._layout_mode = mode
+            self._paint_status()
+
+    def on_resize(self, event) -> None:
+        self._apply_layout(event.size.width)
+
     # ── the tag column ──────────────────────────────────────────────────────
     def _paint_tags(self) -> None:
         """The vocabulary, most-used first, with the unplaced queue pinned on
@@ -403,6 +462,12 @@ class TriageApp(App):
         self._tag_sig = sig
         lst = self.query_one("#taglist", ListView)
         keep = lst.index
+        # Restoring the highlight below fires Highlighted, which the preview
+        # listens to — so a repaint would re-select the tag the cursor happens
+        # to be sitting on and undo the switch that caused the repaint. `g`
+        # bounced straight back to the previous tag because of it. The preview
+        # must answer to the USER moving, never to this method putting the
+        # cursor back where it was.
         lst.clear()
         self.tag_names = [triage.UNTAGGED]
         here = self.view_tag is triage.UNTAGGED
@@ -427,6 +492,7 @@ class TriageApp(App):
             lst.index = min(keep or 0, len(self.tag_names) - 1)
 
     async def _switch_view(self, tag) -> None:
+        self._close_tags_if_narrow()
         self.view_tag = tag
         self.query_one("#queue", ListView).index = 0
         await self.reload()
@@ -438,23 +504,42 @@ class TriageApp(App):
             await self._switch_view(triage.UNTAGGED)
 
     def action_col_left(self) -> None:
+        """`h`. At `narrow` the tag column is not on screen, so this opens it
+        rather than focusing something invisible — `h` and `/` converge on the
+        same door when there is only one."""
+        if self._layout_mode == "narrow":
+            self.action_focus_filter()
+            return
         self.set_focus(self.query_one("#taglist", ListView))
 
     def action_col_right(self) -> None:
         self.set_focus(self.query_one("#queue", ListView))
 
     def action_focus_filter(self) -> None:
+        if self._layout_mode == "narrow":
+            self.query_one("#body").add_class("tags-open")
         self.query_one("#tagfilter", Input).focus()
+
+    def _close_tags_if_narrow(self) -> None:
+        if self._layout_mode == "narrow":
+            self.query_one("#body").remove_class("tags-open")
 
     def _paint_status(self) -> None:
         where = ("unplaced" if self.view_tag is triage.UNTAGGED
                  else f"#{self.view_tag}")
+        mode = getattr(self, "_layout_mode", None)
+        # The hint is the first thing to go when the width does. At `narrow`
+        # the tag column is hidden entirely, so `/` is the only way to reach
+        # it and is the one key that must still be advertised.
+        hint = ("  h/l cols · / filter · g unplaced · ⏎ open · i tag · d trash · ?"
+                if not mode else
+                ("  / tags · g unplaced · ⏎ open · i tag · ?" if mode == "medium"
+                 else "  / tags · ⏎ open · ?"))
         self.query_one("#status", Static).update(Text.assemble(
-            ("NAVIGATOR  ", f"bold {ACCENT}"),
+            ("NAV ", f"bold {ACCENT}") if mode else ("NAVIGATOR  ", f"bold {ACCENT}"),
             (where, ACCENT),
             (f"  {len(self.vocab)} tags", DIM),
-            ("  h/l cols · / filter · g unplaced · ⏎ open · i tag · d trash · ?",
-             FAINT)))
+            (hint, FAINT)))
         # `r` is deliberately absent from the hint: suggestions arrive on their
         # own now, and advertising a key for something that happens anyway
         # spends width teaching a habit nobody needs.
@@ -604,12 +689,58 @@ class TriageApp(App):
         self._focused_list().action_cursor_up()
 
     def on_list_view_highlighted(self, event) -> None:
-        # Moving through TAGS must not repaint the note detail — the detail
-        # belongs to the middle column, and blanking it while you scan the
-        # vocabulary loses the note you were reading.
-        if getattr(event.list_view, "id", "") == "taglist":
+        # A Highlighted can land while the app is coming down — clearing a
+        # ListView on quit emits one, and by the time it is delivered the
+        # widgets it refers to may be gone. Nothing here is worth an exception
+        # on the way out.
+        if not self.is_running:
             return
-        self._paint_detail()
+        try:
+            if getattr(event.list_view, "id", "") == "taglist":
+                self._preview_tag(event.list_view.index)
+                return
+            self._paint_detail()
+        except NoMatches:
+            return
+
+    # ── live preview ────────────────────────────────────────────────────────
+    def _preview_tag(self, i) -> None:
+        """Moving over a tag LOADS it. No Enter required.
+
+        Enter was a step that bought nothing: you cannot tell whether a tag is
+        the one you want without seeing what is under it, so the commit was
+        always guesswork followed by a correction. Highlight IS the query.
+
+        Debounced, because holding `j` down the vocabulary would otherwise
+        fire one store read per row. 90ms is under the point where a pause
+        reads as lag and above a key-repeat interval, so a scroll costs one
+        query at the row you actually stop on. Enter still exists and now
+        means "commit and move to the notes" — the focus change, not the load.
+        """
+        # Only when the tag list actually has focus. A repaint restores the
+        # highlight, and ListView.clear() is deferred, so the resulting
+        # Highlighted event lands AFTER any flag this method could set — `g`
+        # bounced straight back to the tag the cursor was resting on. Focus is
+        # the honest signal: if you are not in this column, you did not move
+        # in it.
+        lst = self.query_one("#taglist", ListView)
+        if self.focused is not lst or i is None or i >= len(self.tag_names):
+            return
+        tag = self.tag_names[i]
+        if tag == self.view_tag:
+            return
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+        self._preview_timer = self.set_timer(
+            0.09, lambda: self.run_worker(self._load_view(tag)))
+
+    async def _load_view(self, tag) -> None:
+        """Load a view WITHOUT taking focus — the caller is still browsing."""
+        if tag == self.view_tag:
+            return
+        self.view_tag = tag
+        self.query_one("#queue", ListView).index = 0
+        await self.reload()
 
     def on_list_view_selected(self, event) -> None:
         """Enter means "go one level deeper", and what that is depends on the
@@ -620,6 +751,9 @@ class TriageApp(App):
         if getattr(event.list_view, "id", "") == "taglist":
             i = event.list_view.index
             if i is not None and i < len(self.tag_names):
+                # The view is already loaded by the highlight preview; Enter
+                # is the focus change, and only re-queries if you got here
+                # faster than the debounce.
                 self.run_worker(self._switch_view(self.tag_names[i]))
             return
         self.action_focus_tags()
@@ -846,6 +980,12 @@ class TriageApp(App):
             if event.key == "escape":
                 self.set_focus(self.query_one("#taglist", ListView))
                 event.stop()
+            return
+        if self.focused is self.query_one("#taglist", ListView) \
+                and event.key == "escape":
+            self._close_tags_if_narrow()
+            self.set_focus(self.query_one("#queue", ListView))
+            event.stop()
             return
         if self.focused is box:
             if event.key == "escape":
