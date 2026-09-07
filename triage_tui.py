@@ -1,10 +1,26 @@
-"""triage_tui.py — `cl triage --tui`. The triage surface, M-4 in the Bridge deck.
+"""triage_tui.py — `cl triage --tui`. The TAG NAVIGATOR, M-4 in the Bridge deck.
 
-The queue on the left, one note open on the right, a tag box under it. Every
-write goes through `cl stream set`, so the vocabulary guard applies here exactly
-as it does at the prompt: a variant resolves to the spelling already in use, a
-near-duplicate is refused with the candidates. Nothing about tag identity is
-reimplemented in this file.
+Three columns: TAGS · NOTES · one note. The left column is the vocabulary
+with the unplaced queue pinned on top; picking a tag loads its notes into
+the middle; the right is the note you are on, with the tag box under it.
+
+IT WAS A TRIAGE QUEUE UNTIL 2026-09-07
+--------------------------------------
+The complaint that produced this: "we have a great inbox to tag system, but
+I lose everything when it leaves the inbox." That was exactly true, and the
+cause was one line — `triage.queue` skipped any note that had tags. Tagging
+a note was therefore the act of making it invisible to the only surface that
+could see it. The fix was not a second tool but a parameter: the queue takes
+a VIEW, `None` for unplaced and a tag otherwise, and the same three panes
+answer both questions.
+
+`g` returns to the unplaced queue, so triage is now one view in the
+navigator rather than a separate mode you leave.
+
+Every write goes through `cl stream set`, so the vocabulary guard applies
+here exactly as it does at the prompt: a variant resolves to the spelling
+already in use, a near-duplicate is refused with the candidates. Nothing
+about tag identity is reimplemented in this file.
 
 WHY IT LOOKS LIKE THE RAIL AND NOT LIKE `cl notes --tui`
 -------------------------------------------------------
@@ -25,9 +41,16 @@ rule, two places: the guard is the floor, this is the affordance.
 
 WHAT IT DELIBERATELY CANNOT DO
 ------------------------------
-Route and promote. Those file a note somewhere specific, and belong to
-`cl inbox` and the writer's <leader>sp. `c` hands off to the Hermes pane next
-door for the notes that need a conversation rather than a keystroke.
+Edit a note in place. Enter on a row OPENS the file (`o`, in the writer); the
+middle column is a list of doors, not a document. That is the fork where
+Logseq went the other way — it made reference lists editable inline, which is
+why it needs block UUIDs written into your markdown to know where an edit
+belongs. Keeping the file as the unit of editing skips the whole problem.
+
+Route and promote are gone with the 2026-09-07 flatten: nothing moves any
+more, so placing a note IS tagging it, which is what this surface does. `c`
+hands off to the Hermes pane next door for the notes that need a conversation
+rather than a keystroke.
 
 `d` (trash) IS here, having been argued out of the first cut on the grounds
 that a surface which can destroy things is one you use carefully and therefore
@@ -79,7 +102,15 @@ RUST, MOSS = "#d87a7a", "#7dc47d"
 CSS = """
 Screen { background: #000000; }
 #body { height: 1fr; }
-#queuecol { width: 40%; min-width: 28; border-right: solid #272320; }
+#tagcol { width: 22; min-width: 16; border-right: solid #272320; }
+#tagfilter { border: none; height: 1; background: #0a0a0a; color: #d8d4cf;
+             padding: 0 1; }
+#tagfilter:focus { background: #141210; color: #e8a34e; }
+#taglist { height: 1fr; background: #000000; }
+#taglist > ListItem { padding: 0 1; }
+#taglist Static { text-wrap: nowrap; text-overflow: ellipsis; }
+#taglist > ListItem.--highlight { background: #241809; }
+#queuecol { width: 40%; min-width: 24; border-right: solid #272320; }
 #detailcol { width: 1fr; padding: 0 1; }
 .hdr { background: #141210; color: #e8a34e; text-style: bold; padding: 0 1; height: 1; }
 #queue { height: 1fr; background: #000000; }
@@ -97,7 +128,7 @@ Screen { background: #000000; }
    accent, which in a 27-column queue is 7% of the width shouting for attention
    it does not deserve — the bar is a position readout, not a control anyone
    here reaches for. One cell, near-invisible until the pointer is on it. */
-#queue, #preview, #vocab {
+#queue, #taglist, #preview, #vocab {
     scrollbar-size-vertical: 1;
     scrollbar-background: #000000;
     scrollbar-color: #3a3833;
@@ -140,12 +171,20 @@ def _run(*args) -> dict:
 
 
 class TriageApp(App):
-    TITLE = "cl triage"
+    TITLE = "cl triage — tag navigator"
     CSS = CSS
 
     BINDINGS = [
         Binding("j", "down", "Down", show=False),
         Binding("k", "up", "Up", show=False),
+        # h/l move BETWEEN columns, j/k move within one — the same split every
+        # other vim surface in this system uses, so the navigator needs no new
+        # habit. `/` jumps to the tag filter; `g` is the way back to the
+        # unplaced queue from wherever you have wandered.
+        Binding("h", "col_left", "Tags", show=False),
+        Binding("l", "col_right", "Notes", show=False),
+        Binding("slash", "focus_filter", "Filter tags", show=False),
+        Binding("g", "view_untagged", "Unplaced", show=False),
         Binding("i", "focus_tags", "Tag", show=False),
         Binding("a", "accept", "Accept suggestion", show=False),
         Binding("t", "todo", "Mark todo", show=False),
@@ -163,6 +202,11 @@ class TriageApp(App):
         super().__init__()
         self.rows: list[dict] = []
         self.vocab: dict = {}
+        # None = the unplaced queue (what this app has always shown); a string
+        # = that tag's notes. One field, and every view is a query over it.
+        self.view_tag = triage.UNTAGGED
+        self.tag_names: list = []      # what the left column currently lists
+        self._tag_filter = ""
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -175,6 +219,14 @@ class TriageApp(App):
     def compose(self) -> ComposeResult:
         yield Static("", id="status")
         with Horizontal(id="body"):
+            # THREE columns: which question · the answers · one answer.
+            # The tag column is what turns this from a triage queue into a
+            # navigator. Before it, the middle list could only ever ask "what
+            # is unplaced?" — everything that left the inbox left the app.
+            with Vertical(id="tagcol"):
+                yield Label("TAGS", classes="hdr", id="taghdr")
+                yield Input(placeholder="filter…", id="tagfilter")
+                yield ListView(id="taglist")
             with Vertical(id="queuecol"):
                 yield Label("QUEUE", classes="hdr", id="queuehdr")
                 yield ListView(id="queue")
@@ -248,7 +300,7 @@ class TriageApp(App):
         every keystroke-driven refresh, and paying a subprocess for it would
         make the list lag the write that caused it. Writes still go out through
         `cl` — read cheap, write guarded."""
-        self.rows = triage.queue()
+        self.rows = triage.queue(tag=self.view_tag)
         self.vocab = stream.vocabulary(stream.load(include_daily=True))
         # Stamp the baseline HERE, where the sidecar is actually read. Taking
         # it on the first poll instead made that poll always look like a
@@ -258,6 +310,7 @@ class TriageApp(App):
             self._slots_seen = triage.SLOTS.stat().st_mtime
         except OSError:
             self._slots_seen = 0.0
+        self._paint_tags()
         view = self.query_one("#queue", ListView)
         keep = view.index
         # AWAITED. `clear()` hands back an AwaitRemove and takes the rows out
@@ -276,9 +329,12 @@ class TriageApp(App):
             elif r["note"]:
                 t.append("  ?", ACCENT)
             view.append(ListItem(Static(t)))
-        filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
-        self.query_one("#queuehdr", Label).update(
-            f"QUEUE — {len(self.rows)} unplaced · {filled} suggested")
+        if self.view_tag is triage.UNTAGGED:
+            filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
+            hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
+        else:
+            hdr = f"#{self.view_tag} — {len(self.rows)}"
+        self.query_one("#queuehdr", Label).update(hdr)
         if self.rows:
             view.index = min(keep or 0, len(self.rows) - 1)
         self._paint_status()
@@ -316,12 +372,71 @@ class TriageApp(App):
             return None
         return self.rows[i]
 
+    # ── the tag column ──────────────────────────────────────────────────────
+    def _paint_tags(self) -> None:
+        """The vocabulary, most-used first, with the unplaced queue pinned on
+        top as a pseudo-tag.
+
+        Pinned and not sorted in: "what has nobody decided about" is a
+        different KIND of question from "what is this about", and it is the
+        one with a deadline — an untagged note is what `cl inbox
+        --prune-noise` feeds on. It should never sort down under `#log` just
+        because there are more log notes than unplaced ones.
+        """
+        lst = self.query_one("#taglist", ListView)
+        keep = lst.index
+        lst.clear()
+        self.tag_names = [triage.UNTAGGED]
+        n_unplaced = len(triage.queue()) if self.view_tag is not triage.UNTAGGED \
+            else len(self.rows)
+        t = Text()
+        t.append("unplaced", f"bold {ACCENT}" if self.view_tag is triage.UNTAGGED else ACCENT)
+        t.append(f"  {n_unplaced}".rjust(max(1, 18 - len("unplaced"))), FAINT)
+        lst.append(ListItem(Static(t)))
+        q = self._tag_filter.lower()
+        for name, count in self.vocab.items():
+            if q and q not in name.lower():
+                continue
+            self.tag_names.append(name)
+            row = Text()
+            style = f"bold {ACCENT}" if name == self.view_tag else "#d8d4cf"
+            row.append(name[:15], style)
+            row.append(f"{count}".rjust(max(1, 18 - len(name[:15]))), FAINT)
+            lst.append(ListItem(Static(row)))
+        self.query_one("#taghdr", Label).update(
+            f"TAGS — {len(self.tag_names) - 1}" + (f" / {len(self.vocab)}" if q else ""))
+        if self.tag_names:
+            lst.index = min(keep or 0, len(self.tag_names) - 1)
+
+    async def _switch_view(self, tag) -> None:
+        self.view_tag = tag
+        self.query_one("#queue", ListView).index = 0
+        await self.reload()
+        self.set_focus(self.query_one("#queue", ListView))
+
+    async def action_view_untagged(self) -> None:
+        """`g` — back to the unplaced queue from anywhere."""
+        if self.view_tag is not triage.UNTAGGED:
+            await self._switch_view(triage.UNTAGGED)
+
+    def action_col_left(self) -> None:
+        self.set_focus(self.query_one("#taglist", ListView))
+
+    def action_col_right(self) -> None:
+        self.set_focus(self.query_one("#queue", ListView))
+
+    def action_focus_filter(self) -> None:
+        self.query_one("#tagfilter", Input).focus()
+
     def _paint_status(self) -> None:
-        n = len(self.vocab)
+        where = ("unplaced" if self.view_tag is triage.UNTAGGED
+                 else f"#{self.view_tag}")
         self.query_one("#status", Static).update(Text.assemble(
-            ("TRIAGE  ", f"bold {ACCENT}"),
-            (f"{n} tags", DIM),
-            ("  i tag · a accept · d trash · u undo · c chat · ?", FAINT)))
+            ("NAVIGATOR  ", f"bold {ACCENT}"),
+            (where, ACCENT),
+            (f"  {len(self.vocab)} tags", DIM),
+            ("  h/l cols · / filter · g unplaced · ⏎ open · i tag · d trash · ?",
+             FAINT)))
         # `r` is deliberately absent from the hint: suggestions arrive on their
         # own now, and advertising a key for something that happens anyway
         # spends width teaching a habit nobody needs.
@@ -335,9 +450,10 @@ class TriageApp(App):
             self.query_one("#meta", Static).update("")
             hermes.update("")
             hermes.display = False
-            self.query_one("#previewtext", Static).update(
-                Text("nothing unplaced — every note in the stream carries tags",
-                     style=DIM))
+            empty = ("nothing unplaced — every note carries tags"
+                     if self.view_tag is triage.UNTAGGED
+                     else f"nothing tagged #{self.view_tag}")
+            self.query_one("#previewtext", Static).update(Text(empty, style=DIM))
             return
         self.query_one("#detailhdr", Label).update(row["slug"])
         self.query_one("#title", Static).update(
@@ -346,9 +462,17 @@ class TriageApp(App):
         # writing/_stream/2026/03/…" truncates to the half that says nothing,
         # and the header above already carries the note's identity.
         age = f"{row['age_days']}d old" if row["age_days"] is not None else ""
-        self.query_one("#meta", Static).update(
-            Text(" · ".join(x for x in (row["created"] or "undated", age) if x),
-                 style=FAINT))
+        meta = Text(" · ".join(x for x in (row["created"] or "undated", age) if x),
+                    style=FAINT)
+        # The note's OTHER tags, in a tag view. Without them a note read under
+        # #hearth looks like it belongs only to #hearth, and the one thing a
+        # navigator has to show is that a note lives in several places at once
+        # — that is the whole argument for tags over directories.
+        others = [t for t in row.get("tags", []) if t != self.view_tag]
+        if others:
+            meta.append("   ")
+            meta.append(" ".join("#" + t for t in others[:6]), ACCENT)
+        self.query_one("#meta", Static).update(meta)
 
         if row["note"]:
             hermes.display = True
@@ -448,20 +572,38 @@ class TriageApp(App):
         self.query_one("#vocab", Static).update(t)
 
     # ── actions ─────────────────────────────────────────────────────────────
+    def _focused_list(self) -> ListView:
+        """j/k move within whichever column has focus. Hard-wiring them to the
+        queue made the tag column navigable only by arrow keys, which in a vim
+        surface reads as the column being decorative."""
+        tags = self.query_one("#taglist", ListView)
+        return tags if self.focused is tags else self.query_one("#queue", ListView)
+
     def action_down(self) -> None:
-        self.query_one("#queue", ListView).action_cursor_down()
+        self._focused_list().action_cursor_down()
 
     def action_up(self) -> None:
-        self.query_one("#queue", ListView).action_cursor_up()
+        self._focused_list().action_cursor_up()
 
-    def on_list_view_highlighted(self, _e) -> None:
+    def on_list_view_highlighted(self, event) -> None:
+        # Moving through TAGS must not repaint the note detail — the detail
+        # belongs to the middle column, and blanking it while you scan the
+        # vocabulary loses the note you were reading.
+        if getattr(event.list_view, "id", "") == "taglist":
+            return
         self._paint_detail()
 
     def on_list_view_selected(self, event) -> None:
-        """Enter on the queue opens the tag box. The list has exactly one verb
-        worth having on the most obvious key, and it is the one this whole
-        surface exists for."""
+        """Enter means "go one level deeper", and what that is depends on the
+        column: on TAGS it loads that tag's notes, on the queue it opens the
+        tag box — the one verb worth the most obvious key on a list of
+        unplaced notes."""
         event.stop()
+        if getattr(event.list_view, "id", "") == "taglist":
+            i = event.list_view.index
+            if i is not None and i < len(self.tag_names):
+                self.run_worker(self._switch_view(self.tag_names[i]))
+            return
         self.action_focus_tags()
 
     def action_focus_tags(self) -> None:
@@ -603,15 +745,21 @@ class TriageApp(App):
         self.notify("reloaded")
 
     def action_help(self) -> None:
-        self.notify("j/k move · i tag · a accept suggestion · t todo · "
+        self.notify("h/l move between columns · j/k within one · "
+                    "/ filter tags · ⏎ on a tag loads it · g back to unplaced · "
+                    "i tag · a accept suggestion · t todo · "
                     "d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
-                    "o open in writer · "
-                    "r reload · q quit", timeout=10)
+                    "o open in writer · r reload · q quit", timeout=12)
 
     # ── writing ─────────────────────────────────────────────────────────────
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        if event.input.id == "tagfilter":
+            # Enter in the filter jumps to the list it just narrowed, rather
+            # than leaving you typing at a result you cannot reach.
+            self.set_focus(self.query_one("#taglist", ListView))
+            return
         row = self._current()
         if not row:
             return
@@ -675,6 +823,12 @@ class TriageApp(App):
     # ── keys ────────────────────────────────────────────────────────────────
     def on_key(self, event: events.Key) -> None:
         box = self.query_one("#tagbox", Input)
+        filt = self.query_one("#tagfilter", Input)
+        if self.focused is filt:
+            if event.key == "escape":
+                self.set_focus(self.query_one("#taglist", ListView))
+                event.stop()
+            return
         if self.focused is box:
             if event.key == "escape":
                 self.set_focus(self.query_one("#queue", ListView))
@@ -684,6 +838,10 @@ class TriageApp(App):
         # printable keys itself, so only escape needs handling above.
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "tagfilter":
+            self._tag_filter = event.value
+            self._paint_tags()
+            return
         self._paint_vocab(event.value)
 
 

@@ -127,16 +127,33 @@ def save_slots(slots: dict, trashed: dict | None = None) -> None:
 
 # ── the queue ──────────────────────────────────────────────────────────────
 
-def queue(items=None) -> list:
-    """Every unplaced note, oldest first, each with its slot attached.
+UNTAGGED = None          # the default view: notes nobody has placed yet
 
-    Oldest first and not newest: the backlog is the problem. A queue that opens
-    on today's captures is a queue whose March end never gets looked at."""
-    items = items if items is not None else stream.load()
+
+def queue(items=None, tag=UNTAGGED) -> list:
+    """The notes in one VIEW, each with its triage slot attached.
+
+    `tag=None` is the unplaced queue — notes with no tags — and is what
+    `cl triage` has always shown. Any other value is a tag, matched
+    hierarchically (`book` also matches `book/dogen`), which turns the same
+    surface into a NAVIGATOR: the thing that was missing was never a second
+    tool, it was that this list could only ever ask one question.
+
+    Order differs by view on purpose. The unplaced queue is oldest-first
+    because the backlog is the problem — a queue that opens on today's
+    captures is a queue whose March end never gets looked at. A tag view is
+    newest-first, because there the question is "what have I been thinking
+    about lately", and its old end is not a debt.
+    """
+    items = items if items is not None else stream.load(include_daily=tag is not None)
     slots = load_slots()
+    q = (tag or "").lstrip("#").rstrip("/")
     rows = []
     for it in items:
-        if it["tags"]:
+        if tag is UNTAGGED:
+            if it["tags"]:
+                continue
+        elif not any(t == q or t.startswith(q + "/") for t in it["tags"]):
             continue
         s = slots.get(it["slug"]) or {}
         rows.append({
@@ -150,8 +167,9 @@ def queue(items=None) -> list:
             "flag": s.get("flag") or "",
             "by": s.get("by") or "",
             "at": s.get("at") or "",
+            "tags": list(it["tags"]),
         })
-    rows.sort(key=lambda r: r["created"] or "")
+    rows.sort(key=lambda r: r["created"] or "", reverse=tag is not UNTAGGED)
     return rows
 
 
