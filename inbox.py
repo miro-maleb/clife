@@ -47,9 +47,7 @@ def _is_unplaced(f):
     m = _UNPLACED_TAGS_RE.search(head)
     return not (m and m.group(1).strip(" []"))
 shopping_path = STORE
-system_improvements_path = (
-    KB / "projects" / "infrastructure" / "clife" / "system-improvements.md"
-)
+system_improvements_path = STORE / "system-improvements.md"
 
 HOTKEYS = (
     "[grey50][[/grey50][steel_blue1]n[/steel_blue1][grey50]][/grey50] note  "

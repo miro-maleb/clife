@@ -33,10 +33,11 @@ from new import slugify, title_of
 console = Console()
 
 KB = week.KB
+from paths import STORE
 ORIENTATIONS = KB / "orientations"
 GOALS = KB / "goals"
 HABITS = KB / "habits"
-PROJECTS = KB / "projects"
+PROJECTS = STORE
 MSMTPRC = Path.home() / ".msmtprc"
 
 
