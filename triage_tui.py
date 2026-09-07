@@ -253,6 +253,12 @@ class TagChips(Static):
         # no wrong guess.
         Binding("j,w,l,right", "next", "Next tag", show=False),
         Binding("k,b,h,left",  "prev", "Prev tag", show=False),
+        # I / A for first / last, his choice over 0 / $. In vim those insert
+        # at the start and append at the end of a LINE, and a row of chips is
+        # exactly a line you are inserting into — so the mnemonic transfers
+        # even though the motion is a jump rather than an insert.
+        Binding("I", "first", "First tag", show=False),
+        Binding("A", "last",  "Last tag",  show=False),
         Binding("d,x",     "remove", "Remove",     show=False),
         Binding("a,i",     "add",    "Add",        show=False),
         Binding("escape",  "leave",  "Back",       show=False),
@@ -309,6 +315,16 @@ class TagChips(Static):
     def action_next(self) -> None:
         if self.tags:
             self.cursor = (self.cursor + 1) % len(self.tags)
+            self.render_chips()
+
+    def action_first(self) -> None:
+        if self.tags:
+            self.cursor = 0
+            self.render_chips()
+
+    def action_last(self) -> None:
+        if self.tags:
+            self.cursor = len(self.tags) - 1
             self.render_chips()
 
     def action_remove(self) -> None:
@@ -717,8 +733,8 @@ class TriageApp(App):
         # The hint is the first thing to go when the width does. At `narrow`
         # the tag column is hidden entirely, so `/` is the only way to reach
         # it and is the one key that must still be advertised.
-        hint = ("  h/l cols · / filter · g unplaced · ⏎ open · i tags · d trash · ?"
-                if not mode else "  / tags · g unplaced · ⏎ open · i tags · ?")
+        hint = ("  j/k move · ⏎ deeper · esc back · / filter · g unplaced · o writer · ?"
+                if not mode else "  j/k · ⏎ deeper · esc back · / tags · o writer · ?")
         self.query_one("#status", Static).update(Text.assemble(
             ("NAV ", f"bold {ACCENT}") if mode else ("NAVIGATOR  ", f"bold {ACCENT}"),
             (where, ACCENT),
@@ -865,15 +881,17 @@ class TriageApp(App):
         self._repaint_queue(keep=0)
 
     def on_list_view_selected(self, event) -> None:
-        """Enter means "go one level deeper", the whole way down.
+        """Enter means "go one level deeper", and it never leaves the app.
 
-        On TAGS it loads that tag's notes; on a NOTE it opens the file in the
-        writer. It used to open the tag box instead, which was right when this
-        was a triage queue and tagging was the only verb — but in a navigator
-        the obvious key should descend, the same way it does one column to the
-        left, and `i` now edits tags properly (add AND remove) rather than
-        being an append-only field you had to work around by editing
-        frontmatter by hand."""
+        TAGS -> that tag's notes -> that note's tags. Three rungs, one key,
+        and Esc climbs back up each of them — so the whole surface is j/k to
+        move, Enter to descend, Esc to return, at every level. Opening the
+        file is `o`, which is a different KIND of act: it suspends this app
+        and hands you to the writer.
+
+        Enter briefly opened the writer here. That made the last rung
+        inconsistent with the first two and put the one irreversible-feeling
+        action (leaving) on the most-pressed key."""
         event.stop()
         if getattr(event.list_view, "id", "") == "taglist":
             i = event.list_view.index
@@ -887,7 +905,7 @@ class TriageApp(App):
                 # faster than the debounce.
                 self.run_worker(self._switch_view(self.tag_names[i]))
             return
-        self.run_worker(self.action_open())
+        self.action_focus_tags()
 
     def action_focus_tags(self) -> None:
         """`i` — edit this note's tags.
@@ -1131,13 +1149,13 @@ class TriageApp(App):
         self.notify("reloaded")
 
     def action_help(self) -> None:
-        self.notify("h/l move between columns · j/k within one · "
-                    "/ filter tags · ⏎ descends (tag→notes, note→writer) · "
-                    "g back to unplaced · i tags (j/k move · d remove · a add · esc out) · "
-                    "a accept suggestion · t todo · "
-                    "d trash (recoverable) · u undo · "
+        self.notify("j/k move · ⏎ descends (tag → its notes → its tags) · "
+                    "esc climbs back · h/l jump columns · / filter tags · "
+                    "g back to unplaced · "
+                    "tags: j/k or w/b move · I/A first/last · d remove · a add · "
+                    "on the note list: t todo · d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
-                    "o open in writer · r reload · q quit", timeout=12)
+                    "o open in the writer · r reload · q quit", timeout=14)
 
     # ── writing ─────────────────────────────────────────────────────────────
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -1304,6 +1322,15 @@ class TriageApp(App):
                 return
             self._close_tags_if_narrow()
             self.set_focus(self.query_one("#queue", ListView))
+            event.stop()
+            return
+        # Esc on the NOTES climbs back to the tags — the last rung of the
+        # ladder Enter descends. Without it the loop was one-way at the top:
+        # Enter went tags -> notes -> chips, but Esc only came back as far as
+        # the notes and then stopped, which reads as the key having died.
+        if self.focused is self.query_one("#queue", ListView) \
+                and event.key == "escape":
+            self.action_col_left()
             event.stop()
             return
         # Single-letter bindings must not fire while typing in the filter;
