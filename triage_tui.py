@@ -39,9 +39,18 @@ in the writer; this shows the list while you type, filtered to what you have
 typed so far, so the reuse is visible before the refusal has to happen. Same
 rule, two places: the guard is the floor, this is the affordance.
 
+TAGS ARE EDITED AS A SET
+------------------------
+`i` opens the tag box holding the note's CURRENT tags, and Enter applies what
+is in the box as the whole set — what you added is added, what you deleted is
+removed, in one `cl stream set` call carrying both --tag and --untag. It used
+to be add-only, on the assumption that everything in the queue was untagged;
+the navigator broke that assumption, and with no way to remove a tag from
+here, hand-editing frontmatter was genuinely the faster path.
+
 WHAT IT DELIBERATELY CANNOT DO
 ------------------------------
-Edit a note in place. Enter on a row OPENS the file (`o`, in the writer); the
+Edit a note's BODY in place. Enter on a row OPENS the file (`o`, in the writer); the
 middle column is a list of doors, not a document. That is the fork where
 Logseq went the other way — it made reference lists editable inline, which is
 why it needs block UUIDs written into your markdown to know where an edit
@@ -105,39 +114,13 @@ CSS = """
 Screen { background: #000000; }
 #body { height: 1fr; }
 
-/* RESPONSIVE. Three columns need ~110 cols, and M-4 only gets about two
-   thirds of the terminal because the rail takes the rest — so an 80-col ssh
-   session left the note pane 7 cells wide. The layout has three shapes and
-   picks one from its own width, rather than being tuned for the monitor it
-   was written on.
-
-   `#leftcol` holds tags and notes. Wide, it is transparent scaffolding and
-   the two sit side by side; narrower, it becomes a column and they stack —
-   which is the right trade, because a tag list and a note list are both
-   scannable at half height, while a note being READ is not readable at 18
-   columns. */
-#leftcol { width: 60%; height: 1fr; layout: horizontal; }
-#body.medium #leftcol { width: 34; layout: vertical; }
-#body.medium #detailcol { width: 1fr; }
-#body.medium #tagcol  { width: 1fr; height: 40%; border-right: none;
-                        border-bottom: solid #272320; }
-#body.medium #queuecol { width: 1fr; height: 1fr; }
-#body.narrow { layout: vertical; }
-#body.narrow #leftcol { width: 1fr; height: 45%; layout: vertical; }
-#body.narrow #tagcol  { display: none; }
-/* At `narrow` the tag column is hidden, so `/` has to bring it back or the
-   only door to the vocabulary is walled up. It returns as a temporary
-   half-height pane over the note list rather than a modal: you are choosing
-   a tag by watching the list under it change, and a modal would cover the
-   one thing you are reading. Picking or Esc puts it away. */
-#body.narrow.tags-open #leftcol { height: 78%; }
-#body.narrow.tags-open #tagcol { display: block; height: 1fr; width: 1fr;
-                                 border-bottom: solid #272320; }
-#body.narrow.tags-open #queuecol { height: 7; }
-#body.narrow #queuecol { width: 1fr; height: 1fr; border-right: none;
-                         border-bottom: solid #272320; }
-#body.narrow #detailcol { width: 1fr; height: 1fr; }
-#tagcol { width: 22; min-width: 16; border-right: solid #272320; }
+/* RESPONSIVE — one breakpoint, because stacking the list removed the need
+   for two. Wide and medium are now the SAME shape; the only question left is
+   whether the tag column fits. Below 72 columns it does not (22 of them is a
+   third of the screen), so it hides and `/` or `h` brings it back over the
+   list. M-4 only gets about two thirds of the terminal, which is why an
+   80-col ssh session has to be a first-class case rather than an afterthought. */
+#tagcol  { width: 22; min-width: 16; border-right: solid #272320; }
 #tagfilter { border: none; height: 1; background: #0a0a0a; color: #d8d4cf;
              padding: 0 1; }
 #tagfilter:focus { background: #141210; color: #e8a34e; }
@@ -145,10 +128,27 @@ Screen { background: #000000; }
 #taglist > ListItem { padding: 0 1; }
 #taglist Static { text-wrap: nowrap; text-overflow: ellipsis; }
 #taglist > ListItem.--highlight { background: #241809; }
-#queuecol { width: 1fr; min-width: 22; border-right: solid #272320; }
-#detailcol { width: 1fr; padding: 0 1; }
+
+#rightcol { width: 1fr; height: 1fr; layout: vertical; }
+/* auto, capped. Three notes take three rows; #log's forty scroll inside 45%
+   rather than pushing the reader off the bottom. */
+#queuecol { width: 1fr; height: auto; max-height: 45%;
+            border-bottom: solid #272320; }
+/* auto on the LIST too, and no max-height on it — the cap belongs on the
+   container. This is the rail's rule (#inboxcol InboxPane ListView), which
+   is the one place in this system that already gets content-sizing right. */
+#queue { height: auto; background: #000000; }
+#detailcol { width: 1fr; height: 1fr; padding: 0 1; }
+
+#body.narrow #tagcol { display: none; }
+/* `/` has to bring the column back or the only door to the vocabulary is
+   walled up. It returns over the list rather than as a modal: you choose a
+   tag by watching the list under it change. */
+#body.narrow.tags-open #tagcol { display: block; width: 1fr; height: 1fr;
+                                 border-right: none;
+                                 border-bottom: solid #272320; }
+#body.narrow.tags-open #rightcol { height: 40%; }
 .hdr { background: #141210; color: #e8a34e; text-style: bold; padding: 0 1; height: 1; }
-#queue { height: 1fr; background: #000000; }
 #queue > ListItem { padding: 0 1; }
 /* One row, one line. At the deck's ~27-column queue a wrapped title runs to a
    second unindented line and the list stops being scannable at a glance. */
@@ -260,27 +260,34 @@ class TriageApp(App):
     def compose(self) -> ComposeResult:
         yield Static("", id="status")
         with Horizontal(id="body"):
-            # THREE columns: which question · the answers · one answer.
-            # The tag column is what turns this from a triage queue into a
-            # navigator. Before it, the middle list could only ever ask "what
-            # is unplaced?" — everything that left the inbox left the app.
-            with Horizontal(id="leftcol"):
-                with Vertical(id="tagcol"):
-                    yield Label("TAGS", classes="hdr", id="taghdr")
-                    yield Input(placeholder="filter…", id="tagfilter")
-                    yield ListView(id="taglist")
+            # TAGS on the left; the note list stacked OVER the reader on the
+            # right. Not three even columns: the note list is the one thing
+            # here whose height is data, and the data says it is short.
+            # Median notes per tag is 1, p90 is 6, and exactly one tag of 240
+            # would fill a 20-row column — so a full-height middle column was
+            # empty ~85% of the time while the reader, which wants every row
+            # and column it can get, had half the width.
+            #
+            # This is the shape the writer's stream drawer and the rail's
+            # inbox already use: lists size to their content, the thing being
+            # READ takes what is left.
+            with Vertical(id="tagcol"):
+                yield Label("TAGS", classes="hdr", id="taghdr")
+                yield Input(placeholder="filter…", id="tagfilter")
+                yield ListView(id="taglist")
+            with Vertical(id="rightcol"):
                 with Vertical(id="queuecol"):
                     yield Label("QUEUE", classes="hdr", id="queuehdr")
                     yield ListView(id="queue")
-            with Vertical(id="detailcol"):
-                yield Label("", classes="hdr", id="detailhdr")
-                yield Static("", id="title")
-                yield Static("", id="meta")
-                yield Static("", id="hermes")
-                yield VerticalScroll(Static("", id="previewtext"), id="preview")
-                yield Input(placeholder="tags…  (Enter applies · Esc back)",
-                            id="tagbox")
-                yield Static("", id="vocab")
+                with Vertical(id="detailcol"):
+                    yield Label("", classes="hdr", id="detailhdr")
+                    yield Static("", id="title")
+                    yield Static("", id="meta")
+                    yield Static("", id="hermes")
+                    yield VerticalScroll(Static("", id="previewtext"), id="preview")
+                    yield Input(placeholder="tags…  (Enter applies · Esc back)",
+                                id="tagbox")
+                    yield Static("", id="vocab")
         yield Static("", id="msg")
 
     async def on_mount(self) -> None:
@@ -433,18 +440,15 @@ class TriageApp(App):
         return self.rows[i]
 
     # ── responsive ──────────────────────────────────────────────────────────
-    # Measured against what each pane needs to do its job, not round numbers:
-    # a note pane below ~34 columns wraps prose into gibberish, the tag column
-    # is 22, and the note list wants ~26 to show an age and a title. Below 72
-    # even the stacked shape cannot give the note pane 34, so the tag column
-    # goes away entirely and `/` becomes the only way to reach it.
-    WIDE, MEDIUM = 100, 72
+    # ONE breakpoint. Stacking the list over the reader removed the need for
+    # a middle mode: the only question left is whether the 22-column tag list
+    # fits, and below 72 it is a third of the screen. Measured against what
+    # the pane needs — prose under ~34 columns wraps into gibberish.
+    TAGCOL_MIN = 72
 
     def _apply_layout(self, width: int) -> None:
         body = self.query_one("#body")
-        mode = "" if width >= self.WIDE else (
-            "medium" if width >= self.MEDIUM else "narrow")
-        body.set_class(mode == "medium", "medium")
+        mode = "" if width >= self.TAGCOL_MIN else "narrow"
         body.set_class(mode == "narrow", "narrow")
         if mode != getattr(self, "_layout_mode", None):
             self._layout_mode = mode
@@ -547,10 +551,8 @@ class TriageApp(App):
         # The hint is the first thing to go when the width does. At `narrow`
         # the tag column is hidden entirely, so `/` is the only way to reach
         # it and is the one key that must still be advertised.
-        hint = ("  h/l cols · / filter · g unplaced · ⏎ open · i tag · d trash · ?"
-                if not mode else
-                ("  / tags · g unplaced · ⏎ open · i tag · ?" if mode == "medium"
-                 else "  / tags · ⏎ open · ?"))
+        hint = ("  h/l cols · / filter · g unplaced · ⏎ open · i tags · d trash · ?"
+                if not mode else "  / tags · g unplaced · ⏎ open · i tags · ?")
         self.query_one("#status", Static).update(Text.assemble(
             ("NAV ", f"bold {ACCENT}") if mode else ("NAVIGATOR  ", f"bold {ACCENT}"),
             (where, ACCENT),
@@ -772,10 +774,15 @@ class TriageApp(App):
         self._repaint_queue(keep=0)
 
     def on_list_view_selected(self, event) -> None:
-        """Enter means "go one level deeper", and what that is depends on the
-        column: on TAGS it loads that tag's notes, on the queue it opens the
-        tag box — the one verb worth the most obvious key on a list of
-        unplaced notes."""
+        """Enter means "go one level deeper", the whole way down.
+
+        On TAGS it loads that tag's notes; on a NOTE it opens the file in the
+        writer. It used to open the tag box instead, which was right when this
+        was a triage queue and tagging was the only verb — but in a navigator
+        the obvious key should descend, the same way it does one column to the
+        left, and `i` now edits tags properly (add AND remove) rather than
+        being an append-only field you had to work around by editing
+        frontmatter by hand."""
         event.stop()
         if getattr(event.list_view, "id", "") == "taglist":
             i = event.list_view.index
@@ -785,11 +792,38 @@ class TriageApp(App):
                 # faster than the debounce.
                 self.run_worker(self._switch_view(self.tag_names[i]))
             return
-        self.action_focus_tags()
+        self.run_worker(self.action_open())
 
     def action_focus_tags(self) -> None:
-        if self._current():
-            self.query_one("#tagbox", Input).focus()
+        """`i` — edit the note's tags, prefilled with the ones it already has.
+
+        The box used to be add-only, on the assumption that everything in the
+        queue was untagged. The navigator broke that: in a tag view every note
+        already carries tags, and typing into an add-only box silently
+        appended to them. There was no way to REMOVE a tag from here at all,
+        which is why editing frontmatter by hand was the faster path.
+
+        So the box now holds the note's complete tag set and Enter applies it
+        as such — what you added is added, what you deleted is removed. Same
+        mental model as editing the frontmatter line, minus opening the file,
+        and it still goes through `cl stream set` so the vocabulary guard
+        still refuses a near-duplicate.
+        """
+        row = self._current()
+        if not row:
+            return
+        box = self.query_one("#tagbox", Input)
+        current = row.get("tags") or []
+        # A suggestion is only offered when the note has nothing yet — it is a
+        # proposal for an unplaced note, not something to bolt onto a set the
+        # note already has.
+        if not current and row.get("suggested"):
+            current = row["suggested"]
+        box.value = ", ".join(current)
+        box.focus()
+        # Cursor to the end: you are almost always appending, and landing at
+        # column 0 means every edit starts with a jump.
+        box.cursor_position = len(box.value)
 
     async def action_accept(self) -> None:
         row = self._current()
@@ -837,6 +871,27 @@ class TriageApp(App):
             res = _run("triage", "restore", name)
             msg = f"restored {slug}" if res.get("ok") else \
                   f"restore failed: {res.get('error')}"
+        elif kind == "retag":
+            # Restore the whole set. An undo that only untagged what was added
+            # could not take back a REMOVAL, which is half of what the box now
+            # does.
+            slug, before = rest
+            cur = next((i["tags"] for i in stream.load(include_daily=True)
+                        if i["slug"] == slug), [])
+            cur = [stream.norm_tag(t) for t in cur]
+            add = [t for t in before if t not in cur]
+            rm = [t for t in cur if t not in before]
+            flags = []
+            if add:
+                flags += ["--tag", ",".join(add), "--new"]
+            if rm:
+                flags += ["--untag", ",".join(rm)]
+            if not flags:
+                self.notify("nothing to undo on that note")
+                return
+            res = _run("stream", "set", slug, *flags)
+            msg = (f"restored {' '.join('#' + t for t in before) or '(no tags)'}"
+                   if res.get("ok") else f"undo failed: {res.get('error')}")
         else:
             slug, tags = rest
             res = _run("stream", "set", slug, "--untag", ",".join(tags))
@@ -972,8 +1027,9 @@ class TriageApp(App):
 
     def action_help(self) -> None:
         self.notify("h/l move between columns · j/k within one · "
-                    "/ filter tags · ⏎ on a tag loads it · g back to unplaced · "
-                    "i tag · a accept suggestion · t todo · "
+                    "/ filter tags · ⏎ descends (tag→notes, note→writer) · "
+                    "g back to unplaced · i edit tags (add AND remove) · "
+                    "a accept suggestion · t todo · "
                     "d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
                     "o open in writer · r reload · q quit", timeout=12)
@@ -997,18 +1053,47 @@ class TriageApp(App):
         await self._apply(row, tags)
 
     async def _apply(self, row: dict, tags: list) -> None:
-        res = self._write(row, "--tag", ",".join(tags))
+        """`tags` is the note's COMPLETE new set, not an addition.
+
+        Diffed against what it carries, so one Enter both adds and removes —
+        `cl stream set` takes --tag and --untag in the same call, and doing it
+        as one write means a note is never briefly half-retagged on disk.
+        """
+        before = [stream.norm_tag(t) for t in (row.get("tags") or [])]
+        after, seen = [], set()
+        for t in tags:                       # order-stable, de-duplicated
+            n = stream.norm_tag(t)
+            if n and n not in seen:
+                seen.add(n)
+                after.append(n)
+        add = [t for t in after if t not in before]
+        rm = [t for t in before if t not in after]
+        if not add and not rm:
+            self.notify("no change")
+            self.set_focus(self.query_one("#queue", ListView))
+            return
+        flags = []
+        if add:
+            flags += ["--tag", ",".join(add)]
+        if rm:
+            flags += ["--untag", ",".join(rm)]
+        res = self._write(row, *flags)
         if not res.get("ok"):
             return                     # text stays in the box, ready to fix
-        # Everything in this queue is untagged by definition, so whatever the
-        # writer reports as the note's tags is exactly what this apply added —
-        # which is what undo has to take back off again.
-        self._undo.append(("tag", row["slug"],
-                           (res.get("applied") or {}).get("tags") or tags))
-        # The note has left the queue: it is tagged, which is the whole
-        # definition of placed. Clearing its slot keeps the sidecar from
-        # accumulating suggestions for notes nobody will see again.
-        triage.clear(row["slug"])
+        # Undo restores the tag set that was there, which is the only thing
+        # that can take back a removal as well as an addition.
+        self._undo.append(("retag", row["slug"], before))
+        if not before:
+            # It was unplaced and now is not: its slot has no one left to
+            # advise, and keeping it accumulates suggestions for notes nobody
+            # will see again.
+            triage.clear(row["slug"])
+        bits = []
+        if add:
+            bits.append("+" + " +".join(add))
+        if rm:
+            bits.append("-" + " -".join(rm))
+        self.notify(" ".join(bits))
         await self._advance()
 
     async def _advance(self) -> None:
