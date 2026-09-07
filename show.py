@@ -31,8 +31,8 @@ from tui_common import ACCENT, ACCENT_DIM, BODY, BORDER, MUTED
 
 console = Console()
 
-from paths import KB
-PROJECTS = KB / "projects"
+from paths import KB, STORE
+PROJECTS = STORE
 
 OVERVIEW_FILES = ("area.md", "project.md", "sub-project.md")
 TASK_SAMPLE_LIMIT = 12

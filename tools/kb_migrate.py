@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 
 KB = Path.home() / "kb"
-PROJECTS = KB / "projects"
+from paths import STORE
+PROJECTS = STORE
 
 SKIP_NAMES = {"__pycache__", "node_modules", "venv", ".venv", ".git"}
 

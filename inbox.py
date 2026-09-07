@@ -9,7 +9,7 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
-from paths import KB
+from paths import KB, STORE
 
 from rich.console import Console
 from rich.panel import Panel
@@ -23,14 +23,14 @@ import pool
 console = Console()
 
 notes_path = KB / "notes"
-project_path = KB / "projects"
+project_path = STORE
 # There is no inbox FOLDER. Untagged captures live in the stream's YYYY/MM
 # shards like every other note, and "inbox" is the set of notes nobody has
 # placed yet — no tags in frontmatter. The folder this used to name moved twice
 # on 2026-09-03 and emptied this command silently both times; a filter cannot
 # desync from a path that no longer decides anything.
-inbox_path = KB / "writing/_stream"
-pinned_path = KB / "writing/_stream/.pinned"   # vestigial: no pinned items exist
+inbox_path = STORE
+pinned_path = STORE / ".pinned"   # vestigial: no pinned items exist
 
 
 _UNPLACED_TAGS_RE = re.compile(r"^tags:(.*)$", re.M)
@@ -46,7 +46,7 @@ def _is_unplaced(f):
         return True                      # no frontmatter at all = unplaced
     m = _UNPLACED_TAGS_RE.search(head)
     return not (m and m.group(1).strip(" []"))
-shopping_path = KB / "shopping"
+shopping_path = STORE
 system_improvements_path = (
     KB / "projects" / "infrastructure" / "clife" / "system-improvements.md"
 )

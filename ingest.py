@@ -21,7 +21,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from paths import KB
+from paths import KB, STORE
 
 from rich.console import Console
 from rich.rule import Rule
@@ -32,7 +32,7 @@ console = Console()
 # This said _stream/inbox and unique_inbox_path() mkdir'd it, so the next email
 # to arrive would have RECREATED the retired directory and dropped mail where
 # none of the readers look. Caught 2026-09-03 with 34 seconds to the next run.
-STREAM_DIR = KB / "writing" / "_stream"
+STREAM_DIR = STORE
 DEFAULT_MAILDIR = Path.home() / "mail" / "kb-capture" / "Inbox"
 
 
@@ -186,7 +186,8 @@ def message_to_inbox_md(msg, captured_at):
 
 def unique_inbox_path(stamp):
     from datetime import datetime as _dt
-    d = STREAM_DIR / _dt.now().strftime("%Y") / _dt.now().strftime("%m")
+    # Flat store since 2026-09-07 — no YYYY/MM shards. See capture._shard.
+    d = STREAM_DIR
     d.mkdir(parents=True, exist_ok=True)
     base = d / f"{stamp}-email.md"
     if not base.exists():

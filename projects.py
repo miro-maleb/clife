@@ -17,8 +17,8 @@ import fm
 
 console = Console()
 
-from paths import KB
-project_path = KB / "projects"
+from paths import KB, STORE
+project_path = STORE
 # Archives live OUTSIDE the kb (moved 2026-09-03): 322 archived notes and
 # 44MB of PDFs were matching every search Hermes ran over the ~423 live
 # files. ~/kb-archive is its own git repo — still versioned, still greppable

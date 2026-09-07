@@ -35,7 +35,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fm  # noqa: E402
 
 KB = Path(os.environ.get("KB_DIR", str(Path.home() / "kb")))
-STREAM = KB / "writing" / "_stream"
+from paths import STORE
+STREAM = STORE
 OUTBOX = KB / "outbox" / "reports"
 
 TODO, DONE, ARCHIVED = "todo", "done", "archived"

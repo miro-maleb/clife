@@ -20,8 +20,8 @@ from tui_common import ACCENT, ACCENT_DIM, BODY, MUTED
 
 console = Console()
 
-from paths import KB
-PROJECTS = KB / "projects"
+from paths import KB, STORE
+PROJECTS = STORE
 GOALS = KB / "goals"
 ORIENTATIONS = KB / "orientations"
 

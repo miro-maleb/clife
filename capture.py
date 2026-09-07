@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from paths import KB
+from paths import KB, STORE
 
 from kb_utils import insert_journal_bullet, today_journal
 
@@ -94,14 +94,20 @@ def kb_push(stamp):
 # There is no inbox FOLDER — "inbox" is the set of stream notes with no tags.
 # This path said _stream/inbox until 2026-09-03, which meant every $mod+c
 # capture recreated a retired directory and landed outside the month shards.
-stream_path = KB / "writing" / "_stream"
+stream_path = STORE
 
 
 def _shard():
-    from datetime import datetime as _dt
-    d = stream_path / _dt.now().strftime("%Y") / _dt.now().strftime("%m")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """The store is ONE FLAT DIRECTORY since the 2026-09-07 flatten.
+
+    Kept as a function rather than inlined: every caller asks "where does a new
+    capture go" and there must stay exactly one answer to that. paths.STORE was
+    repointed to ~/kb/notes by the flatten, but this still appended YYYY/MM
+    underneath it — so `cl capture`, and therefore Surface's POST /capture and
+    the phone quick-capture behind it, rebuilt a shard tree inside the flat
+    store. mkdir(parents=True) never errors, so nothing reported it."""
+    stream_path.mkdir(parents=True, exist_ok=True)
+    return stream_path
 
 
 def unique_inbox_path(stamp, index=None):

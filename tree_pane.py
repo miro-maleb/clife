@@ -39,8 +39,8 @@ CL = str(Path(__file__).parent / "cl")
 OVERVIEW_TYPES = {"area", "project", "sub-project"}
 FILE_TYPES = {"goal", "orientation", "system", "block"}
 
-from paths import KB
-PROJECTS     = KB / "projects"
+from paths import KB, STORE
+PROJECTS     = STORE
 GOALS        = KB / "goals"
 ORIENTATIONS = KB / "orientations"
 

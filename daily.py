@@ -21,13 +21,13 @@ import sys
 from datetime import date as _date
 from pathlib import Path
 
-from paths import KB
+from paths import KB, STORE
 from tags import is_break, tags_in
 
 # Daily notes live in the writing stream, sharded by month like every other
 # note — ~/kb/daily was retired 2026-09-03 (its entries were moved into the
 # shards) and nine code references were still writing into the empty stub.
-DAILY = KB / "writing" / "_stream"
+DAILY = STORE
 
 
 def day_path(date=None):

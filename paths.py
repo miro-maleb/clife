@@ -19,6 +19,13 @@ from pathlib import Path
 
 KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
 
+# THE store. One flat directory holding every note — captures, dailies,
+# projects, recipes, blog drafts. Placement is frontmatter `tags:`, never a
+# directory: a directory that encodes what a note IS is the mistake this
+# replaced (writing/_stream, projects/, life/, notes/ideas/ were four of them).
+# Nothing composes this path itself; import it.
+STORE = KB / "notes"
+
 # Tower-local state (not git-synced): the calendar-pool DB, the lint report, etc.
 DATA_DIR = Path(os.environ.get("CLIFE_DATA_DIR", str(Path.home() / ".local" / "share" / "clife"))).expanduser()
 

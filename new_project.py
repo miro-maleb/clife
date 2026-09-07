@@ -4,7 +4,7 @@ import termios
 from datetime import datetime
 from pathlib import Path
 
-from paths import KB
+from paths import KB, STORE
 
 from rich.console import Console
 
@@ -13,7 +13,7 @@ from inbox import get_project_areas, select_area_fzf
 
 console = Console()
 
-project_path = KB / "projects"
+project_path = STORE
 
 
 def getch():

@@ -26,11 +26,11 @@ try:
 except ImportError:
     pass
 
-from paths import KB
+from paths import KB, STORE
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 MODEL = os.environ.get("CL_CHAT_MODEL", "qwen3.6:27b")
-PROJECTS = KB / "projects"
+PROJECTS = STORE
 
 # ANSI — clife already leans on rich elsewhere, but raw codes keep streaming simple.
 DIM = "\033[2m"

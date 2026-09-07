@@ -18,7 +18,8 @@ from rich.panel import Panel
 console = Console()
 
 KB = Path.home() / "kb"
-PROJECTS = KB / "projects"
+from paths import STORE
+PROJECTS = STORE
 
 AREA_FIELDS = {"created", "status", "tags"}
 PROJECT_FIELDS = {"created", "deadline", "status", "completed", "abandoned",

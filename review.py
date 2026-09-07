@@ -31,10 +31,10 @@ import inbox
 
 console = Console()
 
-from paths import KB
-PROJECTS_DIR = KB / "projects"
+from paths import KB, STORE
+PROJECTS_DIR = STORE
 # "Inbox" is the set of stream notes with no tags, not a directory.
-STREAM_DIR = KB / "writing" / "_stream"
+STREAM_DIR = STORE
 
 
 def _unplaced(f):

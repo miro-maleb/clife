@@ -25,8 +25,8 @@ from rich.console import Console
 
 console = Console()
 
-from paths import KB
-PROJECTS = KB / "projects"
+from paths import KB, STORE
+PROJECTS = STORE
 GOALS = KB / "goals"
 
 
