@@ -160,6 +160,12 @@ Screen { background: #000000; }
 #queue { height: auto; overflow-y: auto; background: #000000; }
 #detailcol { width: 1fr; height: 1fr; padding: 0 1; }
 
+/* Reading the whole view: the list has nothing to add while you read it, and
+   the prose wants every row. */
+#body.readall #queuecol { display: none; }
+#body.readall #tagcol { display: none; }
+#body.readall #tagchips { display: none; }
+
 #body.narrow #tagcol { display: none; }
 /* `/` has to bring the column back or the only door to the vocabulary is
    walled up. It returns over the list rather than as a modal: you choose a
@@ -353,6 +359,12 @@ class TriageApp(App):
         Binding("l", "col_right", "Notes", show=False),
         Binding("slash", "focus_filter", "Filter tags", show=False),
         Binding("g", "view_untagged", "Unplaced", show=False),
+        # `z` reads the whole view as ONE page. The drawer answers "which
+        # notes are under this tag"; this answers "what do they SAY", which is
+        # a different question and the one you have when reviewing rather than
+        # filing. Stepping note-by-note makes you rebuild the thread in your
+        # head at every step.
+        Binding("z", "read_all", "Read the whole tag", show=False),
         Binding("i", "focus_tags", "Tag", show=False),
         Binding("a", "accept", "Accept suggestion", show=False),
         Binding("t", "todo", "Mark todo", show=False),
@@ -385,6 +397,7 @@ class TriageApp(App):
         # column is being used to navigate. One flag, because the column does
         # both jobs and must not guess which.
         self._picking = None
+        self._readall = False
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -574,6 +587,62 @@ class TriageApp(App):
             return None
         return self.rows[i]
 
+    # ── read the whole view ─────────────────────────────────────────────────
+    MAX_READ = 120_000        # a very long tag should not stall the terminal
+
+    def action_read_all(self) -> None:
+        self._readall = not self._readall
+        self.query_one("#body").set_class(self._readall, "readall")
+        if self._readall:
+            self._paint_read_all()
+            self.set_focus(self.query_one("#preview", VerticalScroll))
+        else:
+            self._paint_detail()
+            self.set_focus(self.query_one("#queue", ListView))
+        self._paint_status()
+
+    def _paint_read_all(self) -> None:
+        """Every note in the view, concatenated, read-only.
+
+        READ-ONLY, deliberately, and that is the whole design decision. Making
+        the notes editable in place means writing edits back into regions
+        whose boundaries shift the moment you add a line — the block-identity
+        problem one level up, and the reason Logseq has to inject UUIDs into
+        your markdown. Here `z` is a reading posture: to change something you
+        leave it, which costs one keystroke and can never corrupt the note
+        below the one you meant.
+        """
+        head = ("unplaced" if self.view_tag is triage.UNTAGGED
+                else "#" + str(self.view_tag))
+        self.query_one("#detailhdr", Label).update(
+            f"READING {head} — {len(self.rows)} notes")
+        self.query_one("#title", Static).update("")
+        self.query_one("#meta", Static).update("")
+        self.query_one("#hermes", Static).display = False
+        out = Text()
+        used = 0
+        for n, r in enumerate(self.rows):
+            if used > self.MAX_READ:
+                out.append(f"\n… {len(self.rows) - n} more notes not shown "
+                           f"(over {self.MAX_READ // 1000}k characters)\n", DIM)
+                break
+            try:
+                _, body, _ = stream.fm.split(KB / r["relpath"])
+            except Exception:                          # noqa: BLE001
+                body = "(unreadable)"
+            if n:
+                out.append("\n───\n\n", FAINT)
+            age = f"{r['age_days']}d" if r["age_days"] is not None else "—"
+            out.append(f"{r['title'] or r['slug']}\n", f"bold {ACCENT}")
+            tags = " ".join("#" + t for t in (r.get("tags") or []))
+            out.append(f"{age} · {r['slug']}" + (f"   {tags}" if tags else "")
+                       + "\n\n", FAINT)
+            text = body.strip() or "(empty)"
+            out.append(text + "\n")
+            used += len(text)
+        self.query_one("#previewtext", Static).update(out)
+        self.query_one("#preview", VerticalScroll).scroll_home(animate=False)
+
     # ── responsive ──────────────────────────────────────────────────────────
     # ONE breakpoint. Stacking the list over the reader removed the need for
     # a middle mode: the only question left is whether the 22-column tag list
@@ -727,13 +796,21 @@ class TriageApp(App):
                 ("   type to filter · ⏎ adds it · a new word is offered · "
                  "Esc cancels", FAINT)))
             return
+        if self._readall:
+            self.query_one("#status", Static).update(Text.assemble(
+                ("READING  ", f"bold {ACCENT}"),
+                ("unplaced" if self.view_tag is triage.UNTAGGED
+                 else f"#{self.view_tag}", ACCENT),
+                (f"  {len(self.rows)} notes as one page", DIM),
+                ("   j/k scroll · z or esc back · read-only", FAINT)))
+            return
         where = ("unplaced" if self.view_tag is triage.UNTAGGED
                  else f"#{self.view_tag}")
         mode = getattr(self, "_layout_mode", None)
         # The hint is the first thing to go when the width does. At `narrow`
         # the tag column is hidden entirely, so `/` is the only way to reach
         # it and is the one key that must still be advertised.
-        hint = ("  j/k move · ⏎ deeper · esc back · / filter · g unplaced · o writer · ?"
+        hint = ("  j/k move · ⏎ deeper · esc back · z read all · / filter · g unplaced · ?"
                 if not mode else "  j/k · ⏎ deeper · esc back · / tags · o writer · ?")
         self.query_one("#status", Static).update(Text.assemble(
             ("NAV ", f"bold {ACCENT}") if mode else ("NAVIGATOR  ", f"bold {ACCENT}"),
@@ -808,9 +885,15 @@ class TriageApp(App):
         return tags if self.focused is tags else self.query_one("#queue", ListView)
 
     def action_down(self) -> None:
+        if self._readall:
+            self.query_one("#preview", VerticalScroll).scroll_down(animate=False)
+            return
         self._focused_list().action_cursor_down()
 
     def action_up(self) -> None:
+        if self._readall:
+            self.query_one("#preview", VerticalScroll).scroll_up(animate=False)
+            return
         self._focused_list().action_cursor_up()
 
     def on_list_view_highlighted(self, event) -> None:
@@ -1155,6 +1238,7 @@ class TriageApp(App):
                     "tags: j/k or w/b move · I/A first/last · d remove · a add · "
                     "on the note list: t todo · d trash (recoverable) · u undo · "
                     "c chat (first one starts a pass) · C re-ask · "
+                    "z read the whole tag as one page (read-only) · "
                     "o open in the writer · r reload · q quit", timeout=14)
 
     # ── writing ─────────────────────────────────────────────────────────────
@@ -1293,6 +1377,13 @@ class TriageApp(App):
 
     # ── keys ────────────────────────────────────────────────────────────────
     def on_key(self, event: events.Key) -> None:
+        # `escape` only — `z` is already an App binding, and handling it here
+        # too toggled read mode twice per press, which looked like the key
+        # doing nothing at all.
+        if self._readall and event.key == "escape":
+            self.action_read_all()
+            event.stop()
+            return
         filt = self.query_one("#tagfilter", Input)
         if self.focused is filt:
             if event.key == "escape":
