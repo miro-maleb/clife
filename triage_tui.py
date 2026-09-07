@@ -147,14 +147,17 @@ Screen { background: #000000; }
 #taglist > ListItem.--highlight { background: #241809; }
 
 #rightcol { width: 1fr; height: 1fr; layout: vertical; }
-/* auto, capped. Three notes take three rows; #log's forty scroll inside 45%
-   rather than pushing the reader off the bottom. */
-#queuecol { width: 1fr; height: auto; max-height: 45%;
-            border-bottom: solid #272320; }
+/* The cap lives on the LIST, not on this container, and is set in ROWS by
+   _apply_layout rather than as a percentage. A `max-height: 45%` here
+   resolved against a parent that is itself `height: auto` — circular, so
+   Textual grew the list to its content and the container simply CLIPPED it:
+   the cursor moved onto rows you could not see. A bound on the scrollable
+   widget is what makes it scroll instead of overflow. */
+#queuecol { width: 1fr; height: auto; border-bottom: solid #272320; }
 /* auto on the LIST too, and no max-height on it — the cap belongs on the
    container. This is the rail's rule (#inboxcol InboxPane ListView), which
    is the one place in this system that already gets content-sizing right. */
-#queue { height: auto; background: #000000; }
+#queue { height: auto; overflow-y: auto; background: #000000; }
 #detailcol { width: 1fr; height: 1fr; padding: 0 1; }
 
 #body.narrow #tagcol { display: none; }
@@ -399,7 +402,7 @@ class TriageApp(App):
     async def on_mount(self) -> None:
         self.register_theme(HEARTH)
         self.theme = "hearth"
-        self._apply_layout(self.size.width)
+        self._apply_layout(self.size.width, self.size.height)
         await self.reload()
         self.set_focus(self.query_one("#queue", ListView))
         # Hermes fills slots from the pane next door and has no way to tell
@@ -552,16 +555,23 @@ class TriageApp(App):
     # the pane needs — prose under ~34 columns wraps into gibberish.
     TAGCOL_MIN = 72
 
-    def _apply_layout(self, width: int) -> None:
+    def _apply_layout(self, width: int, height: int | None = None) -> None:
         body = self.query_one("#body")
         mode = "" if width >= self.TAGCOL_MIN else "narrow"
         body.set_class(mode == "narrow", "narrow")
+        # The drawer's cap, in rows. Content-sized below it, scrolling above:
+        # three notes take three rows, forty scroll inside the cap instead of
+        # pushing the reader off the bottom.
+        h = height if height is not None else self.size.height
+        if h:
+            self.query_one("#queue", ListView).styles.max_height = \
+                max(4, int(h * 0.45))
         if mode != getattr(self, "_layout_mode", None):
             self._layout_mode = mode
             self._paint_status()
 
     def on_resize(self, event) -> None:
-        self._apply_layout(event.size.width)
+        self._apply_layout(event.size.width, event.size.height)
 
     # ── the tag column ──────────────────────────────────────────────────────
     def _paint_tags(self) -> None:
