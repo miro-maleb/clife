@@ -579,6 +579,7 @@ class TriageApp(App):
         if self._open_on:
             self._load_view(self._open_on)
         self.set_focus(self.query_one("#queue", ListView))
+        self.call_after_refresh(self._paint_hdr)   # now there is a width
         # Hermes fills slots from the pane next door and has no way to tell
         # this app it did. One stat every two seconds is cheaper than making
         # him press `r` to find out — and a suggestion he never sees is the
@@ -714,6 +715,67 @@ class TriageApp(App):
         kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
         return [root] + kids if kids else []
 
+    # What each view can DO, longest form first. The caller takes the first
+    # that fits, the way the rail's inbox header does — a hint clipped
+    # mid-word spends width on nothing and loses the count off the end too.
+    #
+    # Order inside a line is the order you reach for them. `dd delete` is last
+    # everywhere because it is the one you want to have read before pressing,
+    # and `a accept` is first on the unplaced queue because on a good day it
+    # is the only key you press.
+    VERBS = {
+        "pool": ["s sooner · p project · t out · o open · dd delete",
+                 "s sooner · p project · t out · dd delete",
+                 "s sooner · t out · dd",
+                 "s · t · dd"],
+        "unplaced": ["a accept · i tag · t todo · p project · o open · dd delete",
+                     "a accept · i tag · t todo · p project · dd delete",
+                     "a accept · i tag · t todo · dd",
+                     "a · i · t · dd"],
+        "tag": ["i tag · t todo · o open · dd delete",
+                "i tag · t todo · dd delete",
+                "i tag · dd"],
+    }
+
+    def _paint_hdr(self) -> None:
+        """The queue header: what you are looking at, then what you can do to
+        it. Its own method because the verbs depend on the COLUMN's width, and
+        the first paint happens before there is a layout to measure — so this
+        has to be callable again once there is one, and on every resize."""
+        if self.view_tag == POOL_TAG:
+            n_soon = sum(1 for r in self.rows if self._is_soon(r))
+            hdr = f"POOL — {len(self.rows)} · {n_soon} sooner"
+        elif self.view_tag is triage.UNTAGGED:
+            filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
+            hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
+        else:
+            hdr = f"#{self.view_tag} — {len(self.rows)}"
+        try:
+            self.query_one("#queuehdr", Label).update(self._with_verbs(hdr))
+        except Exception:  # noqa: BLE001 — not composed yet
+            pass
+
+    def _with_verbs(self, hdr: str) -> str:
+        """Append what this view can do, trimmed to what the column has room
+        for. The pool advertised its keys and triage did not, which is the
+        whole reason `t` on an unplaced note was a surprise rather than a
+        tool — the key worked, nobody had said so."""
+        which = ("pool" if self.view_tag == POOL_TAG
+                 else "unplaced" if self.view_tag is triage.UNTAGGED else "tag")
+        # The COLUMN's width, not the label's. `.hdr` sizes to its content, so
+        # measuring the label asks "does this text fit inside itself" and the
+        # answer is always no room to spare.
+        try:
+            room = self.query_one("#queuecol").size.width - 2   # padding
+        except Exception:  # noqa: BLE001 — before the first layout
+            room = 0
+        if room <= 0:
+            return hdr
+        for hint in self.VERBS[which]:
+            if room >= len(hdr) + len(hint) + 5:
+                return f"{hdr}  ·  {hint}"
+        return hdr
+
     def _paint_children(self) -> None:
         """The children strip: what is under this tag, and which one is open.
 
@@ -764,18 +826,7 @@ class TriageApp(App):
         if items:
             view.extend(items)
             view.index = min(keep or 0, len(items) - 1)
-        if self.view_tag == POOL_TAG:
-            n_soon = sum(1 for r in self.rows
-                         if SOONER in [stream.norm_tag(x)
-                                       for x in (r.get("tags") or [])])
-            hdr = (f"POOL — {len(self.rows)} · {n_soon} sooner · "
-                   "s sooner · p project · t out · dd delete")
-        elif self.view_tag is triage.UNTAGGED:
-            filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
-            hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
-        else:
-            hdr = f"#{self.view_tag} — {len(self.rows)}"
-        self.query_one("#queuehdr", Label).update(hdr)
+        self._paint_hdr()
         self._paint_children()
         self._paint_status()
         self._paint_detail()
@@ -914,6 +965,12 @@ class TriageApp(App):
 
     def on_resize(self, event) -> None:
         self._apply_layout(event.size.width, event.size.height)
+        # The verb hints are measured against the column, so a resize can make
+        # room for a longer one or take the room away. On a TIMER rather than
+        # call_after_refresh: the new geometry is not in place by the next
+        # refresh, so measuring then reads the old width and the hint stays
+        # too long for the column it is now in.
+        self.set_timer(0.15, self._paint_hdr)
 
     # ── the tag column ──────────────────────────────────────────────────────
     def _paint_tags(self) -> None:
