@@ -213,6 +213,34 @@ def classify_tag(raw: str, vocab: dict) -> dict:
             out.update(verdict="variant", tag=known, candidates=[known])
             return out
 
+    # LEAF NAME -> the full path, when there is only one path it could mean.
+    #
+    # Writing `#grocery` and having it land in `#shopping/grocery` is the whole
+    # ergonomic case for a hierarchy: the prefix is the part you already know
+    # and the least interesting to type, and a capture door where you must
+    # spell the whole path is one you stop using. So a bare word that is not
+    # itself a tag resolves to the single existing tag ending in it — reported
+    # as a `variant`, because that is exactly what it is: the same idea,
+    # spelled shorter, applied under the vocabulary's own spelling.
+    #
+    # Compared on _cmp_key, so `groceries` reaches `shopping/grocery` by the
+    # same stemming every other comparison here uses.
+    #
+    # AMBIGUITY IS A REFUSAL, not a guess. Once `errands/grocery` exists too,
+    # `#grocery` stops having one answer, and picking the older or the bigger
+    # one would file notes somewhere you did not choose. The candidates say
+    # which paths it could have been — the same shape the near-duplicate
+    # refusal already takes, so nothing new has to be learned to read it.
+    if "/" not in tag:
+        leaves = [k for k in vocab
+                  if "/" in k and _cmp_key(k.rsplit("/", 1)[1]) == key]
+        if len(leaves) == 1:
+            out.update(verdict="variant", tag=leaves[0], candidates=leaves)
+            return out
+        if len(leaves) > 1:
+            out.update(verdict="near", candidates=sorted(leaves)[:5])
+            return out
+
     near = []
     for known in vocab:
         if tag.startswith(known + "/") or known.startswith(tag + "/"):
