@@ -1589,8 +1589,31 @@ class TriageApp(App):
             # under you mid-edit.
             keep = self.query_one("#queue", ListView).index
             await self.reload()
+            # FOLLOW THE NOTE when the edit removed it from this view. Taking
+            # `work-app` off the only note tagged `work-app` empties the view
+            # you are standing in, and staying put means the note you were
+            # working on vanishes along with the tag — the surface reports
+            # "nothing tagged #work-app" and the panel goes blank, which reads
+            # as having lost the note rather than having retagged it.
+            #
+            # So go where the note went: its first remaining tag, or the
+            # unplaced queue when the last one is gone. Removing a tag is a
+            # statement about the note, never a decision to stop looking at
+            # it.
+            if not any(r["slug"] == row["slug"] for r in self.rows):
+                self._load_view(after[0] if after else triage.UNTAGGED)
+                dest = after[0] if after else triage.UNTAGGED
+                if dest in self.tag_names:      # keep the column in step
+                    lst = self.query_one("#taglist", ListView)
+                    want = self.tag_names.index(dest)
+                    if lst.index != want:
+                        lst.index = want
             v = self.query_one("#queue", ListView)
-            if self.rows:
+            here = next((i for i, r in enumerate(self.rows)
+                         if r["slug"] == row["slug"]), None)
+            if here is not None:
+                v.index = here
+            elif self.rows:
                 v.index = min(keep or 0, len(self.rows) - 1)
             r = self._current()
             chips = self.query_one("#tagchips", TagChips)
