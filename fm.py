@@ -80,7 +80,27 @@ def set_fields(path: Path, updates: dict, *, quote_keys=()):
     trailing_nl = text.endswith("\n")
     lines = text.splitlines()
     if not lines or lines[0].strip() != FENCE:
-        raise ValueError(f"{path} has no frontmatter fence")
+        # NO FRONTMATTER YET — write one, rather than refusing.
+        #
+        # A note without a fence is still a note. Two of the 289 in the store
+        # are bare text from before captures carried frontmatter, and refusing
+        # here made them PERMANENTLY UNTAGGABLE: `cl stream set` raised, the
+        # traceback never reached the caller, and the triage TUI reported
+        # "failed: unknown" while the note stayed in the unplaced queue. They
+        # had been sitting at the top of that queue since June for exactly
+        # this reason — the two rows with no date, which is the same absence
+        # seen from the other side.
+        #
+        # Placement lives in frontmatter, so "set a field on this note" has to
+        # be able to create the block it writes into; anything else means the
+        # oldest notes in the store can never be filed. The body is preserved
+        # untouched below the fence, with one blank line between.
+        head = [FENCE] + [_fmt(k, v, quote_keys) for k, v in updates.items()] \
+               + [FENCE]
+        body = lines[1:] if lines and lines[0].strip() == "" else lines
+        out = "\n".join(head + [""] + body)
+        path.write_text(out + "\n" if trailing_nl or body else out + "\n")
+        return
     end = None
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == FENCE:

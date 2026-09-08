@@ -224,8 +224,19 @@ def _run(*args) -> dict:
     except Exception as exc:                      # noqa: BLE001
         return {"ok": False, "error": str(exc)}
     out = (p.stdout or "").strip()
+    if not out:
+        # NO STDOUT AT ALL — a crash, not a refusal. This used to fall through
+        # to `data = {}`, which got an `ok` from the exit code and NO `error`,
+        # so every traceback surfaced as the two least useful words available:
+        # "failed: unknown". The message that would have named the cause was
+        # sitting in stderr the whole time.
+        err = (p.stderr or "").strip()
+        if p.returncode != 0 or err:
+            return {"ok": False,
+                    "error": (err.splitlines() or ["no output"])[-1][:200]}
+        return {"ok": True}
     try:
-        data = json.loads(out) if out else {}
+        data = json.loads(out)
     except json.JSONDecodeError:
         return {"ok": False, "error": (p.stderr or out or "no output")[:200]}
     if isinstance(data, dict) and "ok" not in data:
