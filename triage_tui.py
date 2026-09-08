@@ -260,6 +260,7 @@ class TagChips(Static):
     jobs, and no second place where a tag can be misspelled into existence.
     """
     can_focus = True
+    suggested: list = []          # render_chips may run before the first show()
 
     BINDINGS = [
         # j/k FIRST, because in this app j/k has one meaning everywhere —
@@ -268,6 +269,11 @@ class TagChips(Static):
         # bound and are not an analogy: a chip IS a word. h/l too, matching
         # the column movement one pane over. Three spellings of one verb, and
         # no wrong guess.
+        # ⏎ takes the suggestion. Free here and nowhere else: on the queue
+        # Enter DESCENDS, and a row of tags has nothing below it to descend
+        # into, so the key was doing nothing on the one widget where the
+        # suggestion is now on screen.
+        Binding("enter", "take", "Take suggestion", show=False),
         Binding("j,w,l,right", "next", "Next tag", show=False),
         Binding("k,b,h,left",  "prev", "Prev tag", show=False),
         # I / A for first / last, his choice over 0 / $. In vim those insert
@@ -289,6 +295,9 @@ class TagChips(Static):
     class Add(Message):
         pass
 
+    class Take(Message):
+        """⏎ — apply the suggestion shown beside the chips."""
+
     class Leave(Message):
         pass
 
@@ -297,8 +306,22 @@ class TagChips(Static):
         self.tags: list = []
         self.cursor = 0
 
-    def show(self, tags: list) -> None:
+    def show(self, tags: list, suggested=()) -> None:
+        """``suggested`` is what an agent proposed and nobody has accepted.
+
+        It belongs HERE, next to the tags it would become, rather than only on
+        the queue row you came from. Descending into a note to decide about it
+        used to hide the very thing you were deciding about: the panel showed
+        the preview and the note's own tags, the suggestion stayed one screen
+        back, and `a` on the queue accepted something no longer in front of
+        you.
+        """
         self.tags = list(tags)
+        have = {t.lower() for t in self.tags}
+        # Only what is not already on the note. A suggestion half-accepted is
+        # the common case — you took `shopping` and left `home` — and echoing
+        # the part already applied would read as a duplicate chip.
+        self.suggested = [t for t in (suggested or []) if t.lower() not in have]
         self.cursor = min(self.cursor, max(0, len(self.tags) - 1))
         self.render_chips()
 
@@ -311,10 +334,18 @@ class TagChips(Static):
             t.append(" " + tag + " ",
                      f"black on {ACCENT}" if focused else f"{ACCENT}")
             t.append(" ")
+        # Ghost chips: dim, `+` prefixed, never selectable. They are not tags
+        # on this note, they are what would be, and making them look like the
+        # real ones would be a lie the cursor could walk into.
+        for tag in self.suggested:
+            t.append(" +" + tag + " ", DIM)
+            t.append(" ")
         hint = "  a add" + ("  ·  d remove  ·  j/k move  ·  esc back"
                             if len(self.tags) > 1
                             else ("  ·  d remove  ·  esc back" if self.tags
                                   else "  ·  esc back"))
+        if self.suggested:
+            hint = "  ⏎ take" + hint
         t.append(hint, FAINT)
         self.update(t)
 
@@ -350,6 +381,10 @@ class TagChips(Static):
 
     def action_add(self) -> None:
         self.post_message(self.Add())
+
+    def action_take(self) -> None:
+        if self.suggested:
+            self.post_message(self.Take())
 
     def action_leave(self) -> None:
         self.post_message(self.Leave())
@@ -760,7 +795,8 @@ class TriageApp(App):
         await self.reload()
         r = self._current()
         chips = self.query_one("#tagchips", TagChips)
-        chips.show((r or {}).get("tags") or [])
+        chips.show((r or {}).get("tags") or [],
+                   (r or {}).get("suggested") or [])
         self.set_focus(chips)
 
     async def _switch_view(self, tag) -> None:
@@ -860,7 +896,8 @@ class TriageApp(App):
         # #hearth looks like it belongs only to #hearth, and the one thing a
         # navigator has to show is that a note lives in several places at once
         # — that is the whole argument for tags over directories.
-        self.query_one("#tagchips", TagChips).show(row.get("tags") or [])
+        self.query_one("#tagchips", TagChips).show(
+            row.get("tags") or [], row.get("suggested") or [])
         others = [t for t in row.get("tags", []) if t != self.view_tag]
         if others:
             meta.append("   ")
@@ -1012,7 +1049,7 @@ class TriageApp(App):
         if not row:
             return
         chips = self.query_one("#tagchips", TagChips)
-        chips.show(row.get("tags") or [])
+        chips.show(row.get("tags") or [], row.get("suggested") or [])
         chips.cursor = 0
         self.set_focus(chips)
 
@@ -1038,6 +1075,12 @@ class TriageApp(App):
         self._picking = row["slug"]
         self._paint_status()
         self.action_focus_filter()
+
+    async def on_tag_chips_take(self, event: TagChips.Take) -> None:
+        """⏎ on the chips — accept the suggestion now that it is visible there.
+        Routed to the same action `a` uses on the queue, so there is one
+        implementation of "take what was proposed"."""
+        await self.action_accept()
 
     def on_tag_chips_leave(self, event: TagChips.Leave) -> None:
         self.set_focus(self.query_one("#queue", ListView))
@@ -1346,7 +1389,8 @@ class TriageApp(App):
                 v.index = min(keep or 0, len(self.rows) - 1)
             r = self._current()
             chips = self.query_one("#tagchips", TagChips)
-            chips.show((r or {}).get("tags") or [])
+            chips.show((r or {}).get("tags") or [],
+                       (r or {}).get("suggested") or [])
             self.set_focus(chips)
             return
         await self._advance()
