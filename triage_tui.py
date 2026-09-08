@@ -107,6 +107,7 @@ from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
 from textual.widgets import Input, Label, ListItem, ListView, Static
+from textual.widgets.input import Selection
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -648,6 +649,23 @@ class TriageApp(App):
             out.append(ListItem(Static(t)))
         return out
 
+    def _cursor_to(self, idx: int) -> None:
+        """Put the queue cursor on a row, and mean it.
+
+        Re-asserted after the next refresh because `ListView.clear()` is
+        deferred in Textual: the repaint that rebuilt this list can land AFTER
+        the index is set and reset it to None. That is why the cursor vanished
+        after `s` — the toggle worked, the row moved, and the cursor was gone
+        until you pressed j.
+        """
+        def place() -> None:
+            v = self.query_one("#queue", ListView)
+            if not len(v):
+                return
+            v.index = max(0, min(idx, len(v) - 1))
+        place()
+        self.call_after_refresh(place)
+
     def _is_soon(self, row) -> bool:
         return SOONER in [stream.norm_tag(x) for x in (row.get("tags") or [])]
 
@@ -963,7 +981,14 @@ class TriageApp(App):
         # fallback is how a pick that had drifted out of view ended up
         # addressing an unrelated note, which is a silent mis-tag and by far
         # the worst outcome available here.
-        row = next((r for r in self.rows if r["slug"] == slug), None)
+        # Look in the VIEW first, then the whole store. The slug is exact, so
+        # widening the search is not the guess the `_current()` fallback was —
+        # it addresses the note that was named and no other. It has to widen:
+        # `p` strips the todo tags before opening the picker, which takes the
+        # note out of the pool, and the pool deliberately does not follow it.
+        # Searching only the current rows meant promote could never complete.
+        row = (next((r for r in self.rows if r["slug"] == slug), None)
+               or next((r for r in self._items if r["slug"] == slug), None))
         if not row:
             self._paint_status()
             self.notify(f"lost track of {slug or 'the note'} — nothing tagged",
@@ -1384,7 +1409,6 @@ class TriageApp(App):
         else:
             after = now + [POOL_TAG]
         await self._apply(row, after, stay=True)
-        self.set_focus(self.query_one("#queue", ListView))
 
     async def action_sooner(self) -> None:
         """Move one item between the two bins.
@@ -1405,11 +1429,6 @@ class TriageApp(App):
         else:                                   # later -> sooner
             after = [t for t in now if t != POOL_TAG] + [SOONER]
         await self._apply(row, after, stay=True)
-        # `stay` hands focus to the CHIPS, which is right for a chip edit and
-        # wrong here: `s` is pressed while walking the pool, and landing in the
-        # chip row means the next j/k moves a tag cursor instead of the list —
-        # so a second `s` two rows later kept toggling the same note back off.
-        self.set_focus(self.query_one("#queue", ListView))
 
     async def action_promote(self) -> None:
         """`p` — a finished todo that earned keeping becomes a project.
@@ -1433,9 +1452,17 @@ class TriageApp(App):
         self.action_focus_filter()
         box = self.query_one("#tagfilter", Input)
         box.value = PROJECTS
-        box.cursor_position = len(PROJECTS)
         self._tag_filter = PROJECTS
         self._paint_tags()
+        # COLLAPSE THE SELECTION, after the refresh. Focusing an Input selects
+        # its contents, so the seeded `projects/` arrived highlighted and the
+        # first character you typed replaced it — turning a head start into a
+        # trap. `cursor_position` alone did not survive the focus that follows
+        # it; an explicit empty selection at the end does.
+        def to_end() -> None:
+            box.selection = Selection.cursor(len(box.value))
+        to_end()
+        self.call_after_refresh(to_end)
 
     async def action_trash(self) -> None:
         """`dd` — this was never a note.
@@ -1759,7 +1786,16 @@ class TriageApp(App):
             # unplaced queue when the last one is gone. Removing a tag is a
             # statement about the note, never a decision to stop looking at
             # it.
-            if not any(r["slug"] == row["slug"] for r in self.rows):
+            # THE POOL DOES NOT FOLLOW. It is a working pass, not a browser:
+            # `t` and `p` exist precisely to take a note OUT of the pool, and
+            # a view that chased it would end every one of those keystrokes by
+            # dropping you somewhere else with the list you were working gone
+            # from under you. Staying put, with the cursor landing on whatever
+            # moved up, is what "act on it and move on" means. Elsewhere the
+            # note is the thing you were reading and following it is right —
+            # see below.
+            in_pool = self.view_tag == POOL_TAG
+            if not in_pool and not any(r["slug"] == row["slug"] for r in self.rows):
                 self._load_view(after[0] if after else triage.UNTAGGED)
                 dest = after[0] if after else triage.UNTAGGED
                 if dest in self.tag_names:      # keep the column in step
@@ -1770,15 +1806,17 @@ class TriageApp(App):
             v = self.query_one("#queue", ListView)
             here = next((i for i, r in enumerate(self.rows)
                          if r["slug"] == row["slug"]), None)
-            if here is not None:
-                v.index = here
-            elif self.rows:
-                v.index = min(keep or 0, len(self.rows) - 1)
+            want = here if here is not None else min(keep or 0,
+                                                     max(0, len(self.rows) - 1))
+            self._cursor_to(want)
             r = self._current()
             chips = self.query_one("#tagchips", TagChips)
             chips.show((r or {}).get("tags") or [],
                        (r or {}).get("suggested") or [])
-            self.set_focus(chips)
+            # The chips are where a CHIP edit should leave you. In the pool
+            # every verb is pressed while walking the list, so the list is
+            # where the hands stay.
+            self.set_focus(v if in_pool else chips)
             return
         await self._advance()
 
