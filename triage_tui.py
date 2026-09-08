@@ -480,6 +480,11 @@ class TriageApp(App):
         # is one bit: later is the absence of the tag, so there is no second
         # state to name and nothing that can contradict it.
         Binding("s", "sooner", "Sooner / later", show=False),
+        # `p` — this outlived being a task. Strips the todo tags and opens the
+        # picker seeded to `projects/`, rather than inventing a bare `project`
+        # tag beside the namespace that already exists. You still name it,
+        # because only you know which project it is.
+        Binding("p", "promote", "Make a project", show=False),
         Binding("d", "trash", "Trash", show=False),
         Binding("u", "undo", "Undo last", show=False),
         Binding("c", "chat", "Jump to chat", show=False),
@@ -722,7 +727,8 @@ class TriageApp(App):
             n_soon = sum(1 for r in self.rows
                          if SOONER in [stream.norm_tag(x)
                                        for x in (r.get("tags") or [])])
-            hdr = f"POOL — {len(self.rows)} · {n_soon} sooner · s toggles"
+            hdr = (f"POOL — {len(self.rows)} · {n_soon} sooner · "
+                   "s sooner · p project · t out · dd delete")
         elif self.view_tag is triage.UNTAGGED:
             filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
             hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
@@ -1361,10 +1367,24 @@ class TriageApp(App):
         await self._apply(row, row["suggested"])
 
     async def action_todo(self) -> None:
+        """`t` — in or out of the pool.
+
+        Was `--todo`, which wrote `status: todo` — a field the pool does not
+        read and which disagreed with the tag by design. This toggles the
+        membership itself, so a note filed here by mistake leaves without
+        being deleted. Takes the child with it: leaving the pool means
+        leaving, not demoting to later.
+        """
         row = self._current()
-        if row:
-            self._write(row, "--todo")
-            await self.reload()
+        if not row:
+            return
+        now = [stream.norm_tag(t) for t in (row.get("tags") or [])]
+        if POOL_TAG in now or SOONER in now:
+            after = [t for t in now if t not in (POOL_TAG, SOONER)]
+        else:
+            after = now + [POOL_TAG]
+        await self._apply(row, after, stay=True)
+        self.set_focus(self.query_one("#queue", ListView))
 
     async def action_sooner(self) -> None:
         """Move one item between the two bins.
@@ -1378,14 +1398,44 @@ class TriageApp(App):
         if not row:
             return
         now = [stream.norm_tag(t) for t in (row.get("tags") or [])]
-        after = ([t for t in now if t != SOONER] if SOONER in now
-                 else now + [SOONER])
+        if SOONER in now:                       # sooner -> later
+            after = [t for t in now if t != SOONER]
+            if POOL_TAG not in after:
+                after.append(POOL_TAG)
+        else:                                   # later -> sooner
+            after = [t for t in now if t != POOL_TAG] + [SOONER]
         await self._apply(row, after, stay=True)
         # `stay` hands focus to the CHIPS, which is right for a chip edit and
         # wrong here: `s` is pressed while walking the pool, and landing in the
         # chip row means the next j/k moves a tag cursor instead of the list —
         # so a second `s` two rows later kept toggling the same note back off.
         self.set_focus(self.query_one("#queue", ListView))
+
+    async def action_promote(self) -> None:
+        """`p` — a finished todo that earned keeping becomes a project.
+
+        Two steps, deliberately: the todo tags come off straight away, and
+        then the ordinary tag picker opens with `projects/` already typed. It
+        does not guess a name — a project is a thing you are choosing to keep,
+        and auto-coining `projects/<title-slug>` would grow one tag per todo,
+        which is the sprawl this vocabulary was just cut back from.
+        """
+        row = self._current()
+        if not row:
+            return
+        now = [stream.norm_tag(t) for t in (row.get("tags") or [])]
+        if POOL_TAG in now or SOONER in now:
+            await self._apply(row, [t for t in now
+                                    if t not in (POOL_TAG, SOONER)], stay=True)
+            row = next((r for r in self.rows if r["slug"] == row["slug"]), row)
+        self._picking = row["slug"]
+        self._paint_status()
+        self.action_focus_filter()
+        box = self.query_one("#tagfilter", Input)
+        box.value = PROJECTS
+        box.cursor_position = len(PROJECTS)
+        self._tag_filter = PROJECTS
+        self._paint_tags()
 
     async def action_trash(self) -> None:
         """`dd` — this was never a note.
@@ -1833,7 +1883,15 @@ class TriageApp(App):
 
 
 POOL_TAG = "todo"
-SOONER = "sooner"
+# A CHILD, not a second tag. Flat `#todo` + `#sooner` is two independent bits
+# and therefore four states, one of which — `#sooner` with no `#todo` — means
+# nothing and is invisible to the pool forever. As a child there are two
+# states and the meaningless one cannot be spelled. It is also one write at
+# capture time, and the leaf resolution in stream.classify_tag turns a bare
+# `#sooner` into this, so the short form lands in the namespace instead of
+# orphaning itself.
+SOONER = "todo/sooner"
+PROJECTS = "projects/"
 
 
 def main() -> None:
