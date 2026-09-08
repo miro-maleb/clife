@@ -118,13 +118,14 @@ def unique_inbox_path(stamp, index=None):
     return path
 
 
-capture_log = KB / "capture-log.md"
-
-
-def log_capture(text, stamp):
-    entry = f"**{stamp}**  {text}\n"
-    existing = capture_log.read_text() if capture_log.exists() else ""
-    capture_log.write_text(entry + existing)
+# No capture log. Every capture used to be written TWICE -- once as a note,
+# once prepended to ~/kb/capture-log.md -- and the second copy answered only
+# "did my capture land?", which the inbox view now answers from the store
+# itself. It also survived the flatten wrong: STORE was repointed to
+# ~/kb/notes and this still said KB, so it silently abandoned its own 110-entry
+# history in notes/ and started a fresh file OUTSIDE the store. Same bug as
+# _shard() above, two lines down from its comment. A second writer to the
+# capture path is the exact class of thing the flatten removed.
 
 
 def write_inbox(text, stamp, index=None):
@@ -136,7 +137,6 @@ def write_inbox(text, stamp, index=None):
     path = unique_inbox_path(stamp, index)
     path.write_text(f"---\ncreated: {_dt.now().strftime('%Y-%m-%d %H:%M')}\n"
                     f"tags: []\n---\n\n{text.strip()}\n")
-    log_capture(text, stamp)
     return path
 
 
@@ -171,7 +171,7 @@ def text_mode(journal=False):
                 console.print("[dark_sea_green4]    → journal[/dark_sea_green4]")
             else:
                 path = write_inbox(line, stamp)
-                console.print(f"[dark_sea_green4]    → inbox/{path.name}[/dark_sea_green4]")
+                console.print(f"[dark_sea_green4]    → notes/{path.name}[/dark_sea_green4]")
 
             count += 1
 
@@ -249,7 +249,7 @@ def voice_mode_termux(journal=False):
                 else:
                     index = i if use_index else None
                     path = write_inbox(chunk, stamp, index)
-                    print(f"  → inbox/{path.name}")
+                    print(f"  → notes/{path.name}")
                 display = chunk if len(chunk) <= 80 else chunk[:77] + "..."
                 print(f"     {display}")
                 total_written += 1
@@ -303,7 +303,7 @@ def flush_pending(journal=False):
             else:
                 index = i if use_index else None
                 path = write_inbox(chunk, stamp, index)
-                print(f"  → inbox/{path.name}")
+                print(f"  → notes/{path.name}")
             display = chunk if len(chunk) <= 80 else chunk[:77] + "..."
             print(f"     {display}")
             written += 1
@@ -392,7 +392,7 @@ def voice_mode(journal=False):
         else:
             index = i if use_index else None
             path = write_inbox(chunk, stamp, index)
-            console.print(f"[dark_sea_green4]  [{i}] → inbox/{path.name}[/dark_sea_green4]")
+            console.print(f"[dark_sea_green4]  [{i}] → notes/{path.name}[/dark_sea_green4]")
 
         display = chunk if len(chunk) <= 80 else chunk[:77] + "..."
         console.print(f"      [grey70]{display}[/grey70]")
@@ -433,7 +433,7 @@ def main():
             print("→ journal")
         else:
             path = write_inbox(text, stamp)
-            print(f"→ inbox/{path.name}")
+            print(f"→ notes/{path.name}")
         return
 
     # Auto-drain pending offline recordings on any capture invocation (Termux only)
