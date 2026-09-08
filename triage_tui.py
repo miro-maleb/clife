@@ -461,6 +461,10 @@ class TriageApp(App):
         Binding("l", "col_right", "Notes", show=False),
         Binding("slash", "focus_filter", "Filter tags", show=False),
         Binding("g", "view_untagged", "Unplaced", show=False),
+        # `T` — the pool, from anywhere. `t` puts one note in it; `T` goes
+        # there. The same pairing `g` has with the unplaced queue, and the
+        # reason the pool does not need a deck layout of its own.
+        Binding("T", "view_pool", "The pool", show=False),
         # PRIORITY, or these never fire: Screen binds tab to focus_next and
         # screen bindings are matched before the app's. The rail shipped two
         # dead tab bindings for exactly this reason.
@@ -665,6 +669,25 @@ class TriageApp(App):
             v.index = max(0, min(idx, len(v) - 1))
         place()
         self.call_after_refresh(place)
+
+    def _queue_mode(self) -> bool:
+        """Is this a queue you are WORKING, or a subject you are BROWSING?
+
+        The distinction the pool taught us, and it was never about the pool.
+        A queue is a view whose membership you are actively changing — the
+        unplaced backlog and the todo pool — and its verbs exist to take
+        things OUT of it. So the list is the thing you care about: it stays
+        put when an item leaves, and your hands stay on it.
+
+        A tag view is a subject you are reading. There the NOTE is the thing
+        you care about, so the view follows it when it moves and focus lands
+        on its chips, where you are probably adding a second word.
+
+        Getting this backwards is what made `t` in the pool kick you out of
+        the pool, and it did the same in triage: tagging an unplaced note
+        yanked you into that tag's view mid-pass.
+        """
+        return self.view_tag is triage.UNTAGGED or self.view_tag == POOL_TAG
 
     def _is_soon(self, row) -> bool:
         return SOONER in [stream.norm_tag(x) for x in (row.get("tags") or [])]
@@ -1020,7 +1043,7 @@ class TriageApp(App):
         # certainly done with. Returning there read as being locked into the
         # next row, because j/k moved a tag cursor instead of the queue.
         self.set_focus(self.query_one("#queue", ListView)
-                       if self.view_tag == POOL_TAG else chips)
+                       if self._queue_mode() else chips)
 
     async def _switch_view(self, tag) -> None:
         self._close_tags_if_narrow()
@@ -1069,6 +1092,13 @@ class TriageApp(App):
             self._trash_timer.stop()
             self._trash_timer = None
         self._paint_status()
+
+    async def action_view_pool(self) -> None:
+        """`T` — the todo pool, from wherever you are."""
+        if self.view_tag != POOL_TAG:
+            await self._switch_view(POOL_TAG)
+        else:
+            self.set_focus(self.query_one("#queue", ListView))
 
     async def action_view_untagged(self) -> None:
         """`g` — back to the unplaced queue from anywhere.
@@ -1803,7 +1833,7 @@ class TriageApp(App):
             # moved up, is what "act on it and move on" means. Elsewhere the
             # note is the thing you were reading and following it is right —
             # see below.
-            in_pool = self.view_tag == POOL_TAG
+            in_pool = self._queue_mode()
             if not in_pool and not any(r["slug"] == row["slug"] for r in self.rows):
                 self._load_view(after[0] if after else triage.UNTAGGED)
                 dest = after[0] if after else triage.UNTAGGED
