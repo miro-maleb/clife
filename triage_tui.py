@@ -181,6 +181,19 @@ Screen { background: #000000; }
    second unindented line and the list stops being scannable at a glance. */
 #queue Static { text-wrap: nowrap; text-overflow: ellipsis; }
 #queue > ListItem.--highlight { background: #241809; }
+/* NB: the `.--highlight` rules elsewhere in this sheet are DEAD — Textual
+   spells the class `-highlight`, one dash, so those four have never applied
+   and the highlight you see is the theme's. Left alone rather than fixed
+   here: making them live would change four colours at once, which is a
+   separate decision from this one.
+
+   The cursor of the column you are DRIVING is brighter than the one you are
+   not. Two lists and a chip row share j/k, Enter and `d`, and which of them
+   answers depended on a focus state with almost no representation on screen —
+   that is what made `d` (remove a tag) one rung from `d` (trash the note)
+   feel like a coin toss. Same amber, further up. */
+#queue:focus > ListItem.-highlight   { background: #5c3f1c; }
+#taglist:focus > ListItem.-highlight { background: #5c3f1c; }
 #title { color: #d8d4cf; text-style: bold; padding: 1 0 0 0; height: auto; }
 #meta { color: #5f5a54; height: 1; }
 #hermes { height: auto; padding: 0 1; margin: 1 0; background: #221809; }
@@ -491,6 +504,9 @@ class TriageApp(App):
         # column is being used to navigate. One flag, because the column does
         # both jobs and must not guess which.
         self._picking = None
+        # `dd` — the slug the first `d` armed, and the timer that forgets it.
+        self._armed_trash = None
+        self._trash_timer = None
         self._readall = False
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
@@ -970,6 +986,15 @@ class TriageApp(App):
             if lst.index != want:
                 lst.index = want
 
+    def _disarm_trash(self) -> None:
+        """Forget a half-typed `dd`. Called by the timer, by any other key,
+        and by the second `d` itself just before the write."""
+        self._armed_trash = None
+        if self._trash_timer is not None:
+            self._trash_timer.stop()
+            self._trash_timer = None
+        self._paint_status()
+
     async def action_view_untagged(self) -> None:
         """`g` — back to the unplaced queue from anywhere.
 
@@ -1306,12 +1331,39 @@ class TriageApp(App):
             await self.reload()
 
     async def action_trash(self) -> None:
-        """`d` — this was never a note. No confirmation prompt: it goes to
-        ~/kb/.trash, `u` puts it straight back, and a yes/no on each of sixty
-        would make the pass slower than not doing it."""
+        """`dd` — this was never a note.
+
+        DOUBLED, and only here. `d` on the chip row removes one tag, `d` on
+        the queue used to remove the whole NOTE, and the two rungs are one
+        Enter apart with almost nothing on screen saying which one you are
+        on — so the cheapest slip in the app was also the most destructive.
+        Vim already draws that line: `x` takes a character, `dd` takes the
+        line. This is the line.
+
+        Still no yes/no prompt. It goes to ~/kb/.trash, `u` puts it straight
+        back, and a confirmation on each of sixty would make the pass slower
+        than not doing it. The second `d` IS the confirmation, and it costs a
+        keystroke rather than a dialogue.
+
+        The armed state is VISIBLE and expires. An invisible mode that eats
+        your next keystroke is how a guard becomes its own hazard.
+        """
         row = self._current()
         if not row:
             return
+        if not self._armed_trash:
+            self._armed_trash = row["slug"]
+            self.notify("d again to trash this note  ·  any other key cancels")
+            if self._trash_timer is not None:
+                self._trash_timer.stop()
+            self._trash_timer = self.set_timer(1.5, self._disarm_trash)
+            return
+        if self._armed_trash != row["slug"]:
+            # The cursor moved between the two presses. Re-arm on the new note
+            # rather than trashing something the first `d` never referred to.
+            self._armed_trash = row["slug"]
+            return
+        self._disarm_trash()
         res = _run("triage", "trash", row["slug"])
         if not res.get("ok"):
             self.notify(f"trash failed: {res.get('error')}", severity="error")
@@ -1660,6 +1712,12 @@ class TriageApp(App):
 
     # ── keys ────────────────────────────────────────────────────────────────
     def on_key(self, event: events.Key) -> None:
+        # A half-typed `dd` is forgotten by anything that is not the second
+        # `d`. The timer would get there anyway, and moving the cursor re-arms
+        # rather than firing — this is the third belt, for keys that reach the
+        # app at all.
+        if self._armed_trash and event.key != "d":
+            self._disarm_trash()
         # `escape` only — `z` is already an App binding, and handling it here
         # too toggled read mode twice per press, which looked like the key
         # doing nothing at all.
