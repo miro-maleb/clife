@@ -128,6 +128,12 @@ def save_slots(slots: dict, trashed: dict | None = None) -> None:
 # ── the queue ──────────────────────────────────────────────────────────────
 
 UNTAGGED = None          # the default view: notes nobody has placed yet
+ALL = "*"                # every note, placed or not
+
+# `*` and not a second `None`-like object because a view has to survive the
+# CLI: `cl triage --view all` has to name this, and a sentinel object cannot
+# be spelled in argv. `*` is safe as the spelling because tags are
+# [a-z][a-z0-9-]* -- no real tag can ever collide with it.
 
 
 def queue(items=None, tag=UNTAGGED) -> list:
@@ -144,13 +150,19 @@ def queue(items=None, tag=UNTAGGED) -> list:
     captures is a queue whose March end never gets looked at. A tag view is
     newest-first, because there the question is "what have I been thinking
     about lately", and its old end is not a debt.
+
+    `tag=ALL` is every note in the store, placed or not -- the view for
+    "I know I wrote it down", where the answer is a filter and a scroll
+    rather than a guess at which word you used that day.
     """
     items = items if items is not None else stream.load(include_daily=tag is not None)
     slots = load_slots()
     q = (tag or "").lstrip("#").rstrip("/")
     rows = []
     for it in items:
-        if tag is UNTAGGED:
+        if tag == ALL:
+            pass                        # everything, including the unplaced
+        elif tag is UNTAGGED:
             if it["tags"]:
                 continue
         elif not any(t == q or t.startswith(q + "/") for t in it["tags"]):

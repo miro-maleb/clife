@@ -513,6 +513,7 @@ class TriageApp(App):
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
+        self._n_all = 0
         self._tag_sig = None
         self._layout_mode = None
         self._preview_timer = None
@@ -737,6 +738,19 @@ class TriageApp(App):
                 "i tag · dd"],
     }
 
+    def _view_label(self) -> str:
+        """What to call the current view in a header.
+
+        Two of the three views are not tags, so `"#" + view_tag` is wrong for
+        both -- it used to print a bare `#None` before the unplaced branch was
+        special-cased everywhere, and `all` would have printed `#*`. One
+        function so the next pseudo-view only has to be added once."""
+        if self.view_tag is triage.UNTAGGED:
+            return "unplaced"
+        if self.view_tag == triage.ALL:
+            return "all notes"
+        return "#" + str(self.view_tag)
+
     def _paint_hdr(self) -> None:
         """The queue header: what you are looking at, then what you can do to
         it. Its own method because the verbs depend on the COLUMN's width, and
@@ -748,6 +762,8 @@ class TriageApp(App):
         elif self.view_tag is triage.UNTAGGED:
             filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
             hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
+        elif self.view_tag == triage.ALL:
+            hdr = f"ALL — {len(self.rows)} · {self._n_unplaced} unplaced"
         else:
             hdr = f"#{self.view_tag} — {len(self.rows)}"
         try:
@@ -762,6 +778,8 @@ class TriageApp(App):
         tool — the key worked, nobody had said so."""
         which = ("pool" if self.view_tag == POOL_TAG
                  else "unplaced" if self.view_tag is triage.UNTAGGED else "tag")
+        # `all` is a browse view: it holds unplaced notes too, but `a accept`
+        # there would be offered on notes that have nothing to accept.
         # The COLUMN's width, not the label's. `.hdr` sizes to its content, so
         # measuring the label asks "does this text fit inside itself" and the
         # answer is always no room to spare.
@@ -846,6 +864,7 @@ class TriageApp(App):
         self.vocab = stream.vocabulary(self._items)
         self.parents = _rollups(self._items)
         self._n_unplaced = sum(1 for i in self._items if not i["tags"])
+        self._n_all = len(self._items)
         try:
             self._slots_seen = triage.SLOTS.stat().st_mtime
         except OSError:
@@ -910,8 +929,7 @@ class TriageApp(App):
         leave it, which costs one keystroke and can never corrupt the note
         below the one you meant.
         """
-        head = ("unplaced" if self.view_tag is triage.UNTAGGED
-                else "#" + str(self.view_tag))
+        head = self._view_label()
         self.query_one("#detailhdr", Label).update(
             f"READING {head} — {len(self.rows)} notes")
         self.query_one("#title", Static).update("")
@@ -994,7 +1012,7 @@ class TriageApp(App):
         # every hover rebuilt all 240 rows, which is most of what made the
         # preview flash.
         sig = (tuple(self.vocab.items()), tuple(getattr(self, "parents", {}).items()),
-               self._tag_filter, self._n_unplaced)
+               self._tag_filter, self._n_unplaced, self._n_all)
         if sig == getattr(self, "_tag_sig", None):
             return
         self._tag_sig = sig
@@ -1007,11 +1025,17 @@ class TriageApp(App):
         # must answer to the USER moving, never to this method putting the
         # cursor back where it was.
         lst.clear()
-        self.tag_names = [triage.UNTAGGED]
-        t = Text()
-        t.append("unplaced", ACCENT)
-        t.append(f"  {self._n_unplaced}".rjust(10), FAINT)
-        lst.append(ListItem(Static(t)))
+        # Both pinned rows are VIEWS rather than tags, and PINNED_VIEWS is
+        # the one place that says how many of them there are -- the `_picking`
+        # path below has to skip exactly this many rows to land on a real tag,
+        # and it used to say `[1:]` with the count written into it.
+        self.tag_names = [triage.UNTAGGED, triage.ALL]
+        for label, count in (("unplaced", self._n_unplaced),
+                             ("all", self._n_all)):
+            t = Text()
+            t.append(label, ACCENT)
+            t.append(f"  {count}".rjust(10 + len("unplaced") - len(label)), FAINT)
+            lst.append(ListItem(Static(t)))
         q = self._tag_filter.lower()
         # Parents are merged into the same most-used-first order rather than
         # grouped above their children. The column answers "what is this
@@ -1041,7 +1065,7 @@ class TriageApp(App):
             # rollup's number one column out of step with the rest.
             row.append(f"{count}".rjust(max(1, 18 - len(label))), FAINT)
             lst.append(ListItem(Static(row)))
-        shown = len(self.tag_names) - 1
+        shown = len(self.tag_names) - PINNED_VIEWS
         self.query_one("#taghdr", Label).update(
             f"TAGS — {shown}" + (f" / {len(self.vocab)}" if q else ""))
         if self.tag_names:
@@ -1214,13 +1238,11 @@ class TriageApp(App):
         if self._readall:
             self.query_one("#status", Static).update(Text.assemble(
                 ("READING  ", f"bold {ACCENT}"),
-                ("unplaced" if self.view_tag is triage.UNTAGGED
-                 else f"#{self.view_tag}", ACCENT),
+                (self._view_label(), ACCENT),
                 (f"  {len(self.rows)} notes as one page", DIM),
                 ("   j/k scroll · z or esc back · read-only", FAINT)))
             return
-        where = ("unplaced" if self.view_tag is triage.UNTAGGED
-                 else f"#{self.view_tag}")
+        where = self._view_label()
         mode = getattr(self, "_layout_mode", None)
         # The hint is the first thing to go when the width does. At `narrow`
         # the tag column is hidden entirely, so `/` is the only way to reach
@@ -1792,6 +1814,20 @@ class TriageApp(App):
         event.stop()
         if event.input.id == "tagfilter":
             typed = event.value.strip().lstrip("#")
+            # ONE VISIBLE MATCH WINS over minting a new word. Typing `hear`
+            # while the column shows nothing but `hearth` and pressing Enter
+            # means `hearth` -- it used to mean "create the tag `hear`",
+            # because the new-word branch below ran first and only asked
+            # whether the exact string was in the vocabulary. That is the
+            # keystroke-level version of the erosion the cull just undid.
+            # (`cl stream set` now also refuses prefixes, so this is the
+            # second of two guards, not the only one.)
+            if self._picking and typed:
+                visible = self.tag_names[PINNED_VIEWS:]
+                if len(visible) == 1 and visible[0] != typed:
+                    await self._add_picked(visible[0])
+                    self.notify(f"#{visible[0]}")
+                    return
             if self._picking and typed and typed not in self.vocab:
                 # A tag the vocabulary has never seen. Offered rather than
                 # refused here — `cl stream set` gets the last word and turns
@@ -1805,13 +1841,13 @@ class TriageApp(App):
                 # and Enter on it did nothing at all, which reads as the key
                 # being broken. With exactly one match, skip the list entirely:
                 # you have already said which tag you mean by typing it.
-                real = self.tag_names[1:]
+                real = self.tag_names[PINNED_VIEWS:]
                 if len(real) == 1:
                     await self._add_picked(real[0])
                     return
                 lst = self.query_one("#taglist", ListView)
                 if real:
-                    lst.index = 1
+                    lst.index = PINNED_VIEWS
                 self.set_focus(lst)
                 return
             # Otherwise Enter jumps to the list it just narrowed, rather than
@@ -2021,6 +2057,12 @@ class TriageApp(App):
             self._paint_tags()
 
 
+# How many rows at the top of the tag column are VIEWS rather than tags
+# (`unplaced`, `all`). Anything walking the column to find a real tag skips
+# this many; it was written as a literal `1` in one place and adding `all`
+# would have made Enter-to-pick offer `all` as a tag to apply.
+PINNED_VIEWS = 2
+
 POOL_TAG = "todo"
 # A CHILD, not a second tag. Flat `#todo` + `#sooner` is two independent bits
 # and therefore four states, one of which — `#sooner` with no `#todo` — means
@@ -2047,6 +2089,10 @@ def main() -> None:
         i = argv.index("--view")
         if i + 1 < len(argv):
             view = argv[i + 1]
+            # `all` is spelled `*` internally, but nobody should have to type a
+            # glob at a shell that would expand it first.
+            if view == "all":
+                view = triage.ALL
     TriageApp(view=view).run()
 
 

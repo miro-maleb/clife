@@ -241,6 +241,39 @@ def classify_tag(raw: str, vocab: dict) -> dict:
             out.update(verdict="near", candidates=sorted(leaves)[:5])
             return out
 
+    # PREFIX -> the tag it is the beginning of.
+    #
+    # `hear` is not a new idea when `hearth` exists, and neither is `journ`,
+    # `buddh` or `zeb`. Levenshtein cannot see these: `hear`/`hearth` is
+    # distance 2, and the threshold below is 1 for anything short. So typing
+    # the first few letters and stopping used to MINT A TAG, which is a large
+    # part of how the vocabulary reached 236 words before the 2026-09-08 cull.
+    #
+    # Same shape as the leaf rule above: one answer resolves, several refuse.
+    # Three characters minimum, or every two-letter typo drags in half the
+    # vocabulary.
+    if len(tag) >= 3:
+        pre = [k for k in vocab
+               if k != tag and k.startswith(tag) and not k.startswith(tag + "/")]
+        if len(pre) == 1:
+            out.update(verdict="variant", tag=pre[0], candidates=pre)
+            return out
+        if len(pre) > 1:
+            out.update(verdict="near", candidates=sorted(pre)[:5])
+            return out
+
+    # CONTAINS AN EXISTING TAG as a whole word-component: `ai-tooling` is `ai`
+    # with a qualifier bolted on, and the qualifier belongs in the note. This
+    # is the other half of the same erosion -- a new tag that quietly shadows
+    # one already in use. Refused with the tag it shadows, never auto-applied:
+    # sometimes the compound really is its own idea, and that is a judgement.
+    parts = [x for x in re.split(r"[-/]", tag) if x]
+    if len(parts) > 1:
+        shadow = sorted({k for k in vocab if k in parts})
+        if shadow:
+            out.update(verdict="near", candidates=shadow[:5])
+            return out
+
     near = []
     for known in vocab:
         if tag.startswith(known + "/") or known.startswith(tag + "/"):
