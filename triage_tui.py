@@ -1117,6 +1117,22 @@ class TriageApp(App):
             return
         self._focused_list().action_cursor_up()
 
+    def on_descendant_focus(self, event) -> None:
+        """A list that gains focus gets a cursor, if it has not got one.
+
+        `ListView.index` is None until something moves it, and `clear()` is
+        deferred in Textual — so a list could arrive focused and populated with
+        no row current, and the first j/k did nothing but reveal a cursor that
+        should already have been there. Coming from the tag picker into the
+        queue was the visible case: the page opened with nothing selected.
+
+        Never MOVES an existing cursor — that is law 4, and a repaint or a
+        return from the editor has to land you back on the row you were on.
+        """
+        w = getattr(event, "widget", None)
+        if isinstance(w, ListView) and w.index is None and len(w):
+            w.index = 0
+
     def on_list_view_highlighted(self, event) -> None:
         # A Highlighted can land while the app is coming down — clearing a
         # ListView on quit emits one, and by the time it is delivered the
