@@ -446,6 +446,7 @@ class TagChips(Static):
 
 class TriageApp(App):
     TITLE = "cl triage — tag navigator"
+
     CSS = CSS
 
     BINDINGS = [
@@ -475,6 +476,10 @@ class TriageApp(App):
         Binding("i", "focus_tags", "Tag", show=False),
         Binding("a", "accept", "Accept suggestion", show=False),
         Binding("t", "todo", "Mark todo", show=False),
+        # `s` — sooner on, sooner off. ONE key for both directions because it
+        # is one bit: later is the absence of the tag, so there is no second
+        # state to name and nothing that can contradict it.
+        Binding("s", "sooner", "Sooner / later", show=False),
         Binding("d", "trash", "Trash", show=False),
         Binding("u", "undo", "Undo last", show=False),
         Binding("c", "chat", "Jump to chat", show=False),
@@ -485,8 +490,11 @@ class TriageApp(App):
         Binding("question_mark", "help", "Keys", show=False),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, view=None) -> None:
         super().__init__()
+        # The tag to open on, or None for the unplaced queue. `--view todo` is
+        # the pool; nothing else about this app changes.
+        self._open_on = view
         self.rows: list[dict] = []
         self.vocab: dict = {}
         # None = the unplaced queue (what this app has always shown); a string
@@ -558,6 +566,8 @@ class TriageApp(App):
         self.theme = "hearth"
         self._apply_layout(self.size.width, self.size.height)
         await self.reload()
+        if self._open_on:
+            self._load_view(self._open_on)
         self.set_focus(self.query_one("#queue", ListView))
         # Hermes fills slots from the pane next door and has no way to tell
         # this app it did. One stat every two seconds is cheaper than making
@@ -612,9 +622,18 @@ class TriageApp(App):
         """Build the note rows. Pure — no widget touched, so the list can be
         assembled before anything on screen is disturbed."""
         out = []
+        pool = self.view_tag == POOL_TAG
         for r in self.rows:
             age = f"{r['age_days']}d" if r["age_days"] is not None else "—"
             t = Text()
+            if pool:
+                # SOONER IS A MARK, NOT A SECTION. A band header would have to
+                # be a row in the ListView, and a row that is not a note is the
+                # pseudo-row problem this app has already been bitten by — `a`,
+                # `dd` and Enter would all need to know it is not a note. A
+                # column of marks sorts the same and cannot be selected.
+                soon = SOONER in [stream.norm_tag(x) for x in (r.get("tags") or [])]
+                t.append("▲ " if soon else "  ", ACCENT if soon else FAINT)
             t.append(f"{age:>5} ", FAINT)
             t.append(r["title"][:44] or r["slug"][:44])
             if r["suggested"]:
@@ -623,6 +642,16 @@ class TriageApp(App):
                 t.append("  ?", ACCENT)
             out.append(ListItem(Static(t)))
         return out
+
+    def _is_soon(self, row) -> bool:
+        return SOONER in [stream.norm_tag(x) for x in (row.get("tags") or [])]
+
+    def _order_rows(self) -> None:
+        """In the pool, `#sooner` floats to the top. Everywhere else the
+        engine's order stands — oldest-first when unplaced (the backlog is the
+        problem), newest-first in a tag view."""
+        if self.view_tag == POOL_TAG:
+            self.rows.sort(key=lambda r: not self._is_soon(r))
 
     def _family(self) -> list:
         """[parent, *children] for whatever view you are on, or [].
@@ -689,7 +718,12 @@ class TriageApp(App):
         if items:
             view.extend(items)
             view.index = min(keep or 0, len(items) - 1)
-        if self.view_tag is triage.UNTAGGED:
+        if self.view_tag == POOL_TAG:
+            n_soon = sum(1 for r in self.rows
+                         if SOONER in [stream.norm_tag(x)
+                                       for x in (r.get("tags") or [])])
+            hdr = f"POOL — {len(self.rows)} · {n_soon} sooner · s toggles"
+        elif self.view_tag is triage.UNTAGGED:
             filled = sum(1 for r in self.rows if r["suggested"] or r["note"])
             hdr = f"UNPLACED — {len(self.rows)} · {filled} suggested"
         else:
@@ -710,6 +744,7 @@ class TriageApp(App):
         self._items = stream.load(include_daily=True)
         self._items_at = time.monotonic()
         self.rows = triage.queue(self._items, tag=self.view_tag)
+        self._order_rows()
         self.vocab = stream.vocabulary(self._items)
         self.parents = _rollups(self._items)
         self._n_unplaced = sum(1 for i in self._items if not i["tags"])
@@ -1239,6 +1274,7 @@ class TriageApp(App):
             self._items_at = time.monotonic()
         self.view_tag = tag
         self.rows = triage.queue(self._items, tag=tag)
+        self._order_rows()
         self._repaint_queue(keep=0)
 
     def on_list_view_selected(self, event) -> None:
@@ -1329,6 +1365,27 @@ class TriageApp(App):
         if row:
             self._write(row, "--todo")
             await self.reload()
+
+    async def action_sooner(self) -> None:
+        """Move one item between the two bins.
+
+        The bins are `#sooner` and its absence. Nothing is `#later`, so there
+        is no pair to disagree with each other and no lint to write — the
+        thing that made `todo`-the-tag and `status: todo` drift apart cannot
+        happen to a single bit.
+        """
+        row = self._current()
+        if not row:
+            return
+        now = [stream.norm_tag(t) for t in (row.get("tags") or [])]
+        after = ([t for t in now if t != SOONER] if SOONER in now
+                 else now + [SOONER])
+        await self._apply(row, after, stay=True)
+        # `stay` hands focus to the CHIPS, which is right for a chip edit and
+        # wrong here: `s` is pressed while walking the pool, and landing in the
+        # chip row means the next j/k moves a tag cursor instead of the list —
+        # so a second `s` two rows later kept toggling the same note back off.
+        self.set_focus(self.query_one("#queue", ListView))
 
     async def action_trash(self) -> None:
         """`dd` — this was never a note.
@@ -1775,12 +1832,25 @@ class TriageApp(App):
             self._paint_tags()
 
 
+POOL_TAG = "todo"
+SOONER = "sooner"
+
+
 def main() -> None:
     if not sys.stdin.isatty():
         print("cl triage --tui needs a terminal.", file=sys.stderr)
         raise SystemExit(1)
     os.environ.setdefault("COLORTERM", "truecolor")
-    TriageApp().run()
+    # `--view TAG` opens on a tag instead of the unplaced queue. That is the
+    # whole of the pool: it is not a second app, it is this one through a
+    # different door. M-5 in the deck runs `--view todo`.
+    view = None
+    argv = sys.argv
+    if "--view" in argv:
+        i = argv.index("--view")
+        if i + 1 < len(argv):
+            view = argv[i + 1]
+    TriageApp(view=view).run()
 
 
 if __name__ == "__main__":
