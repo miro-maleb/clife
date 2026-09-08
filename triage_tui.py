@@ -175,6 +175,7 @@ Screen { background: #000000; }
                                  border-bottom: solid #272320; }
 #body.narrow.tags-open #rightcol { height: 40%; }
 .hdr { background: #141210; color: #e8a34e; text-style: bold; padding: 0 1; height: 1; }
+#children { height: auto; padding: 0 1; }
 #queue > ListItem { padding: 0 1; }
 /* One row, one line. At the deck's ~27-column queue a wrapped title runs to a
    second unindented line and the list stops being scannable at a glance. */
@@ -445,6 +446,13 @@ class TriageApp(App):
         Binding("l", "col_right", "Notes", show=False),
         Binding("slash", "focus_filter", "Filter tags", show=False),
         Binding("g", "view_untagged", "Unplaced", show=False),
+        # PRIORITY, or these never fire: Screen binds tab to focus_next and
+        # screen bindings are matched before the app's. The rail shipped two
+        # dead tab bindings for exactly this reason.
+        Binding("tab", "cycle_child(1)", "Next child", show=False,
+                priority=True),
+        Binding("shift+tab", "cycle_child(-1)", "Prev child", show=False,
+                priority=True),
         # `z` reads the whole view as ONE page. The drawer answers "which
         # notes are under this tag"; this answers "what do they SAY", which is
         # a different question and the one you have when reviewing rather than
@@ -514,6 +522,11 @@ class TriageApp(App):
             with Vertical(id="rightcol"):
                 with Vertical(id="queuecol"):
                     yield Label("QUEUE", classes="hdr", id="queuehdr")
+                    # The children of the tag being viewed, when it has any.
+                    # Hidden entirely otherwise — a permanently empty strip
+                    # above the queue would cost a row of notes on every view
+                    # that is not a parent, which is most of them.
+                    yield Static("", id="children")
                     yield ListView(id="queue")
                 with Vertical(id="detailcol"):
                     yield Label("", classes="hdr", id="detailhdr")
@@ -595,6 +608,54 @@ class TriageApp(App):
             out.append(ListItem(Static(t)))
         return out
 
+    def _family(self) -> list:
+        """[parent, *children] for whatever view you are on, or [].
+
+        Keyed off the TOP segment, so standing on `blog/kids` offers the same
+        family as standing on `blog` — you are in one subject either way, and
+        having Tab mean different things depending on which rung you entered
+        from is the kind of modal surprise this app keeps removing.
+        """
+        tag = self.view_tag
+        if not isinstance(tag, str) or not tag:
+            return []
+        root = tag.split("/")[0]
+        kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
+        return [root] + kids if kids else []
+
+    def _paint_children(self) -> None:
+        """The children strip: what is under this tag, and which one is open.
+
+        This is the August idea in one line — "views based on tags that
+        basically pull up a page with all the relevant blocks" — finished
+        rather than approximated. The blocks were already there; what a parent
+        view could not say was what it contained. The open one is highlighted
+        because Tab moves the selection AND the view together: there is no
+        separate act of opening, so the strip is the only thing that can show
+        where you are.
+        """
+        strip = self.query_one("#children", Static)
+        fam = self._family()
+        if not fam:
+            strip.display = False
+            return
+        strip.display = True
+        t = Text()
+        t.append("children  ", FAINT)
+        for i, name in enumerate(fam):
+            # The root is shown as `all`, because selecting it is not picking
+            # a child — it is the rollup, and calling it `blog` beside
+            # `blog/kids` would read as a sibling of its own children.
+            label = "all" if i == 0 else name.split("/", 1)[1]
+            n = len(triage.queue(self._items, tag=name))
+            on = name == self.view_tag
+            t.append(f" {label} ", "black on #e8a34e" if on else ACCENT)
+            t.append(f"{n} ", FAINT)
+            if i < len(fam) - 1:
+                t.append(" · ", FAINT)
+        t.append("   tab cycles", FAINT)
+        strip.update(t)
+
     def _repaint_queue(self, keep=None) -> None:
         """Swap the note list in ONE frame.
 
@@ -618,6 +679,7 @@ class TriageApp(App):
         else:
             hdr = f"#{self.view_tag} — {len(self.rows)}"
         self.query_one("#queuehdr", Label).update(hdr)
+        self._paint_children()
         self._paint_status()
         self._paint_detail()
 
@@ -866,8 +928,57 @@ class TriageApp(App):
         self._load_view(tag)
         self.set_focus(self.query_one("#queue", ListView))
 
+    def action_cycle_child(self, step: int = 1) -> None:
+        """Tab — walk the family, and the walk IS the opening.
+
+        No Enter. On a tag page the only question is which slice you are
+        looking at, and a selection that needs confirming is a second keypress
+        to answer a question you already answered by arriving. Same bargain
+        the tag column already makes, where moving the cursor loads the tag.
+
+        Loads DIRECTLY, and moves the tag cursor afterwards to keep the column
+        in step. Going through the cursor alone looked tidier — one
+        implementation of "show this tag" — but that path is `_preview_tag`,
+        which is deliberately gated on the tag column having FOCUS so a
+        repaint cannot bounce the view around. Tab is pressed with focus on
+        the queue, so the gate held and the strip never moved: the left picker
+        walked while the page it was supposed to be selecting stayed put.
+        Setting the index afterwards still fires Highlighted, and that handler
+        returning early is now exactly what we want from it.
+        """
+        if isinstance(self.focused, Input) or not self._family():
+            # Tab in a text box is still Tab, and on a view with no children
+            # there is no family to walk — leave Textual's meaning alone.
+            (self.screen.focus_next if step > 0
+             else self.screen.focus_previous)()
+            return
+        fam = self._family()
+        cur = self.view_tag if self.view_tag in fam else fam[0]
+        nxt = fam[(fam.index(cur) + step) % len(fam)]
+        self._load_view(nxt)
+        if nxt in self.tag_names:               # keep the column in step
+            lst = self.query_one("#taglist", ListView)
+            want = self.tag_names.index(nxt)
+            if lst.index != want:
+                lst.index = want
+
     async def action_view_untagged(self) -> None:
-        """`g` — back to the unplaced queue from anywhere."""
+        """`g` — back to the unplaced queue from anywhere.
+
+        The CURSOR comes back too. The unplaced row is pinned at the top of
+        the tag column, and `g` used to change the view without moving the
+        highlight — so the column went on pointing at `projects/hearth` while
+        the queue beside it listed unplaced notes, and the one widget whose
+        job is to say where you are was the one saying the wrong thing.
+
+        Setting the index emits Highlighted, which loads the row under it —
+        and here that IS the unplaced view, so the two paths agree instead of
+        fighting. (They have fought before: a repaint that restored the
+        highlight used to bounce `g` straight back to the previous tag.)
+        """
+        lst = self.query_one("#taglist", ListView)
+        if lst.index != 0:
+            lst.index = 0                       # the pinned `unplaced` row
         if self.view_tag is not triage.UNTAGGED:
             await self._switch_view(triage.UNTAGGED)
         else:
