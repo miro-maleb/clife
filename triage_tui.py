@@ -244,6 +244,46 @@ def _run(*args) -> dict:
     return data if isinstance(data, dict) else {"ok": True, "rows": data}
 
 
+def _rollups(items) -> dict:
+    """Prefixes that NOBODY has applied as a tag -> how many notes sit under
+    them.
+
+    `projects/budget`, `projects/hearth` and `projects/clife` are one subject
+    written three ways, and the store already knows it: every view matches
+    hierarchically, so `cl stream tag projects` returns all thirteen. What was
+    missing was somewhere to STAND. The tag column is built from the
+    vocabulary in USE, nobody has ever written a bare `projects`, so the one
+    row that would answer "show me all of them" did not exist — filtering to
+    `project` listed the seven children and offered no way to take their
+    union.
+
+    A prefix that IS also a tag gets a row here too, and keeps exactly one row
+    in the column — `blog` is a real tag and a parent, and it is the count
+    that was wrong rather than the row. The vocabulary counts notes carrying
+    the literal word (10), while selecting it has always shown everything
+    beneath it as well (13), so the number in the column was quietly
+    predicting the wrong screen. These counts are what the view returns.
+
+    Counted over NOTES rather than summed over children, because a note
+    carrying both `projects/clife` and `projects/hearth` is one project note
+    and adding child counts would report it twice.
+    """
+    tags = {stream.norm_tag(t) for it in items for t in it["tags"]
+            if stream.norm_tag(t)}
+    prefixes = set()
+    for tag in tags:
+        parts = tag.split("/")
+        for i in range(1, len(parts)):          # every level: a/b/c -> a, a/b
+            prefixes.add("/".join(parts[:i]))
+    out = {}
+    for pre in prefixes:
+        out[pre] = sum(
+            1 for it in items
+            if any((n := stream.norm_tag(t)) == pre or n.startswith(pre + "/")
+                   for t in it["tags"]))
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
 class TagChips(Static):
     """The note's tags as OBJECTS you move between, not a string you edit.
 
@@ -593,6 +633,7 @@ class TriageApp(App):
         self._items_at = time.monotonic()
         self.rows = triage.queue(self._items, tag=self.view_tag)
         self.vocab = stream.vocabulary(self._items)
+        self.parents = _rollups(self._items)
         self._n_unplaced = sum(1 for i in self._items if not i["tags"])
         try:
             self._slots_seen = triage.SLOTS.stat().st_mtime
@@ -735,7 +776,8 @@ class TriageApp(App):
         # you are on, so the bold was redundant with it. Including it meant
         # every hover rebuilt all 240 rows, which is most of what made the
         # preview flash.
-        sig = (tuple(self.vocab.items()), self._tag_filter, self._n_unplaced)
+        sig = (tuple(self.vocab.items()), tuple(getattr(self, "parents", {}).items()),
+               self._tag_filter, self._n_unplaced)
         if sig == getattr(self, "_tag_sig", None):
             return
         self._tag_sig = sig
@@ -754,13 +796,33 @@ class TriageApp(App):
         t.append(f"  {self._n_unplaced}".rjust(10), FAINT)
         lst.append(ListItem(Static(t)))
         q = self._tag_filter.lower()
-        for name, count in self.vocab.items():
+        # Parents are merged into the same most-used-first order rather than
+        # grouped above their children. The column answers "what is this
+        # about", and `projects` (13 notes) is a bigger answer than `blog`
+        # (10) — sorting it away from its weight to sit beside its children
+        # would make the list two lists.
+        # parents LAST, so a tag that also has children takes the rolled-up
+        # count rather than the flat one — one row, and its number is what
+        # selecting it will show.
+        merged = sorted({**self.vocab, **getattr(self, "parents", {})}.items(),
+                        key=lambda kv: -kv[1])
+        for name, count in merged:
             if q and q not in name.lower():
                 continue
             self.tag_names.append(name)
             row = Text()
-            row.append(name[:15], "#d8d4cf")
-            row.append(f"{count}".rjust(max(1, 18 - len(name[:15]))), FAINT)
+            # A trailing slash is the whole marker, and it is enough: it reads
+            # as a path prefix, which is exactly what it is. It means "this
+            # row includes what is under it" — true both for `projects/`,
+            # which nobody has ever applied as a word, and for `blog/`, which
+            # is a real tag that also has children.
+            parent = name in getattr(self, "parents", {})
+            label = (name + "/" if parent else name)[:15]
+            row.append(label, ACCENT if parent else "#d8d4cf")
+            # Measured off the LABEL, not the name: the parent's trailing
+            # slash is a character too, and counting the name left every
+            # rollup's number one column out of step with the rest.
+            row.append(f"{count}".rjust(max(1, 18 - len(label))), FAINT)
             lst.append(ListItem(Static(row)))
         shown = len(self.tag_names) - 1
         self.query_one("#taghdr", Label).update(
