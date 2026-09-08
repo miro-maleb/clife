@@ -382,17 +382,15 @@ def exit_to_launcher() -> None:
 
 
 def git_push_kb() -> None:
-    """Stage, commit, and push kb/ after a TUI session."""
-    from paths import KB as kb
-    subprocess.run([GIT, "-C", str(kb), "add", "-A"], check=False)
-    result = subprocess.run(
-        [GIT, "-C", str(kb), "commit", "-m", f"auto sync {datetime.date.today()}"],
-        capture_output=True, check=False,
-    )
-    if result.returncode == 0:
-        # Pull remote changes first (rebase) so the push is always fast-forward
-        subprocess.run(
-            [GIT, "-C", str(kb), "pull", "--rebase", "origin", "main"],
-            check=False,
-        )
-        subprocess.run([GIT, "-C", str(kb), "push", "origin", "main"], check=False)
+    """Sync kb/ after a TUI session, and SAY SO if it fails.
+
+    This used to run the four git commands here with check=False on every one,
+    which is how the phone silently stopped syncing for six weeks (see
+    kb_utils.sync_kb). It now goes through the one syncer, and a failure is
+    printed rather than discarded — a TUI has already exited by the time this
+    runs, so stdout is the user's terminal.
+    """
+    from kb_utils import sync_kb
+    ok, msg = sync_kb()
+    if not ok:
+        print(f"\n  kb sync FAILED: {msg}", file=sys.stderr)

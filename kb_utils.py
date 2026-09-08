@@ -1,8 +1,45 @@
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 from paths import KB, STORE
+
+# THE syncer. Not a second implementation of "stage, commit, pull, push" —
+# `kb-autosync` is the one the systemd timer runs, it holds an flock so two
+# syncs cannot interleave, it aborts a conflicted rebase instead of leaving it
+# stopped, and it refuses to run at all on a detached HEAD or a rebase in
+# progress.
+#
+# WHY THIS REPLACED THE INLINE VERSION. clife used to do the four git calls
+# itself with check=False on every one. On 2026-07-20 the phone's `pull
+# --rebase` conflicted and stopped mid-rebase (which IS a detached HEAD), the
+# push failed, both return codes were discarded, and the next run's `add -A`
+# staged the conflict markers the stopped rebase had written and committed
+# them. Six weeks of captures never left the phone and nothing anywhere said a
+# word. A sync that cannot report failure is not a sync.
+KB_AUTOSYNC = Path.home() / "bin" / "kb-autosync"
+
+
+def sync_kb(timeout: int = 120) -> tuple[bool, str]:
+    """Sync ~/kb. Returns (ok, message) — and the caller MUST show a failure.
+
+    Note a skip is a success: if the timer already holds the lock, kb-autosync
+    exits 0 having done nothing, and the timer will carry the change.
+    """
+    if not KB_AUTOSYNC.exists():
+        return False, f"kb-autosync not found at {KB_AUTOSYNC} — kb NOT synced"
+    try:
+        r = subprocess.run([str(KB_AUTOSYNC)], capture_output=True,
+                           text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"kb-autosync timed out after {timeout}s — kb NOT synced"
+    except OSError as e:
+        return False, f"kb-autosync could not run ({e}) — kb NOT synced"
+    if r.returncode == 0:
+        return True, "Synced."
+    return False, (r.stderr.strip() or r.stdout.strip()
+                   or f"kb-autosync exited {r.returncode}")
 
 # The per-day work log. NOT kb/journal/ — that is reserved for the handwritten
 # journal (OCR pipeline); writing dailies there would collide with it.

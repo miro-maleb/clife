@@ -78,18 +78,12 @@ def save_pending(wav_path):
 
 
 def kb_push(stamp):
-    kb_dir = str(KB)
-    subprocess.run(["git", "-C", kb_dir, "add", "-A"], capture_output=True)
-    subprocess.run(["git", "-C", kb_dir, "commit", "-m", f"capture {stamp}"],
-                   capture_output=True)
-    subprocess.run(["git", "-C", kb_dir, "pull", "--rebase", "origin", "main"],
-                   capture_output=True)
-    result = subprocess.run(["git", "-C", kb_dir, "push"],
-                            capture_output=True, text=True)
-    if result.returncode == 0:
-        print("Synced.")
-    else:
-        print(f"Push failed: {result.stderr.strip() or 'unknown error'}")
+    """Sync after a capture. `stamp` is unused now: the one syncer writes its
+    own commit message, and a per-capture message is not worth a second
+    implementation of stage/commit/pull/push that can fail in silence."""
+    from kb_utils import sync_kb
+    ok, msg = sync_kb()
+    print(msg if ok else f"kb sync FAILED: {msg}")
 
 # There is no inbox FOLDER — "inbox" is the set of stream notes with no tags.
 # This path said _stream/inbox until 2026-09-03, which meant every $mod+c
