@@ -900,9 +900,17 @@ class TriageApp(App):
         self.query_one("#tagfilter", Input).value = ""
         self._tag_filter = ""
         self._close_tags_if_narrow()
-        row = next((r for r in self.rows if r["slug"] == slug), None) or self._current()
+        # NO `or self._current()` FALLBACK. The note being tagged is named by
+        # slug, and if it is not in the current rows the honest answer is that
+        # we lost it — not "tag whatever the cursor happens to be on". The
+        # fallback is how a pick that had drifted out of view ended up
+        # addressing an unrelated note, which is a silent mis-tag and by far
+        # the worst outcome available here.
+        row = next((r for r in self.rows if r["slug"] == slug), None)
         if not row:
             self._paint_status()
+            self.notify(f"lost track of {slug or 'the note'} — nothing tagged",
+                        severity="warning")
             return
         tags = list(row.get("tags") or [])
         if stream.norm_tag(tag) in [stream.norm_tag(t) for t in tags]:
@@ -1170,6 +1178,14 @@ class TriageApp(App):
         # in it.
         lst = self.query_one("#taglist", ListView)
         if self.focused is not lst or i is None or i >= len(self.tag_names):
+            return
+        # PICKING IS NOT BROWSING. While a tag is being chosen FOR a note, the
+        # column is a picker, and loading each tag you move over swaps the
+        # queue out from under the pick — taking the note you were tagging off
+        # screen and out of `self.rows`. That is the whole failure: filter to
+        # `idea`, press Enter with four matches, land on the list, and the
+        # view silently became a tag browser while the note stayed untagged.
+        if self._picking:
             return
         tag = self.tag_names[i]
         if tag == self.view_tag:
