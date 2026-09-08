@@ -1737,24 +1737,29 @@ class TriageApp(App):
         to work this queue but nothing was telling it when, so every session
         began by retyping the same request. One key does the obvious thing.
 
-        It asks only when nothing has been suggested yet, which is the honest
-        reading of "start a pass" — with slots already filled, `c` is just
-        walk-over-and-talk, and re-sending the request would bury the answer
-        you went there to read under a fresh one. State decides, not a counter:
-        empty queue-of-suggestions means no pass has happened. `C` re-asks
-        deliberately.
+        It asks when there is anything LEFT to suggest, and once per session.
+        The old test was "nothing has been suggested yet", which reads well
+        and was wrong in practice: slots accumulate, so the table is almost
+        never empty, and `c` quietly stopped starting arcs while ten notes sat
+        there unsuggested. Measured 2026-09-08 — 26 unplaced, 16 already
+        filled, and `c` sent nothing.
+
+        `self._asked` is what stops it re-asking: the second `c` of a session
+        is walk-over-and-talk, so pressing it to go READ the answer cannot
+        bury that answer under a fresh request. `C` re-asks deliberately.
 
         The jump itself is the deck's own `select-pane -t {top-right}`, called
         rather than reimplemented, so `c` and M-l land in the same place. No
         -L bridge: inside a pane tmux reads $TMUX and finds its own server.
         """
-        fresh = not self._asked and not any(
-            r["suggested"] or r["note"] for r in self.rows)
+        unfilled = [r for r in self.rows if not (r["suggested"] or r["note"])]
+        fresh = not self._asked and bool(unfilled)
         if not self._send_to_chat(self.KICKOFF if fresh else ""):
             return
         if fresh:
             self._asked = True
-            self.notify("asked Hermes to work the queue — M-h back, r to reload")
+            self.notify(f"asked Hermes to work the {len(unfilled)} unsuggested "
+                        "— M-h back, r to reload")
 
     async def action_open(self) -> None:
         row = self._current()
