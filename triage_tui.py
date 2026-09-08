@@ -1011,7 +1011,16 @@ class TriageApp(App):
         chips = self.query_one("#tagchips", TagChips)
         chips.show((r or {}).get("tags") or [],
                    (r or {}).get("suggested") or [])
-        self.set_focus(chips)
+        # Landing on the chips is right when you are TAGGING — you are usually
+        # adding a second word, and going back to the list would make it a
+        # journey. It is wrong in the pool, where the only reason you opened
+        # the picker was `p`, and `p` means "this is not a task any more". You
+        # come back to the LIST, on the next item, ready to keep working: the
+        # chips of a note you just filed elsewhere are the one thing you are
+        # certainly done with. Returning there read as being locked into the
+        # next row, because j/k moved a tag cursor instead of the queue.
+        self.set_focus(self.query_one("#queue", ListView)
+                       if self.view_tag == POOL_TAG else chips)
 
     async def _switch_view(self, tag) -> None:
         self._close_tags_if_narrow()
