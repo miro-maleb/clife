@@ -299,6 +299,65 @@ async def run():
               str(app._fam_anchor))
         print("  [ok] Tab cycles neighbours reversibly")
 
+        # ── the walk keeps the anchor, as a pin ──────────────────────────
+        # The strip is headed `also`, so its numbers have to mean "also, with
+        # this". They used to be each tag's own size -- `hearth 56`, which the
+        # tag column already said two inches to the left -- and Tab landed on
+        # all 56, throwing away the tag you were reading.
+        anchor2 = next((t for t in real if "/" not in t
+                        and t not in app.parents), real[0])
+        await goto(anchor2)
+        fam2 = list(app._family())
+        if len(fam2) > 1:
+            for _ in range(len(fam2) - 1):
+                app.action_cycle_child(1)
+                await settle(pilot, 0.08)
+                check(app.pins == [anchor2], "anchor stays pinned while walking",
+                      f"{app.view_tag}: {app.pins}")
+                check(len(app.rows) == len(triage.queue(
+                          app._items, tag=app.view_tag, pins=[anchor2])),
+                      "rows are the intersection",
+                      f"{app.view_tag}: {len(app.rows)}")
+                check(anchor2 in app._view_label(), "header names the anchor",
+                      app._view_label())
+            app.action_cycle_child(1)
+            await settle(pilot, 0.08)
+            check(app.view_tag == anchor2, "lap returns home", repr(app.view_tag))
+            check(app.pins == [] and app._walk_pin is None,
+                  "and takes the walk pin down", str(app.pins))
+
+            # shift+tab unwinds the pin too
+            await goto(anchor2)
+            app.action_cycle_child(1)
+            await settle(pilot, 0.08)
+            app.action_cycle_child(-1)
+            await settle(pilot, 0.08)
+            check(app.view_tag == anchor2 and app.pins == [],
+                  "shift+tab returns and unpins", f"{app.view_tag} {app.pins}")
+
+            # leaving another way takes it down as well
+            await goto(anchor2)
+            app.action_cycle_child(1)
+            await settle(pilot, 0.08)
+            await pilot.press("h")
+            await settle(pilot, 0.2)
+            lst.index = 3
+            await settle(pilot, 0.35)
+            check(app.pins == [], "leaving the walk drops its pin", str(app.pins))
+
+            # but a pin YOU set is not the walk's to remove
+            await goto(anchor2)
+            app.pins = [fam2[1]]
+            app._pin_return = [anchor2]
+            app._fam_anchor = []
+            app.view_tag = anchor2
+            await app.reload()
+            await settle(pilot, 0.08)
+            app.action_cycle_child(1)
+            await settle(pilot, 0.08)
+            check(fam2[1] in app.pins, "a manual pin survives the walk", str(app.pins))
+        print("  [ok] Tab drills into the intersection")
+
         # and finally: keep pressing things
         rng = random.Random(11)
         await reset()

@@ -538,6 +538,14 @@ class TriageApp(App):
         # inverse -- writing -> buddhism, then shift+Tab went somewhere else
         # entirely because buddhism's neighbours are a different list.
         self._fam_anchor: list = []
+        # The anchor tag Tab pinned on your behalf while walking a
+        # neighbourhood, or None. Tracked rather than inferred so that
+        # returning home cannot remove a pin YOU put there.
+        self._walk_pin = None
+        # The tag at position 0 of an anchored walk, when there is one. A walk
+        # started from #writing has writing as home; a walk started from a
+        # query that is already several pins deep has no home, only facets.
+        self._fam_home = None
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
@@ -759,31 +767,29 @@ class TriageApp(App):
         from is the kind of modal surprise this app keeps removing.
         """
         tag = self.view_tag
-        if not isinstance(tag, str) or not tag or tag == triage.ALL:
-            # ALL is a string sentinel (`*`), so a bare isinstance check let it
-            # through and the strip offered `*` as something to Tab onto. It
-            # is not a subject and has no neighbours -- everything is its
-            # neighbour, which is the facet column's job, not the strip's.
-            return []
+        real = isinstance(tag, str) and tag and tag != triage.ALL
         # The anchor wins over children. Walking `writing`'s neighbours and
         # landing on `projects/clife`, the children rule would hand back
         # `projects`' family and the walk would fall into it and never come
         # out -- which is the one-way trip that started this. While a
         # neighbourhood is being walked, it IS the family.
-        if self._fam_anchor and tag in self._fam_anchor:
+        if self._fam_anchor and (tag in self._fam_anchor or not real):
             return list(self._fam_anchor)
-        root = tag.split("/")[0]
-        kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
-        if kids:
-            return [root] + kids
-        # No children: offer what these notes are ALSO about. Same key, same
-        # meaning -- "the next related view" -- so Tab does not have to be
-        # learned twice. A tag with children keeps them, because a subset is a
-        # closer relation than a neighbour.
-        #
-        # (The anchor is checked at the top, before children.)
+        if real:
+            root = tag.split("/")[0]
+            kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
+            if kids:
+                return [root] + kids
         near = self._cooccurring()
-        return [tag] + near if near else []
+        if not near:
+            return []
+        # From a bare tag view, that tag is HOME: position 0, and a full lap
+        # comes back to it. From a query that is already pinned some levels
+        # deep there is no home to come back to -- the panel is purely the
+        # facets of what you have built, and `-` is the way back out.
+        if real:
+            return [tag] + near
+        return near if self.pins else []
 
     # What each view can DO, longest form first. The caller takes the first
     # that fits, the way the rail's inbox header does — a hint clipped
@@ -885,7 +891,16 @@ class TriageApp(App):
         strip.display = True
         t = Text()
         kids = len(fam) > 1 and str(fam[1]).startswith(str(fam[0]) + "/")
-        t.append("children  " if kids else "also  ", FAINT)
+        if kids:
+            t.append("children  ", FAINT)
+        else:
+            # With pins up the strip IS the query builder, so it says what has
+            # been built. `also` alone would leave the pins visible only in
+            # the header, one line away from the thing they are narrowing.
+            for p in self.pins:
+                t.append(f"{p} ", ACCENT)
+                t.append("+ ", FAINT)
+            t.append("also  ", FAINT)
         for i, name in enumerate(fam):
             # The root is shown as `all`, because selecting it is not picking
             # a child — it is the rollup, and calling it `blog` beside
@@ -894,7 +909,18 @@ class TriageApp(App):
                 label = "all" if i == 0 else name.split("/", 1)[1]
             else:
                 label = name          # neighbours are whole tags, not suffixes
-            n = len(triage.queue(self._items, tag=name, pins=self.pins))
+            # Every number is what you would SEE if you went there: the
+            # pins already in the query, plus the tag you are standing on,
+            # plus this one. So `hearth 7` in #writing's strip means seven
+            # notes are both -- not that hearth has 56 of its own, which is
+            # what the tag column already says two inches to the left. A strip
+            # headed "also" whose numbers ignore the "also" tells you nothing.
+            home = None if kids else (
+                self._fam_home or (fam[0] if fam[0] == self.view_tag else None))
+            extra = [home] if (home and home != name
+                               and home not in self.pins) else []
+            n = len(triage.queue(self._items, tag=name,
+                                 pins=list(self.pins) + extra))
             on = name == self.view_tag
             t.append(f" {label} ", "black on #e8a34e" if on else ACCENT)
             t.append(f"{n} ", FAINT)
@@ -1245,6 +1271,22 @@ class TriageApp(App):
         """
         if self._picking:               # the column is a picker right now
             return
+        # WALKING THE STRIP: `+` commits the facet you are looking at, and the
+        # panel re-offers the facets of the narrower query. That is the whole
+        # point of the strip -- build the query along the bottom, never
+        # reaching for the column on the left. The anchor that Tab was holding
+        # for you stops being provisional and becomes a pin like any other.
+        if self._fam_anchor and isinstance(self.view_tag, str) \
+                and self.view_tag != triage.ALL \
+                and self.view_tag in self._fam_anchor \
+                and self.view_tag != self._fam_home:
+            self._walk_pin = None        # the anchor is yours now, not the walk's
+            # Focus STAYS on the notes. Sending it to the filter box is right
+            # when you pinned from the column, and wrong here -- the strip
+            # exists so you never have to go left, and the next Tab would have
+            # been eaten by the Input.
+            self._commit_pin(self.view_tag, to_filter=False)
+            return
         lst = self.query_one("#taglist", ListView)
         i = lst.index
         real = self.tag_names[PINNED_VIEWS:]
@@ -1266,8 +1308,18 @@ class TriageApp(App):
             return
         if tag in self.pins:
             return
+        self._commit_pin(tag)
+
+    def _commit_pin(self, tag: str, to_filter: bool = True) -> None:
+        """Add one tag to the query and re-offer everything from there."""
+        lst = self.query_one("#taglist", ListView)
         self.pins.append(tag)
         self._pin_return.append(self.view_tag)
+        # A committed pin ends the walk it came from: the facets of the new,
+        # narrower query are a different list, and holding the old one would
+        # keep offering neighbours that no longer intersect.
+        self._fam_anchor = []
+        self._fam_home = None
         self.query_one("#tagfilter", Input).value = ""
         self._tag_filter = ""
         # The view drops to `all` so the pin is the whole query. Staying on
@@ -1290,7 +1342,8 @@ class TriageApp(App):
         # thing you do -- the point of a pin is to narrow and look again. It
         # also keeps you out of the tag list, where the letters you would type
         # to filter are app bindings instead: `r` reloads, `p` makes a project.
-        self.set_focus(self.query_one("#tagfilter", Input))
+        if to_filter:
+            self.set_focus(self.query_one("#tagfilter", Input))
         self.notify(self._view_label() + f" — {len(self.rows)}")
 
     def action_unpin(self) -> None:
@@ -1298,6 +1351,8 @@ class TriageApp(App):
         if not self.pins:
             return
         gone = self.pins.pop()
+        if gone == self._walk_pin:
+            self._walk_pin = None
         # Back to the view this pin was made from. Without it, pinning from
         # `#projects` (16 notes) and unpinning left you in `all` (60) -- the
         # count jumped, nothing said why, and the tag you had been reading was
@@ -1310,6 +1365,16 @@ class TriageApp(App):
         self._paint_tags()
         self._repaint_queue(keep=0)
         self.notify(f"unpinned #{gone}" + (f" — {self._view_label()}" if self.pins else ""))
+
+    def _drop_walk_pin(self) -> None:
+        """Take down the pin Tab raised, if it is still ours to take down."""
+        if self._walk_pin is None:
+            return
+        if self._walk_pin in self.pins:
+            self.pins.remove(self._walk_pin)
+            if self._pin_return:
+                self._pin_return.pop()
+        self._walk_pin = None
 
     def action_cycle_child(self, step: int = 1) -> None:
         """Tab — walk the family, and the walk IS the opening.
@@ -1338,10 +1403,34 @@ class TriageApp(App):
         fam = self._family()
         # Standing on a tag with no children, Tab is about to walk its
         # neighbours -- pin that list now so the walk stays inside it.
-        if fam and not str(fam[1]).startswith(str(fam[0]) + "/"):
+        neigh = len(fam) > 1 and not str(fam[1]).startswith(str(fam[0]) + "/")
+        neigh = neigh or (len(fam) == 1 and fam[0] != self.view_tag)
+        if neigh and not self._fam_anchor:
             self._fam_anchor = list(fam)
-        cur = self.view_tag if self.view_tag in fam else fam[0]
-        nxt = fam[(fam.index(cur) + step) % len(fam)]
+            # Home only exists if we started FROM a tag. A walk begun from a
+            # query that is already pinned deep has nowhere to return to.
+            self._fam_home = fam[0] if fam[0] == self.view_tag else None
+        if self.view_tag in fam:
+            nxt = fam[(fam.index(self.view_tag) + step) % len(fam)]
+        else:
+            # Arriving from `all` (a pinned query): step onto the list rather
+            # than treating position 0 as somewhere we have already been.
+            nxt = fam[0] if step > 0 else fam[-1]
+        if neigh:
+            # Walking neighbours KEEPS the anchor, as a pin. Tab off #writing
+            # onto #hearth used to mean "show me all 56 hearth notes", which
+            # threw away the tag you were reading and made the walk a series
+            # of unrelated destinations. It now means "the ones that are also
+            # writing" -- which is what a strip headed `also` says, and what
+            # its counts now show. The header carries `#writing + #hearth`, so
+            # nothing about it is implicit.
+            anchor = self._fam_home
+            if anchor and nxt == anchor:
+                self._drop_walk_pin()
+            elif anchor and self._walk_pin is None and anchor not in self.pins:
+                self.pins.append(anchor)
+                self._pin_return.append(anchor)
+                self._walk_pin = anchor
         self._load_view(nxt, keep_anchor=True)
         if nxt in self.tag_names:               # keep the column in step
             lst = self.query_one("#taglist", ListView)
@@ -1386,6 +1475,8 @@ class TriageApp(App):
         self.pins = []
         self._pin_return = []
         self._fam_anchor = []
+        self._fam_home = None
+        self._walk_pin = None
         lst = self.query_one("#taglist", ListView)
         if lst.index != 0:
             lst.index = 0                       # the pinned `unplaced` row
@@ -1614,8 +1705,11 @@ class TriageApp(App):
             return
         if not keep_anchor:
             # Arriving any other way -- the tag column, `g`, a pin -- starts a
-            # new neighbourhood, centred on where you actually are.
+            # new neighbourhood, centred on where you actually are, and the
+            # pin Tab was holding for you comes down with it.
             self._fam_anchor = []
+            self._fam_home = None
+            self._drop_walk_pin()
         if not self._items or time.monotonic() - self._items_at > 2.0:
             self._items = stream.load(include_daily=True)
             self._items_at = time.monotonic()
