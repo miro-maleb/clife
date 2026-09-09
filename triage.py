@@ -69,6 +69,7 @@ cannot be.
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -136,7 +137,30 @@ ALL = "*"                # every note, placed or not
 # [a-z][a-z0-9-]* -- no real tag can ever collide with it.
 
 
-def queue(items=None, tag=UNTAGGED, pins=()) -> list:
+# Note bodies, keyed by path and mtime. stream.load() carries titles but not
+# text, and searching means reading the files -- ~240 of them, about a
+# megabyte, which is nothing once, and everything if it happens per keystroke.
+_BODIES: dict = {}
+
+
+def _body(path: str) -> str:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _BODIES.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        text = ""
+    _BODIES[path] = (key, text)
+    return text
+
+
+def queue(items=None, tag=UNTAGGED, pins=(), search="") -> list:
     """The notes in one VIEW, each with its triage slot attached.
 
     `tag=None` is the unplaced queue — notes with no tags — and is what
@@ -155,6 +179,12 @@ def queue(items=None, tag=UNTAGGED, pins=()) -> list:
     "I know I wrote it down", where the answer is a filter and a scroll
     rather than a guess at which word you used that day.
 
+    `search` narrows by TEXT, and is a term in the query like any other
+    rather than a separate mode. That composes -- `#writing` plus "dumpling",
+    or a search whose facet strip then tells you which tags the matches carry
+    -- and it is the reason not to tag everything: what is findable by reading
+    does not need a word spent on it.
+
     `pins` narrows any of those to the notes carrying ALL of them as well.
     One tag answers "what is this about"; two answer questions neither can
     on its own -- what have I written about practice AND money, which todos
@@ -168,6 +198,11 @@ def queue(items=None, tag=UNTAGGED, pins=()) -> list:
     # tag view is -- pinning `blog` keeps a note tagged `blog/kids`, or the
     # intersection would disagree with the view you pinned it from.
     pinq = [str(p).lstrip("#").rstrip("/") for p in pins if p]
+    # Every word must appear somewhere in the note -- title, filename or body.
+    # AND rather than OR, and unordered, because that is how you remember a
+    # note: two or three words that were definitely in it, in no order you
+    # can recall.
+    terms = [w for w in str(search or "").lower().split() if w]
     rows = []
     for it in items:
         if pinq and not all(any(t == p or t.startswith(p + "/") for t in it["tags"])
@@ -180,6 +215,12 @@ def queue(items=None, tag=UNTAGGED, pins=()) -> list:
                 continue
         elif not any(t == q or t.startswith(q + "/") for t in it["tags"]):
             continue
+        if terms:
+            hay = (it["title"] + " " + it["slug"]).lower()
+            if not all(w in hay for w in terms):
+                body = _body(it["path"])
+                if not all(w in hay or w in body for w in terms):
+                    continue
         s = slots.get(it["slug"]) or {}
         rows.append({
             "slug": it["slug"],

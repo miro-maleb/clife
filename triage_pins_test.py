@@ -358,6 +358,64 @@ async def run():
             check(fam2[1] in app.pins, "a manual pin survives the walk", str(app.pins))
         print("  [ok] Tab drills into the intersection")
 
+        # ── search is a TERM, not a mode ─────────────────────────────────
+        await reset()
+        hay = None
+        for word in ("note", "body"):
+            if triage.queue(app._items, tag=triage.ALL, search=word):
+                hay = word
+                break
+        if hay:
+            app.search = hay
+            await app.reload()
+            await settle(pilot)
+            # against the app's OWN view, not a hardcoded one: a preview
+            # timer from an earlier section can still be in flight, and the
+            # invariant that matters is "shown == the query", not "we are on
+            # all notes"
+            check(len(app.rows) == len(triage.queue(
+                      app._items, tag=app.view_tag, pins=app.pins, search=hay)),
+                  "search rows match query", f"{hay}: {len(app.rows)}")
+            check(f'"{hay}"' in app._view_label(), "label carries the search",
+                  app._view_label())
+            check(app._family() != [],
+                  "search results still get facets", str(app._family()))
+            # it composes with a pin rather than replacing it
+            facet = next((f for f in app._family() if f != app.view_tag),
+                         app._family()[0])
+            app.pins = [facet]
+            await app.reload()
+            await settle(pilot)
+            check(len(app.rows) == len(triage.queue(
+                      app._items, tag=app.view_tag, pins=[facet], search=hay)),
+                  "search composes with pins", f"{facet}+{hay}: {len(app.rows)}")
+            app.view_tag = triage.ALL
+            check("all" not in app._view_label(),
+                  "the label drops a redundant `all`", app._view_label())
+            # `-` peels the newest term, then the search, from anywhere
+            app.action_unpin()
+            await settle(pilot)
+            check(app.pins == [] and app.search == hay, "`-` drops the pin first",
+                  f"{app.pins} {app.search!r}")
+            app.action_unpin()
+            await settle(pilot)
+            check(app.search == "", "`-` then drops the search", repr(app.search))
+            app.action_unpin()          # nothing left: must not raise
+            await settle(pilot)
+            check(True, "`-` on an empty query is safe")
+            # word order does not matter, and unknown words match nothing
+            two = triage.queue(app._items, tag=triage.ALL, search=f"{hay} note")
+            check(len(two) == len(triage.queue(app._items, tag=triage.ALL,
+                                               search=f"note {hay}")),
+                  "search terms are unordered")
+            check(triage.queue(app._items, tag=triage.ALL,
+                               search="zzzznotathing") == [],
+                  "an unmatched word matches nothing")
+            app.search = ""
+            await app.reload()
+            await settle(pilot)
+        print("  [ok] search composes with tags and pins")
+
         # and finally: keep pressing things
         rng = random.Random(11)
         await reset()

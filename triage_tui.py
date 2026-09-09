@@ -178,6 +178,7 @@ Screen { background: #000000; }
 #body.narrow.tags-open #rightcol { height: 40%; }
 .hdr { background: #141210; color: #e8a34e; text-style: bold; padding: 0 1; height: 1; }
 #children { height: auto; padding: 0 1; }
+#searchbox { display: none; height: 3; }
 #queue > ListItem { padding: 0 1; }
 /* One row, one line. At the deck's ~27-column queue a wrapped title runs to a
    second unindented line and the list stops being scannable at a glance. */
@@ -461,6 +462,11 @@ class TriageApp(App):
         Binding("h", "col_left", "Tags", show=False),
         Binding("l", "col_right", "Notes", show=False),
         Binding("slash", "focus_filter", "Filter tags", show=False),
+        # `f` and not `/`, which already opens the TAG filter and has for as
+        # long as this app has existed. Two boxes, two keys; the one you press
+        # says which you meant, rather than the one you happen to be standing
+        # in deciding for you.
+        Binding("f", "search", "Search notes", show=False),
         Binding("g", "view_untagged", "Unplaced", show=False),
         # `T` — the pool, from anywhere. `t` puts one note in it; `T` goes
         # there. The same pairing `g` has with the unplaced queue, and the
@@ -546,6 +552,15 @@ class TriageApp(App):
         # started from #writing has writing as home; a walk started from a
         # query that is already several pins deep has no home, only facets.
         self._fam_home = None
+        # Free-text narrowing, ANDed with everything else. A TERM, not a mode:
+        # the page is already "a view is a query", and search is one more
+        # predicate beside the tag and the pins. Making it a mode would forbid
+        # `#writing` + "dumpling", and forbid the thing that makes search worth
+        # having here -- searching first, then reading off the facet strip
+        # which tags the matches carry, and pinning one. Search is also the
+        # reason not to tag everything: what is findable by reading does not
+        # need a word spent on it.
+        self.search = ""
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
@@ -598,6 +613,7 @@ class TriageApp(App):
                     # above the queue would cost a row of notes on every view
                     # that is not a parent, which is most of them.
                     yield Static("", id="children")
+                    yield Input(placeholder="search notes…", id="searchbox")
                     yield ListView(id="queue")
                 with Vertical(id="detailcol"):
                     yield Label("", classes="hdr", id="detailhdr")
@@ -789,7 +805,12 @@ class TriageApp(App):
         # facets of what you have built, and `-` is the way back out.
         if real:
             return [tag] + near
-        return near if self.pins else []
+        # A search with no tag is exactly when the facets matter most: 34
+        # notes match "zen", and the strip says which tags they carry so you
+        # can pin one. Gating this on `pins` alone left search results with no
+        # strip -- and with no strip, Tab falls through to focus_next and the
+        # keys you press afterwards land somewhere else entirely.
+        return near if (self.pins or self.search) else []
 
     # What each view can DO, longest form first. The caller takes the first
     # that fits, the way the rail's inbox header does — a hint clipped
@@ -824,7 +845,15 @@ class TriageApp(App):
                 else "all" if self.view_tag == triage.ALL
                 else "#" + str(self.view_tag))
         if self.pins:
-            return " + ".join("#" + p for p in self.pins) + " + " + base
+            # `all` is what is left when the pins ARE the query, and printing
+            # it adds a word that narrows nothing: `#buddhism + all + "zen"`
+            # says less than `#buddhism + "zen"`.
+            terms = ["#" + p for p in self.pins]
+            if self.view_tag != triage.ALL:
+                terms.append(base)
+            base = " + ".join(terms)
+        if self.search:
+            base += f' + "{self.search}"'
         return base
 
     def _paint_hdr(self) -> None:
@@ -842,7 +871,7 @@ class TriageApp(App):
             hdr = f"ALL — {len(self.rows)} · {self._n_unplaced} unplaced"
         else:
             hdr = f"#{self.view_tag} — {len(self.rows)}"
-        if self.pins:
+        if self.pins or self.search:
             hdr = f"{self._view_label().upper()} — {len(self.rows)}"
         try:
             self.query_one("#queuehdr", Label).update(self._with_verbs(hdr))
@@ -920,7 +949,8 @@ class TriageApp(App):
             extra = [home] if (home and home != name
                                and home not in self.pins) else []
             n = len(triage.queue(self._items, tag=name,
-                                 pins=list(self.pins) + extra))
+                                 pins=list(self.pins) + extra,
+                                 search=self.search))
             on = name == self.view_tag
             t.append(f" {label} ", "black on #e8a34e" if on else ACCENT)
             t.append(f"{n} ", FAINT)
@@ -961,7 +991,8 @@ class TriageApp(App):
         # rather than re-reading 238 files to answer a cursor move.
         self._items = stream.load(include_daily=True)
         self._items_at = time.monotonic()
-        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins,
+                                 search=self.search)
         self._order_rows()
         self.vocab = stream.vocabulary(self._items)
         self.parents = _rollups(self._items)
@@ -1326,7 +1357,8 @@ class TriageApp(App):
         # the old tag would silently AND it too, and the header would be the
         # only place that said so.
         self.view_tag = triage.ALL
-        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins,
+                                 search=self.search)
         self._order_rows()
         self._tag_sig = None            # facets changed; force the repaint
         self._paint_tags()
@@ -1347,8 +1379,28 @@ class TriageApp(App):
         self.notify(self._view_label() + f" — {len(self.rows)}")
 
     def action_unpin(self) -> None:
-        """`-` — drop the last pin. Esc does it too, before it climbs."""
+        """`-` — drop the last term of the query, from anywhere on the page.
+
+        Nothing needs to be highlighted and no particular pane needs focus:
+        it removes the newest term, which is the only one you can be
+        unambiguously asking about. It is a priority binding so the filter and
+        search boxes do not eat it while you are typing in them.
+
+        It used to return in silence when there was nothing to drop, which
+        reads exactly like a broken key.
+        """
+        if self.search and not self.pins:
+            self._clear_search()
+            self.rows = triage.queue(self._items, tag=self.view_tag,
+                                     pins=self.pins, search=self.search)
+            self._order_rows()
+            self._paint_tags()
+            self._repaint_queue(keep=0)
+            self.notify("search cleared")
+            return
         if not self.pins:
+            self.notify("nothing pinned — tab onto a tag in the strip, "
+                        "or + on one in the column")
             return
         gone = self.pins.pop()
         if gone == self._walk_pin:
@@ -1359,7 +1411,8 @@ class TriageApp(App):
         # gone. A pin is a step, so undoing it is a step back.
         if self._pin_return:
             self.view_tag = self._pin_return.pop()
-        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins,
+                                 search=self.search)
         self._order_rows()
         self._tag_sig = None
         self._paint_tags()
@@ -1477,6 +1530,7 @@ class TriageApp(App):
         self._fam_anchor = []
         self._fam_home = None
         self._walk_pin = None
+        self._clear_search()
         lst = self.query_one("#taglist", ListView)
         if lst.index != 0:
             lst.index = 0                       # the pinned `unplaced` row
@@ -1714,7 +1768,8 @@ class TriageApp(App):
             self._items = stream.load(include_daily=True)
             self._items_at = time.monotonic()
         self.view_tag = tag
-        self.rows = triage.queue(self._items, tag=tag, pins=self.pins)
+        self.rows = triage.queue(self._items, tag=tag, pins=self.pins,
+                                 search=self.search)
         self._order_rows()
         self._repaint_queue(keep=0)
 
@@ -1744,6 +1799,26 @@ class TriageApp(App):
                 self.run_worker(self._switch_view(self.tag_names[i]))
             return
         self.action_focus_tags()
+
+    def action_search(self) -> None:
+        """`f` — narrow the notes by text, as one more term in the query.
+
+        The box lives above the queue and appears only when it has something
+        to say, the same bargain the children strip makes: a permanently empty
+        row here costs a note on every view, and most views are short.
+        """
+        box = self.query_one("#searchbox", Input)
+        box.display = True
+        self.set_focus(box)
+        box.selection = Selection.cursor(len(box.value))
+
+    def _clear_search(self) -> None:
+        box = self.query_one("#searchbox", Input)
+        box.value = ""
+        box.display = False
+        if self.search:
+            self.search = ""
+            self._tag_sig = None
 
     def action_focus_tags(self) -> None:
         """`i` — edit this note's tags.
@@ -2097,6 +2172,7 @@ class TriageApp(App):
                     "g back to unplaced · "
                     "tags: j/k or w/b move · I/A first/last · d remove · a add · "
                     "on the note list: t todo · d trash (recoverable) · u undo · "
+                    "f search notes (a term, combines with tags) · "
                     "+ pins a tag (AND) · - or esc unpins · "
                     "c chat (first one starts a pass) · C re-ask · "
                     "z read the whole tag as one page (read-only) · "
@@ -2105,6 +2181,12 @@ class TriageApp(App):
     # ── writing ─────────────────────────────────────────────────────────────
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        if event.input.id == "searchbox":
+            # Enter KEEPS the search and hands you the results -- the box has
+            # already filtered as you typed, so submitting is only "I am done
+            # typing, let me read". Esc is the one that drops it.
+            self.set_focus(self.query_one("#queue", ListView))
+            return
         if event.input.id == "tagfilter":
             typed = event.value.strip().lstrip("#")
             # ONE VISIBLE MATCH WINS over minting a new word. Typing `hear`
@@ -2300,6 +2382,17 @@ class TriageApp(App):
             self.action_read_all()
             event.stop()
             return
+        if self.focused is self.query_one("#searchbox", Input) \
+                and event.key == "escape":
+            self._clear_search()
+            self.rows = triage.queue(self._items, tag=self.view_tag,
+                                     pins=self.pins, search=self.search)
+            self._order_rows()
+            self._paint_tags()
+            self._repaint_queue(keep=0)
+            self.set_focus(self.query_one("#queue", ListView))
+            event.stop()
+            return
         filt = self.query_one("#tagfilter", Input)
         if self.focused is filt:
             if event.key == "escape":
@@ -2337,8 +2430,16 @@ class TriageApp(App):
         # the notes and then stopped, which reads as the key having died.
         if self.focused is self.query_one("#queue", ListView) \
                 and event.key == "escape":
-            # A pin is a rung too: Esc unwinds the query before it leaves it.
-            if self.pins:
+            # Esc unwinds the query one term at a time before it leaves it,
+            # newest first: the search, then the pins, then the column.
+            if self.search:
+                self._clear_search()
+                self.rows = triage.queue(self._items, tag=self.view_tag,
+                                         pins=self.pins, search=self.search)
+                self._order_rows()
+                self._paint_tags()
+                self._repaint_queue(keep=0)
+            elif self.pins:
                 self.action_unpin()
             else:
                 self.action_col_left()
@@ -2359,6 +2460,17 @@ class TriageApp(App):
                 return
             self._tag_filter = event.value
             self._paint_tags()
+        elif event.input.id == "searchbox":
+            self.search = event.value.strip()
+            self.rows = triage.queue(self._items, tag=self.view_tag,
+                                     pins=self.pins, search=self.search)
+            self._order_rows()
+            # The facets recount against the MATCHES, so a search tells you
+            # what its results are about -- which is the whole argument for
+            # having search on the tag page rather than beside it.
+            self._tag_sig = None
+            self._paint_tags()
+            self._repaint_queue(keep=0)
 
 
 # How many rows at the top of the tag column are VIEWS rather than tags
