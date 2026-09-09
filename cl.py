@@ -24,7 +24,6 @@ COMMANDS = {
     "inbox":       "inbox",
     "projects":    "projects",
     "notes":       "notes",
-    "daily":       "daily",
     "tags":        "tags",
     "stream":      "stream",
     "triage":      "triage",
@@ -55,8 +54,6 @@ HELP = """
   cl notes --area NAME        filter to one area
   cl notes --project NAME     filter to one project
   cl notes --tag NAME         filter to one tag
-  cl daily [--date D]         the daily writing surface as ordered blocks (--json for machines)
-  cl daily --append           append a block (text on stdin) · --set N replaces block N
   cl stream [agenda]          the agenda view — todo items grouped by intent date
   cl stream inbox             untagged notes (the inbox view, over whole notes)
   cl stream tag TAG           every stream note carrying TAG (hierarchical)

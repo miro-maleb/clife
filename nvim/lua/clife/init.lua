@@ -8,7 +8,7 @@
 --   require("clife").setup({ keymaps = { capture = "<leader>q" } })
 --
 -- Disable a keymap with `false`:
---   require("clife").setup({ keymaps = { journal = false } })
+--   require("clife").setup({ keymaps = { capture = false } })
 
 local M = {}
 
@@ -31,7 +31,6 @@ local default_keymaps = {
   projects          = "<leader>cP",
   notes             = "<leader>cN",
   week              = "<leader>cw",
-  journal           = "<leader>cj",
   review            = "<leader>cr",
   tags              = "<leader>ct",
   template          = "<leader>t",
@@ -405,8 +404,8 @@ end
 -- Templates
 -- ------------------------------------------------------------------
 
--- Substitute {{...}} placeholders. Existing convention from kb/templates/journal.md
--- uses {{day}} {{month}} {{date}} {{year}}; {{today}} (ISO) and {{title}} are new.
+-- Substitute {{...}} placeholders: {{day}} {{month}} {{date}} {{year}},
+-- {{today}} (ISO) and {{title}} (the buffer's filename, no extension).
 -- Unknown placeholders are left as-is so they're visible to the user.
 local function render_template(content)
   local subs = {
@@ -462,54 +461,16 @@ function M.template_insert()
   }):find()
 end
 
--- ------------------------------------------------------------------
--- Quick file openers
--- ------------------------------------------------------------------
-
--- `new-daily-note` owns where the daily note lives and what header it gets,
--- the same way kb-inbox owns a capture. This composed KB/journal/<date>.md,
--- a directory that does not exist and never gets read — so <leader>cj opened
--- an empty buffer in a phantom folder, and saving it would have created one.
--- Today's note is a stream note tagged `journal`, and that tag is what keeps
--- it out of the triage queue every morning.
--- The header a fresh daily note gets, as BUFFER TEXT rather than a file.
--- `new-daily-note` used to write this to disk the moment anything asked where
--- today's note lives, so opening it to look created it. 94 date-named notes
--- were made over the store's life and 12 survive; August made 31 and kept one.
--- The file now exists only if you write in it.
-local function daily_header()
-  local day = os.date("%A")
-  local head = day .. string.rep(" ", 5) .. os.date("%-d %b")
-  return {
-    "---",
-    "created: " .. os.date("%Y-%m-%d %H:%M"),
-    "tags: [journal]",
-    "---",
-    "",
-    head,
-    string.rep("-", #head),
-    "",
-    "",
-  }
-end
-
-function M.journal()
-  local out = vim.fn.system({ vim.fn.exepath("new-daily-note"), "--path" })
-  if vim.v.shell_error ~= 0 then
-    notify("daily note FAILED: " .. vim.trim(out), vim.log.levels.ERROR)
-    return
-  end
-  local path = vim.trim(out)
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
-  -- Only a buffer with no file behind it gets the header; an existing note is
-  -- never touched.
-  if vim.fn.filereadable(path) == 0 and vim.api.nvim_buf_line_count(0) <= 1
-      and vim.fn.getline(1) == "" then
-    vim.api.nvim_buf_set_lines(0, 0, -1, false, daily_header())
-  end
-  vim.cmd("normal! G")
-end
-
+-- NO DAILY NOTE. Removed 2026-09-09 at Miro's call: "I have no need for a
+-- daily note at all. It's just not how I work. I've tried it. I don't use it.
+-- When I have something to write down, I write it down."
+--
+-- The store agreed. 94 date-named notes were created over its life and 12
+-- survive; August made 31 and kept one. `new-daily-note`, its systemd timer,
+-- the nightly janitor that annotated the results, <leader>cj, $mod+d and the
+-- `today` alias are all gone. Captures are the writing door -- `<leader>c`
+-- here, $mod+c, Surface /capture -- and they only make a file when there is
+-- something to put in it.
 -- ------------------------------------------------------------------
 -- Setup — registers user commands and keymaps
 -- ------------------------------------------------------------------
@@ -525,35 +486,11 @@ local subcommands = {
   projects          = M.projects,
   notes             = M.notes,
   week              = M.week,
-  journal           = M.journal,
   review            = M.review,
   tags              = M.tags,
   view              = M.view,
   template          = M.template_insert,
 }
-
--- The same header for a daily note reached WITHOUT going through M.journal():
--- `$mod+d` and the `today` alias both shell out to `nvim <path>`, so the
--- buffer has to fill itself in. Scoped to the flat store's YYYY-MM-DD.md and
--- nothing else.
-local function register_daily_autocmd()
-  local group = vim.api.nvim_create_augroup("ClifeDailyNote", { clear = true })
-  vim.api.nvim_create_autocmd("BufNewFile", {
-    group = group,
-    pattern = vim.fn.expand("~/kb/notes") .. "/*.md",
-    callback = function(ev)
-      local name = vim.fn.fnamemodify(ev.file, ":t")
-      if not name:match("^%d%d%d%d%-%d%d%-%d%d%.md$") then
-        return
-      end
-      if vim.api.nvim_buf_line_count(ev.buf) > 1 then
-        return
-      end
-      vim.api.nvim_buf_set_lines(ev.buf, 0, -1, false, daily_header())
-      vim.api.nvim_win_set_cursor(0, { 9, 0 })
-    end,
-  })
-end
 
 function M.setup(opts)
   opts = opts or {}
@@ -608,11 +545,9 @@ function M.setup(opts)
   map("n", keymaps.projects,          M.projects,          "clife: projects picker")
   map("n", keymaps.notes,             M.notes,             "clife: notes picker")
   map("n", keymaps.week,              M.week,              "clife: weekly plan")
-  map("n", keymaps.journal,           M.journal,           "clife: today's journal")
   map("n", keymaps.review,            M.review,            "clife: full review")
   map("n", keymaps.tags,              M.tags,              "clife: browse inline tags")
   map("n", keymaps.template,          M.template_insert,   "clife: insert template at cursor")
-  register_daily_autocmd()
 end
 
 return M

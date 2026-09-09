@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import fm
+import stream
 from paths import KB
 
 # A block break: a line that is only 3+ of the same thematic-break char.
@@ -213,11 +214,34 @@ def sync_file(path: Path):
         existing = [existing] if existing else []
     existing = list(existing or [])
 
-    merged, added = list(existing), []
+    # THE GUARD. This used to union every `#word` in the body straight into
+    # frontmatter, and the writer runs it on every save -- so any word after a
+    # '#' became a tag, permanently, with nobody deciding. That is most of how
+    # the vocabulary reached 236 before the 2026-09-08 cull, and running it
+    # once by hand after the cull re-added `surface`, `update/shopping` and
+    # `inbox` from prose that still mentioned them.
+    #
+    # Now every candidate goes through the same guard `cl stream set` uses:
+    #   exact    -> apply
+    #   variant  -> apply the VOCABULARY's spelling (so `#sooner` in a body
+    #               becomes todo/sooner, and `#hear` becomes hearth)
+    #   near/new -> SKIPPED, silently. An inline tag is written mid-sentence
+    #               with no chance to answer a prompt, so a word the
+    #               vocabulary does not know is a typo or a hex colour far
+    #               more often than it is a new idea. Coining a tag is a
+    #               decision, and it has a door: `-t` at capture, or `a` in
+    #               the triage navigator.
+    vocab = stream.vocabulary()
+    merged, added, refused = list(existing), [], []
     for t in found:
-        if t not in merged:
-            merged.append(t)
-            added.append(t)
+        verdict = stream.classify_tag(t, vocab)
+        if verdict['verdict'] not in ('exact', 'variant'):
+            refused.append(t)
+            continue
+        resolved = verdict['tag']
+        if resolved not in merged:
+            merged.append(resolved)
+            added.append(resolved)
     if not added:
         return None
 
