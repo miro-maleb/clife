@@ -472,13 +472,42 @@ end
 -- an empty buffer in a phantom folder, and saving it would have created one.
 -- Today's note is a stream note tagged `journal`, and that tag is what keeps
 -- it out of the triage queue every morning.
+-- The header a fresh daily note gets, as BUFFER TEXT rather than a file.
+-- `new-daily-note` used to write this to disk the moment anything asked where
+-- today's note lives, so opening it to look created it. 94 date-named notes
+-- were made over the store's life and 12 survive; August made 31 and kept one.
+-- The file now exists only if you write in it.
+local function daily_header()
+  local day = os.date("%A")
+  local head = day .. string.rep(" ", 5) .. os.date("%-d %b")
+  return {
+    "---",
+    "created: " .. os.date("%Y-%m-%d %H:%M"),
+    "tags: [journal]",
+    "---",
+    "",
+    head,
+    string.rep("-", #head),
+    "",
+    "",
+  }
+end
+
 function M.journal()
-  local out = vim.fn.system({ vim.fn.exepath("new-daily-note") })
+  local out = vim.fn.system({ vim.fn.exepath("new-daily-note"), "--path" })
   if vim.v.shell_error ~= 0 then
     notify("daily note FAILED: " .. vim.trim(out), vim.log.levels.ERROR)
     return
   end
-  vim.cmd("edit " .. vim.fn.fnameescape(vim.trim(out)))
+  local path = vim.trim(out)
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  -- Only a buffer with no file behind it gets the header; an existing note is
+  -- never touched.
+  if vim.fn.filereadable(path) == 0 and vim.api.nvim_buf_line_count(0) <= 1
+      and vim.fn.getline(1) == "" then
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, daily_header())
+  end
+  vim.cmd("normal! G")
 end
 
 -- ------------------------------------------------------------------
@@ -502,6 +531,29 @@ local subcommands = {
   view              = M.view,
   template          = M.template_insert,
 }
+
+-- The same header for a daily note reached WITHOUT going through M.journal():
+-- `$mod+d` and the `today` alias both shell out to `nvim <path>`, so the
+-- buffer has to fill itself in. Scoped to the flat store's YYYY-MM-DD.md and
+-- nothing else.
+local function register_daily_autocmd()
+  local group = vim.api.nvim_create_augroup("ClifeDailyNote", { clear = true })
+  vim.api.nvim_create_autocmd("BufNewFile", {
+    group = group,
+    pattern = vim.fn.expand("~/kb/notes") .. "/*.md",
+    callback = function(ev)
+      local name = vim.fn.fnamemodify(ev.file, ":t")
+      if not name:match("^%d%d%d%d%-%d%d%-%d%d%.md$") then
+        return
+      end
+      if vim.api.nvim_buf_line_count(ev.buf) > 1 then
+        return
+      end
+      vim.api.nvim_buf_set_lines(ev.buf, 0, -1, false, daily_header())
+      vim.api.nvim_win_set_cursor(0, { 9, 0 })
+    end,
+  })
+end
 
 function M.setup(opts)
   opts = opts or {}
@@ -560,6 +612,7 @@ function M.setup(opts)
   map("n", keymaps.review,            M.review,            "clife: full review")
   map("n", keymaps.tags,              M.tags,              "clife: browse inline tags")
   map("n", keymaps.template,          M.template_insert,   "clife: insert template at cursor")
+  register_daily_autocmd()
 end
 
 return M
