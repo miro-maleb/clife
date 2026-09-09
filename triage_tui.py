@@ -523,6 +523,10 @@ class TriageApp(App):
         # that are also house work. Empty is the ordinary single-tag view, so
         # nothing about the app changes until you pin something.
         self.pins: list = []
+        # The view each pin replaced, so unpinning returns where you were
+        # rather than dumping you in `all`. Parallel to `pins`, pushed and
+        # popped with it.
+        self._pin_return: list = []
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
@@ -744,7 +748,11 @@ class TriageApp(App):
         from is the kind of modal surprise this app keeps removing.
         """
         tag = self.view_tag
-        if not isinstance(tag, str) or not tag:
+        if not isinstance(tag, str) or not tag or tag == triage.ALL:
+            # ALL is a string sentinel (`*`), so a bare isinstance check let it
+            # through and the strip offered `*` as something to Tab onto. It
+            # is not a subject and has no neighbours -- everything is its
+            # neighbour, which is the facet column's job, not the strip's.
             return []
         root = tag.split("/")[0]
         kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
@@ -1221,11 +1229,16 @@ class TriageApp(App):
         real = self.tag_names[PINNED_VIEWS:]
         if i is not None and PINNED_VIEWS <= i < len(self.tag_names):
             tag = self.tag_names[i]
-        elif real:
+        elif self._tag_filter and real:
             # Typing narrowed the list but the cursor never left a view row.
             # The top match is the one on screen under the box, and it is
             # sorted by weight, so a parent outranks its children -- `todo`
             # pins `todo`, not `todo/sooner`.
+            #
+            # Gated on there being a FILTER. Without that gate, `+` with the
+            # cursor resting on `unplaced` or `all` would pin whatever happens
+            # to top the vocabulary -- a tag you never named, from a row that
+            # is not a tag at all.
             tag = real[0]
         else:
             self.notify("nothing to pin — put the cursor on a tag")
@@ -1233,6 +1246,7 @@ class TriageApp(App):
         if tag in self.pins:
             return
         self.pins.append(tag)
+        self._pin_return.append(self.view_tag)
         self.query_one("#tagfilter", Input).value = ""
         self._tag_filter = ""
         # The view drops to `all` so the pin is the whole query. Staying on
@@ -1263,6 +1277,12 @@ class TriageApp(App):
         if not self.pins:
             return
         gone = self.pins.pop()
+        # Back to the view this pin was made from. Without it, pinning from
+        # `#projects` (16 notes) and unpinning left you in `all` (60) -- the
+        # count jumped, nothing said why, and the tag you had been reading was
+        # gone. A pin is a step, so undoing it is a step back.
+        if self._pin_return:
+            self.view_tag = self._pin_return.pop()
         self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
         self._order_rows()
         self._tag_sig = None
@@ -1339,6 +1359,7 @@ class TriageApp(App):
         # invisible and nothing on screen saying why.
         had_pins = bool(self.pins)
         self.pins = []
+        self._pin_return = []
         lst = self.query_one("#taglist", ListView)
         if lst.index != 0:
             lst.index = 0                       # the pinned `unplaced` row
@@ -2205,6 +2226,13 @@ class TriageApp(App):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "tagfilter":
+            # `/` is the key that OPENS this box, and after a pin the box
+            # already has focus -- so the habit of pressing it again typed a
+            # slash and killed the filter. Swallow a leading one; no tag
+            # starts with a slash, so nothing legitimate is lost.
+            if event.value.startswith("/"):
+                event.input.value = event.value.lstrip("/")
+                return
             self._tag_filter = event.value
             self._paint_tags()
 
