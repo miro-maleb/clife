@@ -986,6 +986,14 @@ class TriageApp(App):
         every keystroke-driven refresh, and paying a subprocess for it would
         make the list lag the write that caused it. Writes still go out through
         `cl` — read cheap, write guarded."""
+        # A reload ends any walk in progress. The anchor exists to hold a
+        # neighbourhood STILL while Tab steps through it, and the store just
+        # changed underneath -- so the frozen list is now the one thing on
+        # screen that cannot show what you just did. Adding `letter` to a note
+        # in #writing left it missing from #writing's own strip, because the
+        # strip was still answering from the list captured before the write.
+        self._fam_anchor = []
+        self._fam_home = None
         # ONE read of the store per refresh, shared four ways: the rows, the
         # vocabulary, the unplaced count, and the preview, which reuses it
         # rather than re-reading 238 files to answer a cursor move.
