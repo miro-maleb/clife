@@ -90,6 +90,7 @@ near-duplicates the guard exists to prevent. So the queue gets a verb meaning
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import shutil
@@ -477,6 +478,13 @@ class TriageApp(App):
         # a different question and the one you have when reviewing rather than
         # filing. Stepping note-by-note makes you rebuild the thread in your
         # head at every step.
+        # Ctrl+Enter pins; `+` is the same act for a terminal that eats it.
+        # tmux needs `extended-keys on` and the terminal `extkeys` for the
+        # first one to arrive at all -- both are set here, but a plain key
+        # that always works keeps the feature from being invisible elsewhere.
+        Binding("ctrl+enter,plus", "pin_tag", "Pin this tag", show=False,
+                priority=True),
+        Binding("minus", "unpin", "Unpin", show=False, priority=True),
         Binding("z", "read_all", "Read the whole tag", show=False),
         Binding("i", "focus_tags", "Tag", show=False),
         Binding("a", "accept", "Accept suggestion", show=False),
@@ -510,6 +518,11 @@ class TriageApp(App):
         # None = the unplaced queue (what this app has always shown); a string
         # = that tag's notes. One field, and every view is a query over it.
         self.view_tag = triage.UNTAGGED
+        # Tags ANDed with the view. One tag answers "what is this about";
+        # two answer questions neither can alone -- practice AND money, todos
+        # that are also house work. Empty is the ordinary single-tag view, so
+        # nothing about the app changes until you pin something.
+        self.pins: list = []
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
@@ -701,6 +714,27 @@ class TriageApp(App):
         if self.view_tag == POOL_TAG:
             self.rows.sort(key=lambda r: not self._is_soon(r))
 
+    def _cooccurring(self, limit: int = 12) -> list:
+        """Tags that appear ON the notes currently in view, most-used first.
+
+        Computed from `self.rows`, never from the whole store: the question is
+        "what else is on THESE notes", and answering it from the vocabulary
+        would offer tags whose intersection with the view is empty -- a menu
+        of dead ends, which is the failure mode of every faceted filter that
+        does not recount.
+        """
+        seen = collections.Counter()
+        for r in self.rows:
+            for t in r["tags"]:
+                seen[t] += 1
+        drop = set(self.pins) | ({self.view_tag} if isinstance(self.view_tag, str) else set())
+        # A pin's own children are not a facet of it: standing on `todo` with
+        # `todo/sooner` offered reads as a sibling when it is a subset.
+        out = [t for t in seen
+               if t not in drop and not any(t.startswith(str(p) + "/") for p in drop if p)]
+        out.sort(key=lambda t: (-seen[t], t))
+        return out[:limit]
+
     def _family(self) -> list:
         """[parent, *children] for whatever view you are on, or [].
 
@@ -714,7 +748,13 @@ class TriageApp(App):
             return []
         root = tag.split("/")[0]
         kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
-        return [root] + kids if kids else []
+        if kids:
+            return [root] + kids
+        # No children: offer what these notes are ALSO about. Same key, same
+        # meaning -- "the next related view" -- so Tab does not have to be
+        # learned twice. A tag with children keeps them, because a subset is a
+        # closer relation than a neighbour.
+        return [tag] + self._cooccurring() if self._cooccurring() else []
 
     # What each view can DO, longest form first. The caller takes the first
     # that fits, the way the rail's inbox header does — a hint clipped
@@ -745,11 +785,12 @@ class TriageApp(App):
         both -- it used to print a bare `#None` before the unplaced branch was
         special-cased everywhere, and `all` would have printed `#*`. One
         function so the next pseudo-view only has to be added once."""
-        if self.view_tag is triage.UNTAGGED:
-            return "unplaced"
-        if self.view_tag == triage.ALL:
-            return "all notes"
-        return "#" + str(self.view_tag)
+        base = ("unplaced" if self.view_tag is triage.UNTAGGED
+                else "all" if self.view_tag == triage.ALL
+                else "#" + str(self.view_tag))
+        if self.pins:
+            return " + ".join("#" + p for p in self.pins) + " + " + base
+        return base
 
     def _paint_hdr(self) -> None:
         """The queue header: what you are looking at, then what you can do to
@@ -766,6 +807,8 @@ class TriageApp(App):
             hdr = f"ALL — {len(self.rows)} · {self._n_unplaced} unplaced"
         else:
             hdr = f"#{self.view_tag} — {len(self.rows)}"
+        if self.pins:
+            hdr = f"{self._view_label().upper()} — {len(self.rows)}"
         try:
             self.query_one("#queuehdr", Label).update(self._with_verbs(hdr))
         except Exception:  # noqa: BLE001 — not composed yet
@@ -812,13 +855,17 @@ class TriageApp(App):
             return
         strip.display = True
         t = Text()
-        t.append("children  ", FAINT)
+        kids = len(fam) > 1 and str(fam[1]).startswith(str(fam[0]) + "/")
+        t.append("children  " if kids else "also  ", FAINT)
         for i, name in enumerate(fam):
             # The root is shown as `all`, because selecting it is not picking
             # a child — it is the rollup, and calling it `blog` beside
             # `blog/kids` would read as a sibling of its own children.
-            label = "all" if i == 0 else name.split("/", 1)[1]
-            n = len(triage.queue(self._items, tag=name))
+            if kids:
+                label = "all" if i == 0 else name.split("/", 1)[1]
+            else:
+                label = name          # neighbours are whole tags, not suffixes
+            n = len(triage.queue(self._items, tag=name, pins=self.pins))
             on = name == self.view_tag
             t.append(f" {label} ", "black on #e8a34e" if on else ACCENT)
             t.append(f"{n} ", FAINT)
@@ -859,7 +906,7 @@ class TriageApp(App):
         # rather than re-reading 238 files to answer a cursor move.
         self._items = stream.load(include_daily=True)
         self._items_at = time.monotonic()
-        self.rows = triage.queue(self._items, tag=self.view_tag)
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
         self._order_rows()
         self.vocab = stream.vocabulary(self._items)
         self.parents = _rollups(self._items)
@@ -1012,7 +1059,7 @@ class TriageApp(App):
         # every hover rebuilt all 240 rows, which is most of what made the
         # preview flash.
         sig = (tuple(self.vocab.items()), tuple(getattr(self, "parents", {}).items()),
-               self._tag_filter, self._n_unplaced, self._n_all)
+               self._tag_filter, self._n_unplaced, self._n_all, tuple(self.pins))
         if sig == getattr(self, "_tag_sig", None):
             return
         self._tag_sig = sig
@@ -1047,6 +1094,18 @@ class TriageApp(App):
         # selecting it will show.
         merged = sorted({**self.vocab, **getattr(self, "parents", {})}.items(),
                         key=lambda kv: -kv[1])
+        # With pins up, the column stops being the vocabulary and becomes the
+        # FACETS of what is pinned -- only tags that still leave notes, with
+        # the count of the intersection rather than of the whole store. A
+        # column that kept offering `recipe` while `recipe + hearth` is empty
+        # is a menu of dead ends.
+        if self.pins:
+            live = collections.Counter()
+            for r in self.rows:
+                for t in r["tags"]:
+                    live[t] += 1
+            merged = [(k, v) for k, v in sorted(live.items(), key=lambda kv: (-kv[1], kv[0]))
+                      if k not in self.pins]
         for name, count in merged:
             if q and q not in name.lower():
                 continue
@@ -1131,6 +1190,70 @@ class TriageApp(App):
         self._load_view(tag)
         self.set_focus(self.query_one("#queue", ListView))
 
+    def action_pin_tag(self) -> None:
+        """Ctrl+Enter (or `+`) — AND this tag onto the view and keep filtering.
+
+        The tag column narrows to what still intersects, so the second tag is
+        chosen from a list that cannot produce an empty result. Repeatable:
+        each pin is another AND, and the header carries the chain so a view
+        three deep still says what it is.
+
+        Pins the tag UNDER THE CURSOR, or the filter's single match when you
+        have typed one -- the same bargain Enter makes in the picker, for the
+        same reason: having narrowed to one, you have already said which.
+        """
+        if self._picking:               # the column is a picker right now
+            return
+        lst = self.query_one("#taglist", ListView)
+        i = lst.index
+        real = self.tag_names[PINNED_VIEWS:]
+        if isinstance(self.focused, Input) and len(real) == 1:
+            tag = real[0]
+        elif i is not None and i >= PINNED_VIEWS and i < len(self.tag_names):
+            tag = self.tag_names[i]
+        else:
+            self.notify("nothing to pin — put the cursor on a tag")
+            return
+        if tag in self.pins:
+            return
+        self.pins.append(tag)
+        self.query_one("#tagfilter", Input).value = ""
+        self._tag_filter = ""
+        # The view drops to `all` so the pin is the whole query. Staying on
+        # the old tag would silently AND it too, and the header would be the
+        # only place that said so.
+        self.view_tag = triage.ALL
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
+        self._order_rows()
+        self._tag_sig = None            # facets changed; force the repaint
+        self._paint_tags()
+        # Land the cursor on the `all` row, which is what the view now IS.
+        # Leaving it where it was put it on the first FACET after the repaint,
+        # and the Highlighted handler loaded that -- so pinning `hearth`
+        # silently became `hearth + ai`. Parking it on a row that agrees with
+        # view_tag makes the handler a no-op instead of a surprise, and it is
+        # also where you want to be: type to filter the facets and pin again.
+        lst.index = 1
+        self._repaint_queue(keep=0)
+        # Straight back into the filter, because pinning is never the last
+        # thing you do -- the point of a pin is to narrow and look again. It
+        # also keeps you out of the tag list, where the letters you would type
+        # to filter are app bindings instead: `r` reloads, `p` makes a project.
+        self.set_focus(self.query_one("#tagfilter", Input))
+        self.notify(self._view_label() + f" — {len(self.rows)}")
+
+    def action_unpin(self) -> None:
+        """`-` — drop the last pin. Esc does it too, before it climbs."""
+        if not self.pins:
+            return
+        gone = self.pins.pop()
+        self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins)
+        self._order_rows()
+        self._tag_sig = None
+        self._paint_tags()
+        self._repaint_queue(keep=0)
+        self.notify(f"unpinned #{gone}" + (f" — {self._view_label()}" if self.pins else ""))
+
     def action_cycle_child(self, step: int = 1) -> None:
         """Tab — walk the family, and the walk IS the opening.
 
@@ -1195,9 +1318,17 @@ class TriageApp(App):
         fighting. (They have fought before: a repaint that restored the
         highlight used to bounce `g` straight back to the previous tag.)
         """
+        # Pins go too. `g` is "start over", and a g that left a two-tag
+        # intersection standing would show the unplaced queue with most of it
+        # invisible and nothing on screen saying why.
+        had_pins = bool(self.pins)
+        self.pins = []
         lst = self.query_one("#taglist", ListView)
         if lst.index != 0:
             lst.index = 0                       # the pinned `unplaced` row
+        if had_pins and self.view_tag is triage.UNTAGGED:
+            self._tag_sig = None
+            await self.reload()
         if self.view_tag is not triage.UNTAGGED:
             await self._switch_view(triage.UNTAGGED)
         else:
@@ -1422,7 +1553,7 @@ class TriageApp(App):
             self._items = stream.load(include_daily=True)
             self._items_at = time.monotonic()
         self.view_tag = tag
-        self.rows = triage.queue(self._items, tag=tag)
+        self.rows = triage.queue(self._items, tag=tag, pins=self.pins)
         self._order_rows()
         self._repaint_queue(keep=0)
 
@@ -1805,6 +1936,7 @@ class TriageApp(App):
                     "g back to unplaced · "
                     "tags: j/k or w/b move · I/A first/last · d remove · a add · "
                     "on the note list: t todo · d trash (recoverable) · u undo · "
+                    "ctrl+enter or + pins a tag (AND) · - or esc unpins · "
                     "c chat (first one starts a pass) · C re-ask · "
                     "z read the whole tag as one page (read-only) · "
                     "o open in the writer · r reload · q quit", timeout=14)
@@ -2044,7 +2176,11 @@ class TriageApp(App):
         # the notes and then stopped, which reads as the key having died.
         if self.focused is self.query_one("#queue", ListView) \
                 and event.key == "escape":
-            self.action_col_left()
+            # A pin is a rung too: Esc unwinds the query before it leaves it.
+            if self.pins:
+                self.action_unpin()
+            else:
+                self.action_col_left()
             event.stop()
             return
         # Single-letter bindings must not fire while typing in the filter;

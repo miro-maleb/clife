@@ -136,7 +136,7 @@ ALL = "*"                # every note, placed or not
 # [a-z][a-z0-9-]* -- no real tag can ever collide with it.
 
 
-def queue(items=None, tag=UNTAGGED) -> list:
+def queue(items=None, tag=UNTAGGED, pins=()) -> list:
     """The notes in one VIEW, each with its triage slot attached.
 
     `tag=None` is the unplaced queue — notes with no tags — and is what
@@ -154,12 +154,25 @@ def queue(items=None, tag=UNTAGGED) -> list:
     `tag=ALL` is every note in the store, placed or not -- the view for
     "I know I wrote it down", where the answer is a filter and a scroll
     rather than a guess at which word you used that day.
+
+    `pins` narrows any of those to the notes carrying ALL of them as well.
+    One tag answers "what is this about"; two answer questions neither can
+    on its own -- what have I written about practice AND money, which todos
+    are also house work. The vocabulary is small enough now that the second
+    tag is where the interesting queries live.
     """
     items = items if items is not None else stream.load(include_daily=tag is not None)
     slots = load_slots()
     q = (tag or "").lstrip("#").rstrip("/")
+    # Pins are ANDed with the view, and matched the same hierarchical way a
+    # tag view is -- pinning `blog` keeps a note tagged `blog/kids`, or the
+    # intersection would disagree with the view you pinned it from.
+    pinq = [str(p).lstrip("#").rstrip("/") for p in pins if p]
     rows = []
     for it in items:
+        if pinq and not all(any(t == p or t.startswith(p + "/") for t in it["tags"])
+                            for p in pinq):
+            continue
         if tag == ALL:
             pass                        # everything, including the unplaced
         elif tag is UNTAGGED:
