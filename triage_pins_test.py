@@ -230,6 +230,75 @@ async def run():
         check(app.pins == [] and app._pin_return == [], "over-unpinning is safe")
         print("  [ok] empty intersections, ghost pins, over-unpinning")
 
+        # ── Tab: neighbours must be a CYCLE, not a one-way walk ──────────
+        # Reported from use: on `writing`, Tab went to `buddhism`, and from
+        # there shift+Tab went somewhere unrelated instead of back. Children
+        # never had this bug because [blog, blog/kids, ...] is a stable list
+        # keyed off the root; neighbours are a GRAPH, and recomputing them
+        # from wherever you landed left Tab with no inverse.
+        async def goto(tag):
+            app._fam_anchor = []
+            await reset()
+            app._load_view(tag)
+            await settle(pilot, 0.08)
+
+        for start in [t for t in real if "/" not in t][:8]:
+            await goto(start)
+            if len(app._family()) < 2:
+                continue
+            app.action_cycle_child(1)
+            await settle(pilot, 0.08)
+            mid = app.view_tag
+            app.action_cycle_child(-1)
+            await settle(pilot, 0.08)
+            check(app.view_tag == start, "tab then shift+tab returns",
+                  f"{start} -> {mid} -> {app.view_tag}")
+
+        # the list must not change under you mid-walk, and must wrap home
+        anchor_tag = next((t for t in real if "/" not in t
+                           and t not in app.parents), real[0])
+        await goto(anchor_tag)
+        fam0 = list(app._family())
+        if len(fam0) > 1:
+            seen = [app.view_tag]
+            for _ in range(len(fam0) - 1):
+                app.action_cycle_child(1)
+                await settle(pilot, 0.06)
+                seen.append(app.view_tag)
+                check(app._family() == fam0, "family fixed while walking",
+                      f"{app.view_tag}: {app._family()}")
+            check(len(set(seen)) == len(fam0), "walk visits each once", str(seen))
+            app.action_cycle_child(1)
+            await settle(pilot, 0.06)
+            check(app.view_tag == fam0[0], "full cycle wraps home",
+                  f"{app.view_tag} vs {fam0[0]}")
+
+        # landing on a tag that HAS children must not hijack the walk
+        kidded = next((t for t in fam0 if "/" in t), None)
+        if kidded:
+            await goto(anchor_tag)
+            app.action_cycle_child(1)
+            await settle(pilot, 0.06)
+            while app.view_tag != kidded and app.view_tag != fam0[0]:
+                app.action_cycle_child(1)
+                await settle(pilot, 0.06)
+            if app.view_tag == kidded:
+                check(app._family() == fam0, "a child tag does not hijack the walk",
+                      f"on {kidded}: {app._family()}")
+
+        # arriving any other way starts a new neighbourhood
+        await goto(anchor_tag)
+        app.action_cycle_child(1)
+        await settle(pilot, 0.06)
+        check(app._fam_anchor, "anchor is set while walking")
+        await pilot.press("h")
+        await settle(pilot, 0.2)
+        lst.index = 2
+        await settle(pilot, 0.3)
+        check(app._fam_anchor == [], "the tag column clears the anchor",
+              str(app._fam_anchor))
+        print("  [ok] Tab cycles neighbours reversibly")
+
         # and finally: keep pressing things
         rng = random.Random(11)
         await reset()

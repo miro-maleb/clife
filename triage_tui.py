@@ -531,6 +531,13 @@ class TriageApp(App):
         # rather than dumping you in `all`. Parallel to `pins`, pushed and
         # popped with it.
         self._pin_return: list = []
+        # The neighbour list Tab is currently walking, anchored to the tag it
+        # was entered from. Children are a stable list keyed off the root, so
+        # Tab and shift+Tab agree; neighbours are a GRAPH, and recomputing
+        # them from wherever you just landed made Tab a one-way walk with no
+        # inverse -- writing -> buddhism, then shift+Tab went somewhere else
+        # entirely because buddhism's neighbours are a different list.
+        self._fam_anchor: list = []
         self.tag_names: list = []      # what the left column currently lists
         self._tag_filter = ""
         self._n_unplaced = 0
@@ -758,6 +765,13 @@ class TriageApp(App):
             # is not a subject and has no neighbours -- everything is its
             # neighbour, which is the facet column's job, not the strip's.
             return []
+        # The anchor wins over children. Walking `writing`'s neighbours and
+        # landing on `projects/clife`, the children rule would hand back
+        # `projects`' family and the walk would fall into it and never come
+        # out -- which is the one-way trip that started this. While a
+        # neighbourhood is being walked, it IS the family.
+        if self._fam_anchor and tag in self._fam_anchor:
+            return list(self._fam_anchor)
         root = tag.split("/")[0]
         kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
         if kids:
@@ -766,7 +780,10 @@ class TriageApp(App):
         # meaning -- "the next related view" -- so Tab does not have to be
         # learned twice. A tag with children keeps them, because a subset is a
         # closer relation than a neighbour.
-        return [tag] + self._cooccurring() if self._cooccurring() else []
+        #
+        # (The anchor is checked at the top, before children.)
+        near = self._cooccurring()
+        return [tag] + near if near else []
 
     # What each view can DO, longest form first. The caller takes the first
     # that fits, the way the rail's inbox header does — a hint clipped
@@ -1319,9 +1336,13 @@ class TriageApp(App):
              else self.screen.focus_previous)()
             return
         fam = self._family()
+        # Standing on a tag with no children, Tab is about to walk its
+        # neighbours -- pin that list now so the walk stays inside it.
+        if fam and not str(fam[1]).startswith(str(fam[0]) + "/"):
+            self._fam_anchor = list(fam)
         cur = self.view_tag if self.view_tag in fam else fam[0]
         nxt = fam[(fam.index(cur) + step) % len(fam)]
-        self._load_view(nxt)
+        self._load_view(nxt, keep_anchor=True)
         if nxt in self.tag_names:               # keep the column in step
             lst = self.query_one("#taglist", ListView)
             want = self.tag_names.index(nxt)
@@ -1364,6 +1385,7 @@ class TriageApp(App):
         had_pins = bool(self.pins)
         self.pins = []
         self._pin_return = []
+        self._fam_anchor = []
         lst = self.query_one("#taglist", ListView)
         if lst.index != 0:
             lst.index = 0                       # the pinned `unplaced` row
@@ -1575,7 +1597,7 @@ class TriageApp(App):
             self._preview_timer.stop()
         self._preview_timer = self.set_timer(0.09, lambda: self._load_view(tag))
 
-    def _load_view(self, tag) -> None:
+    def _load_view(self, tag, keep_anchor: bool = False) -> None:
         """Show a tag's notes WITHOUT taking focus and WITHOUT re-reading the
         store.
 
@@ -1590,6 +1612,10 @@ class TriageApp(App):
         """
         if tag == self.view_tag:
             return
+        if not keep_anchor:
+            # Arriving any other way -- the tag column, `g`, a pin -- starts a
+            # new neighbourhood, centred on where you actually are.
+            self._fam_anchor = []
         if not self._items or time.monotonic() - self._items_at > 2.0:
             self._items = stream.load(include_daily=True)
             self._items_at = time.monotonic()
