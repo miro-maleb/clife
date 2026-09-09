@@ -1129,6 +1129,18 @@ class TriageApp(App):
             f"TAGS — {shown}" + (f" / {len(self.vocab)}" if q else ""))
         if self.tag_names:
             lst.index = min(keep or 0, len(self.tag_names) - 1)
+            # While a filter is up, park the cursor on the first REAL tag
+            # rather than on a pinned view row. Ctrl+Enter pins what the
+            # cursor is on, and the only reason it worked from the filter box
+            # at all was a shortcut for "exactly one match" -- which a PARENT
+            # can never hit, because it always matches its own children too.
+            # So `+` after typing `todo` reported nothing to pin. Moving the
+            # cursor also makes the target visible instead of implied.
+            # Safe to set: _preview_tag is gated on the tag column having
+            # focus, and while you are typing the focus is the Input.
+            if self._tag_filter and len(self.tag_names) > PINNED_VIEWS \
+                    and (lst.index or 0) < PINNED_VIEWS:
+                lst.index = PINNED_VIEWS
 
     async def _add_picked(self, tag: str, allow_new: bool = False) -> None:
         """Add one tag to the note we are picking for, then hand focus back to
@@ -1207,10 +1219,14 @@ class TriageApp(App):
         lst = self.query_one("#taglist", ListView)
         i = lst.index
         real = self.tag_names[PINNED_VIEWS:]
-        if isinstance(self.focused, Input) and len(real) == 1:
-            tag = real[0]
-        elif i is not None and i >= PINNED_VIEWS and i < len(self.tag_names):
+        if i is not None and PINNED_VIEWS <= i < len(self.tag_names):
             tag = self.tag_names[i]
+        elif real:
+            # Typing narrowed the list but the cursor never left a view row.
+            # The top match is the one on screen under the box, and it is
+            # sorted by weight, so a parent outranks its children -- `todo`
+            # pins `todo`, not `todo/sooner`.
+            tag = real[0]
         else:
             self.notify("nothing to pin — put the cursor on a tag")
             return
