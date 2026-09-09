@@ -478,11 +478,15 @@ class TriageApp(App):
         # a different question and the one you have when reviewing rather than
         # filing. Stepping note-by-note makes you rebuild the thread in your
         # head at every step.
-        # Ctrl+Enter pins; `+` is the same act for a terminal that eats it.
-        # tmux needs `extended-keys on` and the terminal `extkeys` for the
-        # first one to arrive at all -- both are set here, but a plain key
-        # that always works keeps the feature from being invisible elsewhere.
-        Binding("ctrl+enter,plus", "pin_tag", "Pin this tag", show=False,
+        # `+` pins, `-` unpins. NOT ctrl+enter, which was the first spelling
+        # and had to go: Textual asks the terminal for the KITTY keyboard
+        # protocol, while tmux's `extended-keys` implements modifyOtherKeys
+        # (the xterm scheme) -- different requests, so tmux never answers and
+        # ctrl+enter arrives as a bare \r. That is worse than a dead key,
+        # because plain Enter on the tag column DESCENDS into the tag: the
+        # alias did not fail quietly, it did something else. One key that
+        # always works beats two where the second lies.
+        Binding("plus", "pin_tag", "Pin this tag", show=False,
                 priority=True),
         Binding("minus", "unpin", "Unpin", show=False, priority=True),
         Binding("z", "read_all", "Read the whole tag", show=False),
@@ -1211,7 +1215,7 @@ class TriageApp(App):
         self.set_focus(self.query_one("#queue", ListView))
 
     def action_pin_tag(self) -> None:
-        """Ctrl+Enter (or `+`) — AND this tag onto the view and keep filtering.
+        """`+` — AND this tag onto the view and keep filtering.
 
         The tag column narrows to what still intersects, so the second tag is
         chosen from a list that cannot produce an empty result. Repeatable:
@@ -1973,7 +1977,7 @@ class TriageApp(App):
                     "g back to unplaced · "
                     "tags: j/k or w/b move · I/A first/last · d remove · a add · "
                     "on the note list: t todo · d trash (recoverable) · u undo · "
-                    "ctrl+enter or + pins a tag (AND) · - or esc unpins · "
+                    "+ pins a tag (AND) · - or esc unpins · "
                     "c chat (first one starts a pass) · C re-ask · "
                     "z read the whole tag as one page (read-only) · "
                     "o open in the writer · r reload · q quit", timeout=14)
