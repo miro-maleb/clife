@@ -414,6 +414,27 @@ async def run():
             app.search = ""
             await app.reload()
             await settle(pilot)
+            # F -- widen to the whole store, keeping what was typed
+            app.search = hay
+            app.pins = [facet]
+            app.view_tag = real[0]
+            await app.reload()
+            await settle(pilot)
+            narrow = len(app.rows)
+            await app.action_search_all()
+            await settle(pilot, 0.3)
+            check(app.pins == [] and app.view_tag == triage.ALL,
+                  "F drops the tag and the pins", f"{app.pins} {app.view_tag!r}")
+            check(app.search == hay, "F keeps what was typed", repr(app.search))
+            check(len(app.rows) == len(triage.queue(app._items, tag=triage.ALL,
+                                                    search=hay)),
+                  "F searches the whole store", str(len(app.rows)))
+            check(len(app.rows) >= narrow, "F widens rather than narrows",
+                  f"{narrow} -> {len(app.rows)}")
+            app.search = ""
+            app.pins = []
+            await app.reload()
+            await settle(pilot)
         print("  [ok] search composes with tags and pins")
 
         # and finally: keep pressing things

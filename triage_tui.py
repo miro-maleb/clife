@@ -467,6 +467,7 @@ class TriageApp(App):
         # says which you meant, rather than the one you happen to be standing
         # in deciding for you.
         Binding("f", "search", "Search notes", show=False),
+        Binding("F", "search_all", "Search the whole store", show=False),
         Binding("g", "view_untagged", "Unplaced", show=False),
         # `T` — the pool, from anywhere. `t` puts one note in it; `T` goes
         # there. The same pairing `g` has with the unplaced queue, and the
@@ -1594,8 +1595,20 @@ class TriageApp(App):
         # The hint is the first thing to go when the width does. At `narrow`
         # the tag column is hidden entirely, so `/` is the only way to reach
         # it and is the one key that must still be advertised.
-        hint = ("  j/k move · ⏎ deeper · esc back · z read all · / filter · g unplaced · ?"
-                if not mode else "  j/k · ⏎ deeper · esc back · / tags · o writer · ?")
+        # `f search` sits next to `/ filter` because the pair is the thing worth
+        # learning: `/` narrows the TAG COLUMN, `f` narrows the NOTES. Two
+        # boxes, and which one you meant is the key you pressed. `F` widens to
+        # the whole store keeping what you typed, and is left out here -- the
+        # bar is for the keys you reach for cold, and F is the one you find
+        # once `f` has come up empty. `?` carries it.
+        # `f search` takes `z read all`'s slot rather than being added to it:
+        # the wide hint applies from 72 columns and was already 96 wide, so
+        # anything appended is clipped off the right -- taking `?` with it,
+        # which is the one key that must survive. `z` is a reading posture you
+        # keep once you have it; `f` is the one being introduced.
+        hint = ("  j/k move · ⏎ deeper · esc back · f search · / filter · "
+                "g unplaced · ?"
+                if not mode else "  j/k · ⏎ deeper · esc back · f search · / tags · ?")
         self.query_one("#status", Static).update(Text.assemble(
             ("NAV ", f"bold {ACCENT}") if mode else ("NAVIGATOR  ", f"bold {ACCENT}"),
             (where, ACCENT),
@@ -1819,6 +1832,48 @@ class TriageApp(App):
         box.display = True
         self.set_focus(box)
         box.selection = Selection.cursor(len(box.value))
+
+    async def action_search_all(self) -> None:
+        """`F` — the same box, over everything.
+
+        `f` searches WHERE YOU ARE, which is right most of the time and wrong
+        at exactly the moment you care: you looked in #writing, it was not
+        there, and the next thought is "is it anywhere". So this drops the
+        tag and the pins and searches the whole store.
+
+        It KEEPS what you have already typed, so f -> F widens the search you
+        are in rather than making you retype it. That is the whole gesture:
+        look here, then look everywhere.
+        """
+        # Kill any pending highlight preview. Moving the tag cursor schedules a
+        # debounced _load_view, and a timer left in flight lands ~90ms later
+        # and quietly puts the view back on whatever row the cursor had been
+        # resting on -- so `F` appeared to work and then undid itself.
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+            self._preview_timer = None
+        self.pins = []
+        self._pin_return = []
+        self._fam_anchor = []
+        self._fam_home = None
+        self._walk_pin = None
+        # Cursor onto the `all` row FIRST. reload() repaints the tag column
+        # and restores the cursor where it was, which fires Highlighted, which
+        # loads that tag -- so setting view_tag before the reload had it
+        # quietly overwritten by whatever row the cursor was resting on.
+        # Parking it on `all` makes that handler agree with us instead.
+        lst = self.query_one("#taglist", ListView)
+        if lst.index != 1:
+            lst.index = 1
+        self.view_tag = triage.ALL
+        self._tag_sig = None
+        await self.reload()
+        self.view_tag = triage.ALL              # re-assert, cheaply
+        self.rows = triage.queue(self._items, tag=triage.ALL, pins=[],
+                                 search=self.search)
+        self._order_rows()
+        self._repaint_queue(keep=0)
+        self.action_search()
 
     def _clear_search(self) -> None:
         box = self.query_one("#searchbox", Input)
@@ -2180,7 +2235,7 @@ class TriageApp(App):
                     "g back to unplaced · "
                     "tags: j/k or w/b move · I/A first/last · d remove · a add · "
                     "on the note list: t todo · d trash (recoverable) · u undo · "
-                    "f search notes (a term, combines with tags) · "
+                    "f search here · F search everything (keeps what you typed) · "
                     "+ pins a tag (AND) · - or esc unpins · "
                     "c chat (first one starts a pass) · C re-ask · "
                     "z read the whole tag as one page (read-only) · "
