@@ -460,6 +460,44 @@ async def run():
               f"help={app._help} readall={app._readall}")
         print("  [ok] every binding appears in `?`")
 
+        # ── the `only` slice: a parent without its children ──────────────
+        # A parent view is hierarchical, which is right for reading and wrong
+        # for SORTING -- #blog answers with blog/kids too, so the notes that
+        # have arrived under blog and not been given a child are invisible.
+        for parent, kids in [(p, [k for k in real if k.startswith(p + "/")])
+                             for p in app.parents]:
+            if not kids:
+                continue
+            await goto(parent)
+            fam = app._family()
+            bare = triage.bare(parent)
+            has_bare = any(i["tags"] and parent in i["tags"] for i in app._items)
+            check((bare in fam) == has_bare,
+                  "`only` is offered exactly when it holds something",
+                  f"{parent}: in_fam={bare in fam} has_bare={has_bare}")
+            if not has_bare:
+                continue
+            rollup = len(triage.queue(app._items, tag=parent))
+            only = len(triage.queue(app._items, tag=bare))
+            kid_rows = {r["slug"] for k in kids
+                        for r in triage.queue(app._items, tag=k)}
+            only_rows = {r["slug"] for r in triage.queue(app._items, tag=bare)}
+            check(only < rollup, "`only` is a strict subset of the rollup",
+                  f"{parent}: {only} vs {rollup}")
+            check(not (only_rows & kid_rows),
+                  "`only` shares no note with any child",
+                  f"{parent}: {only_rows & kid_rows}")
+            # and Tab must still treat this as a CHILDREN family, not
+            # neighbours -- it must not pin the parent as an anchor
+            app.action_cycle_child(1)
+            await settle(pilot, 0.1)
+            check(app.pins == [], "walking a parent's slices pins nothing",
+                  f"{parent}: {app.pins}")
+            check(app.view_tag == bare, "first tab lands on `only`",
+                  f"{app.view_tag!r} vs {bare!r}")
+        await reset()
+        print("  [ok] the `only` slice")
+
         # and finally: keep pressing things
         rng = random.Random(11)
         await reset()

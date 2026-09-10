@@ -786,6 +786,7 @@ class TriageApp(App):
         """
         tag = self.view_tag
         real = isinstance(tag, str) and tag and tag != triage.ALL
+        # (a bare view `!blog` keeps blog's family: same subject, one slice.)
         # The anchor wins over children. Walking `writing`'s neighbours and
         # landing on `projects/clife`, the children rule would hand back
         # `projects`' family and the walk would fall into it and never come
@@ -794,10 +795,20 @@ class TriageApp(App):
         if self._fam_anchor and (tag in self._fam_anchor or not real):
             return list(self._fam_anchor)
         if real:
-            root = tag.split("/")[0]
+            root = tag.lstrip(triage.BARE).split("/")[0]
             kids = sorted(k for k in self.vocab if k.startswith(root + "/"))
             if kids:
-                return [root] + kids
+                # `only` sits between the rollup and the children: the notes
+                # carrying the parent and no child of it. That is the parent
+                # as a LANDING AREA -- what has arrived under this subject and
+                # not been sorted yet -- which the hierarchical view cannot
+                # show, because it answers with the children too. Omitted when
+                # empty: `projects` and `book` are pure containers, and a
+                # permanent `only 0` would be a slot that never means anything.
+                fam = [root]
+                if self.vocab.get(root):
+                    fam.append(triage.bare(root))
+                return fam + kids
         near = self._cooccurring()
         if not near:
             return []
@@ -845,6 +856,8 @@ class TriageApp(App):
         function so the next pseudo-view only has to be added once."""
         base = ("unplaced" if self.view_tag is triage.UNTAGGED
                 else "all" if self.view_tag == triage.ALL
+                else "#" + str(self.view_tag)[1:] + " only"
+                if str(self.view_tag).startswith(triage.BARE)
                 else "#" + str(self.view_tag))
         if self.pins:
             # `all` is what is left when the pins ARE the query, and printing
@@ -921,7 +934,10 @@ class TriageApp(App):
             return
         strip.display = True
         t = Text()
-        kids = len(fam) > 1 and str(fam[1]).startswith(str(fam[0]) + "/")
+        # ANY member, not fam[1]: the `only` slot now sits between the rollup
+        # and the first child, so checking position 1 saw `!blog`, decided
+        # this was a neighbour list, and rendered raw tag names under `also`.
+        kids = any(str(f).startswith(str(fam[0]) + "/") for f in fam[1:])
         if kids:
             t.append("children  ", FAINT)
         else:
@@ -937,7 +953,12 @@ class TriageApp(App):
             # a child — it is the rollup, and calling it `blog` beside
             # `blog/kids` would read as a sibling of its own children.
             if kids:
-                label = "all" if i == 0 else name.split("/", 1)[1]
+                if i == 0:
+                    label = "all"
+                elif str(name).startswith(triage.BARE):
+                    label = "only"
+                else:
+                    label = name.split("/", 1)[1]
             else:
                 label = name          # neighbours are whole tags, not suffixes
             # Every number is what you would SEE if you went there: the
@@ -1469,7 +1490,10 @@ class TriageApp(App):
         fam = self._family()
         # Standing on a tag with no children, Tab is about to walk its
         # neighbours -- pin that list now so the walk stays inside it.
-        neigh = len(fam) > 1 and not str(fam[1]).startswith(str(fam[0]) + "/")
+        # Same fix as the strip: a family with an `only` slot is still a
+        # CHILDREN family, and Tab must not pin its root as an anchor.
+        neigh = len(fam) > 1 and not any(
+            str(f).startswith(str(fam[0]) + "/") for f in fam[1:])
         neigh = neigh or (len(fam) == 1 and fam[0] != self.view_tag)
         if neigh and not self._fam_anchor:
             self._fam_anchor = list(fam)
@@ -2241,6 +2265,7 @@ class TriageApp(App):
             ("esc",          "climb back, and unwind the query one term at a time"),
             ("tab / S-tab",  "walk the strip: a tag's children, or what its notes"),
             ("",             "are ALSO about — anchored, so S-tab really goes back"),
+            ("",             "on a parent, `only` is the slice with no child yet"),
         ]),
         ("VIEWS", [
             ("unplaced",     "notes nobody has placed — pinned top of the column"),

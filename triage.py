@@ -130,6 +130,19 @@ def save_slots(slots: dict, trashed: dict | None = None) -> None:
 
 UNTAGGED = None          # the default view: notes nobody has placed yet
 ALL = "*"                # every note, placed or not
+BARE = "!"               # prefix: this tag EXACTLY, none of its children
+
+
+def bare(tag: str) -> str:
+    """`blog` -> `!blog`: the notes carrying the parent and no child of it.
+
+    A parent view is hierarchical -- #blog answers with blog/kids and
+    blog/archive too -- which is right for reading and wrong for SORTING. The
+    bare view is the parent as a landing area: what has arrived under this
+    subject and not yet been given a child. `!` cannot collide, since a tag
+    is [a-z][a-z0-9-]* and cannot begin with one.
+    """
+    return BARE + str(tag).lstrip("#")
 
 # `*` and not a second `None`-like object because a view has to survive the
 # CLI: `cl triage --view all` has to name this, and a sentinel object cannot
@@ -197,7 +210,15 @@ def queue(items=None, tag=UNTAGGED, pins=(), search="") -> list:
     # Pins are ANDed with the view, and matched the same hierarchical way a
     # tag view is -- pinning `blog` keeps a note tagged `blog/kids`, or the
     # intersection would disagree with the view you pinned it from.
-    pinq = [str(p).lstrip("#").rstrip("/") for p in pins if p]
+    def _match(it, want):
+        """One term against one note. `!blog` is exact; everything else is
+        hierarchical, so `blog` still answers with `blog/kids`."""
+        if want.startswith(BARE):
+            return want[1:] in it["tags"]
+        return any(t == want or t.startswith(want + "/") for t in it["tags"])
+
+    pinq = [str(p).lstrip("#").rstrip("/") if not str(p).startswith(BARE)
+            else str(p) for p in pins if p]
     # Every word must appear somewhere in the note -- title, filename or body.
     # AND rather than OR, and unordered, because that is how you remember a
     # note: two or three words that were definitely in it, in no order you
@@ -205,15 +226,14 @@ def queue(items=None, tag=UNTAGGED, pins=(), search="") -> list:
     terms = [w for w in str(search or "").lower().split() if w]
     rows = []
     for it in items:
-        if pinq and not all(any(t == p or t.startswith(p + "/") for t in it["tags"])
-                            for p in pinq):
+        if pinq and not all(_match(it, p) for p in pinq):
             continue
         if tag == ALL:
             pass                        # everything, including the unplaced
         elif tag is UNTAGGED:
             if it["tags"]:
                 continue
-        elif not any(t == q or t.startswith(q + "/") for t in it["tags"]):
+        elif not _match(it, tag if str(tag).startswith(BARE) else q):
             continue
         if terms:
             hay = (it["title"] + " " + it["slug"]).lower()
