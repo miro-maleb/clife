@@ -454,6 +454,52 @@ def apply_set(item, *, add_tags=None, rm_tags=None):
     return updates
 
 
+def retag_plan(items, old, new):
+    """Every note that `retag old -> new` would touch, and what it becomes.
+
+    A tag is a NAMESPACE, so renaming `blog` carries its children: `blog/kids`
+    becomes `writing/blog/kids`, not an orphan under the old parent. Renaming
+    only the exact tag is the failure this function exists to prevent — it
+    leaves a namespace half-moved, which no view can show as one thing again.
+
+    `new` empty means REMOVE the tag and its children. That is how a one-off
+    coined tag gets taken back out of the vocabulary.
+
+    Returns a list of {slug, path, before, after} for notes that actually
+    change. A merge onto an existing tag is not special-cased: two tags
+    becoming one is the same write as a rename, minus the surprise.
+    """
+    old = norm_tag(old)
+    new = norm_tag(new) if new else ""
+    if not old:
+        raise ValueError("retag: no tag to rename")
+    if old == new:
+        return []
+    plan = []
+    for it in items:
+        before = [norm_tag(t) for t in it["tags"]]
+        after = []
+        for t in before:
+            if t == old or t.startswith(old + "/"):
+                if not new:
+                    continue                       # removal
+                t = new + t[len(old):]
+            if t not in after:                     # a merge can collide
+                after.append(t)
+        if after != before:
+            plan.append({"slug": it["slug"], "path": it["path"],
+                         "before": before, "after": after})
+    return plan
+
+
+def apply_retag(plan):
+    """Write a plan out. Whole-list `tags:` writes, one note at a time, through
+    fm.set_fields — so a note the plan did not name is not opened at all."""
+    for row in plan:
+        fm.set_fields(Path(row["path"]), {"tags": row["after"]})
+    return len(plan)
+
+
 # ── rendering ──────────────────────────────────────────────────────────────
 
 _LABELS = {"sooner": "sooner", "later": "on the plate"}
@@ -557,6 +603,14 @@ def main(argv=None):
     s.add_argument("--new", action="store_true",
                    help="allow a tag the guard flagged as a near-duplicate")
     s.add_argument("--json", action="store_true")
+
+    rt = sub.add_parser("retag", help="rename or merge a tag across the whole kb")
+    rt.add_argument("old")
+    rt.add_argument("new", nargs="?", default="",
+                    help="the new name; omit (or 'none') to REMOVE the tag")
+    rt.add_argument("--apply", action="store_true",
+                    help="actually write. without it this only shows the plan")
+    rt.add_argument("--json", action="store_true")
 
     r = sub.add_parser("render", help="write the read-only agenda artifact to outbox/")
     r.add_argument("--json", action="store_true")
@@ -690,6 +744,41 @@ def main(argv=None):
         _emit({"ok": True, "slug": it["slug"], "path": it["path"],
                "applied": got, "notes": notes, "not_present": missing},
               args, "\n".join(text))
+
+    elif args.cmd == "retag":
+        # include_daily: a rename that skipped daily notes would leave `journal`
+        # — the most-used tag in the store — behind on 17 files while claiming
+        # to have renamed it everywhere.
+        new = "" if args.new.strip().lower() in ("", "none", "-") else args.new
+        try:
+            plan = retag_plan(load(include_daily=True), args.old, new)
+        except ValueError as e:
+            raise SystemExit(f"cl stream: {e}")
+        verb = "remove" if not new else f"-> #{norm_tag(new)}"
+        c = _color(color)
+        if not plan:
+            _emit({"ok": True, "applied": False, "count": 0, "plan": []},
+                  args, c(f"  #{norm_tag(args.old)}: no notes carry it — "
+                          f"nothing to {'remove' if not new else 'rename'}", "dim"))
+        elif not args.apply:
+            # Dry run is the DEFAULT, not a flag. This is the one command here
+            # that rewrites many notes at once, and the vocabulary is the thing
+            # every view is built on — seeing the blast radius first is the
+            # cheapest guard there is.
+            lines = [c(f"  #{norm_tag(args.old)} {verb} — "
+                       f"{len(plan)} note(s) would change", "bold"), ""]
+            for row in plan:
+                lines.append(f"  {row['slug'][:44]:<44} "
+                             + c(" ".join("#" + t for t in row["after"]) or "(no tags)",
+                                 "cyan"))
+            lines += ["", c("  nothing written. add --apply to do it.", "dim")]
+            _emit({"ok": True, "applied": False, "count": len(plan), "plan": plan},
+                  args, "\n".join(lines))
+        else:
+            n = apply_retag(plan)
+            _emit({"ok": True, "applied": True, "count": n, "plan": plan},
+                  args, c(f"  #{norm_tag(args.old)} {verb} — {n} note(s) rewritten",
+                          "bold"))
 
     elif args.cmd == "render":
         g = agenda_groups(items)
