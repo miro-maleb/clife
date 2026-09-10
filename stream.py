@@ -10,17 +10,21 @@ derived copy of your notes that could drift from them. `render` emits a
 read-only artifact to outbox/ for eyeballing, and that is explicitly derived —
 regenerate it, never edit it.
 
-An agenda item is a stream note with `status: todo`.
+An agenda item is a note tagged `#todo`. Urgent is the child `#todo/sooner`.
 
-  tags:    what it is ABOUT      (home, network, blog/x)  — orthogonal
-  status:  what STATE it is in   (todo / done / archived)
-  when:    the day you MEAN to do it (not a deadline — see cl stream --help)
+  tags:    what it is ABOUT (home, blog/x) AND whether it is on your plate.
 
-Roll-forward is free and deliberate: nothing is ever moved or rewritten when a
-day passes. An undone item dated Tuesday stays an undone item dated Tuesday;
-the TODAY view simply chooses to surface it under `overdue`. That is why this
-is a view — a file would need a morning sweep, and a sweep is a rewrite, and a
-rewrite is where a week's planning goes missing.
+This used to read `status: todo` and `when:` — two frontmatter fields nothing
+has written since the flatten, so the view returned an empty agenda over a kb
+holding two dozen live todos while `cl triage --view todo` (reading the tag)
+showed them all. Two spellings of one idea, and the one with a writer won.
+There is now exactly one: the tag. `status:` and `when:` are not read here and
+are not written by anything.
+
+Two bands, not six: `#todo/sooner` and everything else under `#todo`. A date
+per item was never filled in, and an unfilled date manufactured an "overdue"
+that only ever meant "captured a while ago". Age still sorts the later band —
+that is a rendering choice over data that exists, which the dates were not.
 """
 
 import argparse
@@ -28,7 +32,7 @@ import json
 import os
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -39,15 +43,24 @@ from paths import STORE
 STREAM = STORE
 OUTBOX = KB / "outbox" / "reports"
 
-TODO, DONE, ARCHIVED = "todo", "done", "archived"
+# The pool is a tag, and urgent is its CHILD — not a second flat tag. Flat
+# `#todo` + `#sooner` is two bits and therefore four states, one of which
+# (`#sooner` alone) means nothing and is invisible to the pool forever. As a
+# child there are two states and the meaningless one cannot be spelled. Same
+# constants triage_tui.py works in; they must not drift apart again.
+POOL_TAG = "todo"
+SOONER = "todo/sooner"
 
 _DAILY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _HEADING = re.compile(r"^#{1,6}\s+(.+)$")
 # A line that is nothing but inline tags — `#home`, `#update/daily #idea`.
 # These lead a lot of older captures and make a terrible title.
 _TAGLINE = re.compile(r"^\s*(?:#[\w/\-]+\s*)+$")
-_WEEKDAYS = {d: i for i, d in enumerate(
-    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])}
+# Provenance that leaked into the body rather than the frontmatter. `source:`
+# is the only one in the store; anchored to the line start and a short bare
+# key so a real sentence containing a colon is never eaten.
+_STRAY_FIELD = re.compile(r"^(?:source|captured|via):\s*\S*$", re.I)
+_TRAILING_TAGS = re.compile(r"(?:\s+#[\w/\-]+)+\s*$")
 
 
 # ── reading ────────────────────────────────────────────────────────────────
@@ -76,7 +89,10 @@ def _title(body: str) -> str:
     """First markdown heading, else the first line that carries actual words.
 
     Skipping pure-tag lines matters: `bondo-flashing-bear-damage.md` opens with
-    a bare `#home`, and a view titled "#home" four times over is useless."""
+    a bare `#home`, and a view titled "#home" four times over is useless. So
+    does skipping a leading `source:` line — the retired phone-capture chain
+    put one in the BODY of a few dozen notes, and they all showed up in the
+    agenda titled "source: phone-notif"."""
     for line in body.splitlines():
         s = line.strip()
         if not s or s == "---":
@@ -84,9 +100,12 @@ def _title(body: str) -> str:
         m = _HEADING.match(s)
         if m:
             s = m.group(1).strip()
-        elif _TAGLINE.match(s):
+        elif _TAGLINE.match(s) or _STRAY_FIELD.match(s):
             continue
-        s = s.strip()
+        # An inline tag trailing the one line the note has is the tag doing its
+        # job, not part of the sentence: `buy music stand #todo` is titled
+        # "buy music stand".
+        s = _TRAILING_TAGS.sub("", s).strip()
         if len(s) > 1 and s[0] == s[-1] and s[0] in "\"'":
             s = s[1:-1].strip()      # a matched pair only — `"Bondo" plus …`
         return s if len(s) <= 90 else s[:87] + "…"
@@ -361,63 +380,37 @@ def load(include_daily=False) -> list:
 
 # ── grouping ───────────────────────────────────────────────────────────────
 
+AGENDA_KEYS = ("sooner", "later")
+
+
+def in_pool(it) -> bool:
+    """On the plate at all. A note carrying only `todo/sooner` counts — the
+    child implies the parent, and requiring both would make a hand-typed
+    `tags: [todo/sooner]` vanish from the one view that exists to hold it."""
+    return any(t == POOL_TAG or t.startswith(POOL_TAG + "/")
+               for t in (norm_tag(x) for x in it["tags"]))
+
+
+def is_sooner(it) -> bool:
+    return SOONER in (norm_tag(x) for x in it["tags"])
+
+
 def agenda_groups(items, today=None):
-    """Bucket todo items by intent date. Order is the order you read them in."""
-    today = today or date.today()
-    tomorrow = today + timedelta(days=1)
-    week_end = today + timedelta(days=6)
-    groups = {k: [] for k in
-              ("overdue", "today", "tomorrow", "week", "later", "pool")}
+    """Split the pool into the two bands. Order is the order you read them in."""
+    groups = {k: [] for k in AGENDA_KEYS}
     for it in items:
-        if it["status"] != TODO:
+        if not in_pool(it):
             continue
-        w = date.fromisoformat(it["when"]) if it["when"] else None
-        if w is None:
-            groups["pool"].append(it)
-        elif w < today:
-            groups["overdue"].append(it)
-        elif w == today:
-            groups["today"].append(it)
-        elif w == tomorrow:
-            groups["tomorrow"].append(it)
-        elif w <= week_end:
-            groups["week"].append(it)
-        else:
-            groups["later"].append(it)
-    for k in ("overdue", "week", "later"):
-        groups[k].sort(key=lambda i: i["when"] or "")
-    groups["pool"].sort(key=lambda i: -(i["age_days"] or 0))
+        groups["sooner" if is_sooner(it) else "later"].append(it)
+    # Oldest first in both bands: the thing that has been sitting longest is
+    # the thing a glance should land on, and it is the only ordering the data
+    # actually supports now that nothing carries a date.
+    for k in AGENDA_KEYS:
+        groups[k].sort(key=lambda i: -(i["age_days"] or 0))
     return groups
 
 
 # ── writing ────────────────────────────────────────────────────────────────
-
-def resolve_when(text, today=None):
-    """`today` `tomorrow` `fri` `+3d` `+2w` `2026-09-08` `none`.
-
-    A weekday resolves to TODAY when it matches, otherwise the next one — you
-    say 'put it on friday' on a Friday and you mean today, not next week."""
-    today = today or date.today()
-    s = (text or "").strip().lower()
-    if s in ("", "none", "clear", "-"):
-        return None
-    if s == "today":
-        return today
-    if s == "tomorrow":
-        return today + timedelta(days=1)
-    m = re.fullmatch(r"\+(\d+)([dw])", s)
-    if m:
-        n = int(m.group(1))
-        return today + timedelta(days=n * (7 if m.group(2) == "w" else 1))
-    key = s[:3]
-    if key in _WEEKDAYS:
-        delta = (_WEEKDAYS[key] - today.weekday()) % 7
-        return today + timedelta(days=delta)
-    try:
-        return date.fromisoformat(s)
-    except ValueError:
-        raise SystemExit(f"cl stream: can't read a date from '{text}'")
-
 
 def find(slug, items=None):
     """Exact stem, else unique substring. Ambiguity is an error, never a guess —
@@ -435,8 +428,7 @@ def find(slug, items=None):
     raise SystemExit(f"cl stream: '{slug}' matches {len(part)} notes:\n  {names}")
 
 
-def apply_set(item, *, status=None, when="__keep__", add_tags=None,
-              rm_tags=None):
+def apply_set(item, *, add_tags=None, rm_tags=None):
     """One targeted frontmatter edit. fm.set_fields rewrites only the keys named
     and leaves the body plus untouched keys byte-identical — which is why no
     surface here ever needs to re-emit a whole note.
@@ -448,10 +440,6 @@ def apply_set(item, *, status=None, when="__keep__", add_tags=None,
     to be another command."""
     path = Path(item["path"])
     updates = {}
-    if status is not None:
-        updates["status"] = status
-    if when != "__keep__":
-        updates["when"] = when.isoformat() if when else ""
     tags = list(item["tags"])
     if add_tags:
         tags = list(dict.fromkeys(tags + list(add_tags)))
@@ -468,8 +456,7 @@ def apply_set(item, *, status=None, when="__keep__", add_tags=None,
 
 # ── rendering ──────────────────────────────────────────────────────────────
 
-_LABELS = {"overdue": "overdue", "today": "today", "tomorrow": "tomorrow",
-           "week": "this week", "later": "upcoming", "pool": "pool"}
+_LABELS = {"sooner": "sooner", "later": "on the plate"}
 
 
 def _color(on):
@@ -483,30 +470,29 @@ def render_agenda(groups, today=None, color=False, show_pool=True):
     today = today or date.today()
     c = _color(color)
     out = [c(f"  AGENDA{' ' * 34}{today.strftime('%-d %b, %A')}", "bold"), ""]
-    for key in ("overdue", "today", "tomorrow", "week", "later", "pool"):
+    for key in AGENDA_KEYS:
         rows = groups[key]
-        if not rows or (key == "pool" and not show_pool):
+        if not rows or (key == "later" and not show_pool):
             continue
-        label = _LABELS[key]
-        if key == "pool":
-            label = f"pool ({len(rows)})"
+        label = f"{_LABELS[key]} ({len(rows)})"
         out.append(c(f"  ── {label} " + "─" * max(0, 56 - len(label)), "dim"))
         for it in rows:
-            when = ""
-            if key in ("overdue", "week", "later") and it["when"]:
-                d = date.fromisoformat(it["when"])
-                when = d.strftime("%-d %b" if key == "later" else "%a")
-            mark = c("⚠", "red") if key == "overdue" else c("·", "dim")
-            tags = " ".join("#" + t for t in it["tags"])
-            line = f"  {mark} {when:<7} {it['title']}"
+            age = f"{it['age_days']}d" if it["age_days"] is not None else ""
+            mark = c("⚠", "red") if key == "sooner" else c("·", "dim")
+            # The pool tags themselves are the band you are already reading —
+            # printing them on every row says nothing and buries the tags that
+            # do (`#home`, `#blog/x`).
+            tags = " ".join("#" + t for t in it["tags"]
+                            if norm_tag(t) not in (POOL_TAG, SOONER))
+            line = f"  {mark} {age:<7} {it['title']}"
             if tags:
-                pad = max(1, 66 - len(f"  · {when:<7} {it['title']}"))
+                pad = max(1, 66 - len(f"  · {age:<7} {it['title']}"))
                 line += " " * pad + c(tags, "cyan")
             out.append(line)
         out.append("")
     if not any(groups[k] for k in groups):
-        out.append(c("  nothing marked `status: todo` yet.", "dim"))
-        out.append(c("  mark one:  cl stream set <slug> --todo --when fri", "dim"))
+        out.append(c("  nothing tagged `#todo` yet.", "dim"))
+        out.append(c("  mark one:  cl stream set <slug> --todo", "dim"))
         out.append("")
     return "\n".join(out)
 
@@ -558,13 +544,14 @@ def main(argv=None):
     v = sub.add_parser("tags", help="the tag vocabulary in use, most-used first")
     v.add_argument("--json", action="store_true")
 
-    s = sub.add_parser("set", help="edit one note's status / when / tags")
+    s = sub.add_parser("set", help="edit one note's pool membership / tags")
     s.add_argument("slug")
-    s.add_argument("--todo", action="store_true")
-    s.add_argument("--done", action="store_true")
-    s.add_argument("--archive", action="store_true")
-    s.add_argument("--status", default=None)
-    s.add_argument("--when", default=None, help="today|tomorrow|fri|+3d|2026-09-08|none")
+    s.add_argument("--todo", action="store_true", help="put it on the plate")
+    s.add_argument("--sooner", action="store_true", help="on the plate, urgent")
+    s.add_argument("--later", action="store_true",
+                   help="on the plate, no longer urgent")
+    s.add_argument("--done", action="store_true",
+                   help="take it off the plate (the note stays)")
     s.add_argument("--tag", default=None, help="comma-separated tags to ADD")
     s.add_argument("--untag", default=None, help="comma-separated tags to REMOVE")
     s.add_argument("--new", action="store_true",
@@ -585,7 +572,7 @@ def main(argv=None):
         g = agenda_groups(items)
         _emit({"today": date.today().isoformat(),
                "groups": [{"key": k, "label": _LABELS[k], "items": g[k]}
-                          for k in ("overdue", "today", "tomorrow", "week", "later", "pool")]},
+                          for k in AGENDA_KEYS]},
               args, render_agenda(g, color=color, show_pool=not args.no_pool))
 
     elif args.cmd == "inbox":
@@ -638,16 +625,25 @@ def main(argv=None):
         # `cl stream set 2026-07-17 --tag journal` answered "no stream note
         # matching", which is false: the note is right there.
         it = find(args.slug, load(include_daily=True))
-        status = args.status
-        if args.todo:
-            status = TODO
-        if args.done:
-            status = DONE
-        if args.archive:
-            status = ARCHIVED
-        when = "__keep__" if args.when is None else resolve_when(args.when)
         raw_add = [x for x in (args.tag or "").split(",") if x.strip()]
         rm = [norm_tag(x) for x in (args.untag or "").split(",") if x.strip()]
+
+        # Pool membership is spelled in tags like everything else, but it does
+        # NOT go through resolve_tags: the near-duplicate guard exists to stop
+        # a vocabulary growing a second word for one idea, and `todo/sooner`
+        # beside `todo` is exactly the shape it is built to flag. These two are
+        # the vocabulary, not a proposal against it.
+        pool_add, pool_rm = [], []
+        if args.done:
+            pool_rm += [POOL_TAG, SOONER]
+        if args.todo:
+            pool_add.append(POOL_TAG)
+        if args.sooner:
+            pool_add.append(SOONER)
+            pool_rm.append(POOL_TAG)
+        if args.later:
+            pool_add.append(POOL_TAG)
+            pool_rm.append(SOONER)
 
         add, notes, blocked = resolve_tags(
             raw_add, vocabulary(load(include_daily=True)), allow_new=args.new)
@@ -672,8 +668,21 @@ def main(argv=None):
         # nothing, which is the failure mode this flag exists to end.
         missing = [t for t in rm if t not in [norm_tag(x) for x in it["tags"]]]
 
-        got = apply_set(it, status=status, when=when,
-                        add_tags=add or None, rm_tags=rm or None)
+        # --done wins over --todo if both are passed: the removals are applied
+        # after the additions in apply_set, so say so here rather than leave it
+        # to that ordering.
+        add = [t for t in list(add) + pool_add if t not in pool_rm]
+        rm = list(dict.fromkeys(rm + pool_rm))
+        got = apply_set(it, add_tags=add or None, rm_tags=rm or None)
+
+        # Coming off the plate with nothing else on it makes the note UNTAGGED,
+        # which is not merely unfiled: `cl inbox --prune-noise` hard-deletes
+        # untagged notes it judges to be noise, and a just-finished errand
+        # reads exactly like noise. Say so rather than let it go quietly — the
+        # note is meant to go back through triage, not to evaporate.
+        if args.done and "tags" in got and not got["tags"]:
+            notes = list(notes) + ["now untagged — it will show in triage, and "
+                                   "`--prune-noise` can delete it from there"]
         changed = ", ".join(f"{k}: {v or '(cleared)'}" for k, v in got.items())
         text = [f"  {it['title']}", f"  → {changed or 'nothing to change'}"]
         text += [f"  · {n}" for n in notes]
@@ -695,14 +704,14 @@ def main(argv=None):
                 f"*Derived view, regenerated {stamp}. Do not edit — "
                 "edit the notes, or use the agenda view.*\n\n")
         body = []
-        for key in ("overdue", "today", "tomorrow", "week", "later", "pool"):
+        for key in AGENDA_KEYS:
             if not g[key]:
                 continue
             body.append(f"## {_LABELS[key]}\n")
             for it in g[key]:
-                w = f"`{it['when']}` " if it["when"] else ""
-                tg = " ".join("#" + t for t in it["tags"])
-                body.append(f"- {w}{it['title']} {tg}".rstrip())
+                tg = " ".join("#" + t for t in it["tags"]
+                              if norm_tag(t) not in (POOL_TAG, SOONER))
+                body.append(f"- {it['title']} {tg}".rstrip())
             body.append("")
         dest.write_text(head + "\n".join(body) + "\n")
         _emit({"wrote": str(dest), "items": sum(len(v) for v in g.values())},
