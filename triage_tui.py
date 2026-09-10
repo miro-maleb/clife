@@ -2131,9 +2131,15 @@ class TriageApp(App):
     # procedure (which commands, reuse before coining, when to ask instead of
     # tag). Restating it here would be a second copy to drift — this only has
     # to say GO.
-    KICKOFF = ("Work the triage queue: read `cl triage --json`, then fill slots "
-               "with `cl triage suggest`. Reuse tags from `cl stream tags` "
-               "before coining new ones. Leave a --note instead of guessing.")
+    # Names the skill. Triage used to have its own Hermes session started with
+    # `-s triage`, so the instructions were already in context; it now shares
+    # M-1's, which was started without them. Every skill in ~/.hermes/skills is
+    # `enabled`, so a session can load one it did not start with -- but only if
+    # something asks. This asks.
+    KICKOFF = ("Use the `triage` skill. Work the triage queue: read "
+               "`cl triage --json`, then fill slots with `cl triage suggest`. "
+               "Reuse tags from `cl stream tags` before coining new ones. "
+               "Leave a --note instead of guessing.")
 
     def _hermes_pane(self) -> str:
         """The Hermes pane's id, resolved by its `@app` option.
@@ -2152,7 +2158,7 @@ class TriageApp(App):
             return ""
         for line in out.splitlines():
             pid, _, app = line.partition(" ")
-            if app.strip() == "hermes_triage":
+            if app.strip() in ("hermes", "hermes_triage"):
                 return pid
         return ""
 
@@ -2172,7 +2178,7 @@ class TriageApp(App):
             return False
         pane = self._hermes_pane()
         if not pane:
-            self.notify("no hermes_triage pane in this deck",
+            self.notify("no hermes pane in this deck",
                         severity="warning")
             return False
         try:
