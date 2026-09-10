@@ -587,6 +587,9 @@ class TriageApp(App):
         # is most likely to be needed.
         self._undo: list[tuple] = []
         self._asked = False
+        # The headless triage pass, while it is running. One at a
+        # time: a second would race the first for the same slots.
+        self._pass = None
         self._msg_timer = None
         self._slots_seen = 0.0
 
@@ -2170,121 +2173,89 @@ class TriageApp(App):
     # procedure (which commands, reuse before coining, when to ask instead of
     # tag). Restating it here would be a second copy to drift — this only has
     # to say GO.
-    # Names the skill. Triage used to have its own Hermes session started with
-    # `-s triage`, so the instructions were already in context; it now shares
-    # M-1's, which was started without them. Every skill in ~/.hermes/skills is
-    # `enabled`, so a session can load one it did not start with -- but only if
-    # something asks. This asks.
+    # Names the skill in the text as well as on the command line. `--skills
+    # triage` is what actually loads it; saying so in the prompt costs a dozen
+    # tokens and makes the run self-describing when it is pasted into a shell
+    # by hand, which is how it gets debugged.
     KICKOFF = ("Use the `triage` skill. Work the triage queue: read "
                "`cl triage --json`, then fill slots with `cl triage suggest`. "
                "Reuse tags from `cl stream tags` before coining new ones. "
                "Leave a --note instead of guessing.")
 
-    def _hermes_pane(self) -> str:
-        """The Hermes pane's id, resolved by its `@app` option.
+    def _ask_hermes(self) -> bool:
+        """Run one triage pass HEADLESS, and do not open a conversation.
 
-        NOT `{top-right}`. The deck's own rule is that panes are found by
-        `@app`, never by position, and this file was the exception — which
-        broke the moment M-4 started opening zoomed: `{top-right}` resolves to
-        the ZOOMED pane, so a kickoff typed itself into the triage app instead
-        of into Hermes. Position is not identity.
+        `hermes -z` is the one-shot: a prompt, a run, an exit. No session, no
+        pane, no thread to come back to.
+
+        This used to type the kickoff into the Hermes pane beside the queue.
+        That pane was its own session, so the request landed in a conversation
+        that existed for this and nothing else -- and when triage moved onto
+        M-1's shared Hermes, the same keystroke started dropping the request
+        into whatever he happened to be talking about. Reported the same day.
+        "Start a new chat instead" would fix that, and would still be answering
+        the wrong question: he said he has never needed to read it, because the
+        suggestions arrive in the queue on their own. `_poll_slots` notices the
+        sidecar change within two seconds either way.
+
+        So there is no chat. The skill is named on the command line rather than
+        preloaded with `-s`, for the same reason the kickoff names it: every
+        skill in ~/.hermes/skills is enabled and reachable by a run that did
+        not start with it.
+
+        Popen and not run(): a pass over sixty notes is a minute of local
+        inference, and the queue stays usable throughout -- that is the whole
+        point of the answers landing in the sidecar.
         """
-        try:
-            out = subprocess.run(
-                ["tmux", "list-panes", "-s", "-F", "#{pane_id} #{@app}"],
-                capture_output=True, text=True, timeout=5).stdout
-        except Exception:                              # noqa: BLE001
-            return ""
-        for line in out.splitlines():
-            pid, _, app = line.partition(" ")
-            if app.strip() in ("hermes", "hermes_triage"):
-                return pid
-        return ""
-
-    def _send_to_chat(self, text: str = "", reveal: bool = True) -> bool:
-        """Type a line into the Hermes pane; optionally bring it on screen.
-
-        `reveal=False` is the point of M-4 opening zoomed: the request goes
-        out and the navigator keeps the full width. You do not need to watch
-        the conversation, because the suggestions arrive in the queue on their
-        own — `_poll_slots` notices the sidecar change within two seconds.
-        Reading Hermes' reasoning is the only reason to look at the pane, so
-        looking is now a choice rather than a permanent third of the screen.
-        """
-        if not os.environ.get("TMUX"):
-            self.notify("only inside the Bridge deck — this talks to the "
-                        "Hermes pane", severity="warning")
+        hermes = shutil.which("hermes")
+        if not hermes:
+            self.notify("hermes is not on PATH", severity="warning")
             return False
-        pane = self._hermes_pane()
-        if not pane:
-            self.notify("no hermes pane in this deck",
-                        severity="warning")
+        if self._pass and self._pass.poll() is None:
+            self.notify("a pass is already running — suggestions land here "
+                        "as they are written")
             return False
         try:
-            if text:
-                # -l is literal: the text carries backticks and colons, and
-                # without it tmux would read parts of the line as key names.
-                subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text],
-                               capture_output=True, timeout=5, check=True)
-                subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"],
-                               capture_output=True, timeout=5, check=True)
-            if reveal:
-                # Unzoom explicitly — select-pane does NOT unzoom on its own,
-                # so without this the pane is focused but still invisible.
-                zoomed = subprocess.run(
-                    ["tmux", "display", "-p", "#{window_zoomed_flag}"],
-                    capture_output=True, text=True, timeout=5).stdout.strip()
-                if zoomed == "1":
-                    subprocess.run(["tmux", "resize-pane", "-Z"],
-                                   capture_output=True, timeout=5)
-                subprocess.run(["tmux", "select-pane", "-t", pane],
-                               capture_output=True, timeout=5, check=True)
-            return True
-        except Exception as exc:                       # noqa: BLE001
-            self.notify(f"no pane to talk to: {exc}", severity="warning")
+            self._pass = subprocess.Popen(
+                [hermes, "-z", self.KICKOFF, "--skills", "triage"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, start_new_session=True)
+        except Exception as e:                          # noqa: BLE001
+            self.notify(f"could not start hermes: {e}", severity="error")
             return False
-
-    def action_kickoff(self) -> None:
-        """`C` — ask again, whatever the queue looks like. For a second pass
-        over notes Hermes left empty the first time."""
-        # `C` asks WITHOUT revealing the pane: the answer comes back into
-        # this list by itself, so the full width is worth more than watching
-        # it think.
-        if self._send_to_chat(self.KICKOFF, reveal=False):
-            self._asked = True
-            self.notify("asked Hermes to work the queue — "
-                        "suggestions land here on their own · c to watch")
+        return True
 
     def action_chat(self) -> None:
-        """`c` — hand the keyboard to the Hermes pane beside this one.
-
-        The first `c` of a pass also STARTS one: the skill teaches Hermes how
-        to work this queue but nothing was telling it when, so every session
-        began by retyping the same request. One key does the obvious thing.
+        """`c` — ask Hermes to work the queue.
 
         It asks when there is anything LEFT to suggest, and once per session.
-        The old test was "nothing has been suggested yet", which reads well
-        and was wrong in practice: slots accumulate, so the table is almost
-        never empty, and `c` quietly stopped starting arcs while ten notes sat
-        there unsuggested. Measured 2026-09-08 — 26 unplaced, 16 already
-        filled, and `c` sent nothing.
+        The old test was "nothing has been suggested yet", which reads well and
+        was wrong in practice: slots accumulate, so the table is almost never
+        empty, and `c` quietly stopped starting arcs while ten notes sat there
+        unsuggested. Measured 2026-09-08 -- 26 unplaced, 16 already filled, and
+        `c` sent nothing.
 
-        `self._asked` is what stops it re-asking: the second `c` of a session
-        is walk-over-and-talk, so pressing it to go READ the answer cannot
-        bury that answer under a fresh request. `C` re-asks deliberately.
-
-        The jump itself is the deck's own `select-pane -t {top-right}`, called
-        rather than reimplemented, so `c` and M-l land in the same place. No
-        -L bridge: inside a pane tmux reads $TMUX and finds its own server.
+        `C` asks again regardless, for a second pass over the ones it left
+        empty.
         """
         unfilled = [r for r in self.rows if not (r["suggested"] or r["note"])]
-        fresh = not self._asked and bool(unfilled)
-        if not self._send_to_chat(self.KICKOFF if fresh else ""):
+        if not unfilled:
+            self.notify("every note here already has a suggestion — C to "
+                        "ask again anyway")
             return
-        if fresh:
+        if self._asked:
+            self.notify("already asked this session — C to ask again")
+            return
+        if self._ask_hermes():
             self._asked = True
-            self.notify(f"asked Hermes to work the {len(unfilled)} unsuggested "
-                        "— M-h back, r to reload")
+            self.notify(f"working the {len(unfilled)} unsuggested — "
+                        "they fill in here as they land")
+
+    def action_kickoff(self) -> None:
+        """`C` — ask again, whatever the queue looks like."""
+        if self._ask_hermes():
+            self._asked = True
+            self.notify("asked again — suggestions land here on their own")
 
     async def action_open(self) -> None:
         row = self._current()
@@ -2351,8 +2322,9 @@ class TriageApp(App):
             ("enter",        "take the greyed suggestion"),
         ]),
         ("HERMES", [
-            ("c",            "jump to the chat — the first one asks for suggestions"),
-            ("C",            "ask again, deliberately"),
+            ("c",            "ask it to suggest tags for the unsuggested notes"),
+            ("C",            "ask again — a second pass over the ones it left"),
+            ("",             "it runs headless; answers appear in this list"),
         ]),
         ("", [
             ("r",            "reload · q quit · ? closes this"),
