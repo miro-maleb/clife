@@ -579,6 +579,7 @@ class TriageApp(App):
         self._armed_trash = None
         self._trash_timer = None
         self._readall = False
+        self._help = False
         # A stack, not one slot. A purge pass is dozens of `d` in a row, and
         # single-level undo means "three back" is unreachable exactly when it
         # is most likely to be needed.
@@ -1050,6 +1051,9 @@ class TriageApp(App):
     MAX_READ = 120_000        # a very long tag should not stall the terminal
 
     def action_read_all(self) -> None:
+        if self._help:                      # `z` out of help closes help
+            self.action_help()
+            return
         self._readall = not self._readall
         self.query_one("#body").set_class(self._readall, "readall")
         if self._readall:
@@ -2229,17 +2233,87 @@ class TriageApp(App):
         await self.reload()
         self.notify("reloaded")
 
+    HELP = [
+        ("MOVE", [
+            ("j / k",        "up and down"),
+            ("h / l",        "jump between the tag column and the notes"),
+            ("enter",        "descend — a tag, its notes, that note's tags"),
+            ("esc",          "climb back, and unwind the query one term at a time"),
+            ("tab / S-tab",  "walk the strip: a tag's children, or what its notes"),
+            ("",             "are ALSO about — anchored, so S-tab really goes back"),
+        ]),
+        ("VIEWS", [
+            ("unplaced",     "notes nobody has placed — pinned top of the column"),
+            ("all",          "every note in the store, placed or not"),
+            ("T",            "the todo pool"),
+            ("g",            "back to unplaced, and drop the whole query"),
+        ]),
+        ("NARROW IT", [
+            ("f",            "search the notes you are looking at"),
+            ("F",            "search the whole store, keeping what you typed"),
+            ("/",            "filter the TAG COLUMN — not the notes"),
+            ("+",            "pin the tag: AND it onto the view. repeatable"),
+            ("-",            "drop the newest term, from anywhere on the page"),
+        ]),
+        ("ON A NOTE", [
+            ("i",            "edit this note's tags"),
+            ("a",            "accept the suggested tags"),
+            ("t",            "toggle todo"),
+            ("s",            "toggle todo/sooner"),
+            ("p",            "make it a project"),
+            ("dd",           "trash it — doubled, and `u` undoes"),
+            ("o",            "open it in the writer"),
+            ("z",            "read the whole view as one page"),
+        ]),
+        ("EDITING TAGS", [
+            ("j/k or w/b",   "move along the chips · I / A first and last"),
+            ("a",            "add one — type to filter, enter picks"),
+            ("d",            "remove the one under the cursor"),
+            ("enter",        "take the greyed suggestion"),
+        ]),
+        ("HERMES", [
+            ("c",            "jump to the chat — the first one asks for suggestions"),
+            ("C",            "ask again, deliberately"),
+        ]),
+        ("", [
+            ("r",            "reload · q quit · ? closes this"),
+        ]),
+    ]
+
     def action_help(self) -> None:
-        self.notify("j/k move · ⏎ descends (tag → its notes → its tags) · "
-                    "esc climbs back · h/l jump columns · / filter tags · "
-                    "g back to unplaced · "
-                    "tags: j/k or w/b move · I/A first/last · d remove · a add · "
-                    "on the note list: t todo · d trash (recoverable) · u undo · "
-                    "f search here · F search everything (keeps what you typed) · "
-                    "+ pins a tag (AND) · - or esc unpins · "
-                    "c chat (first one starts a pass) · C re-ask · "
-                    "z read the whole tag as one page (read-only) · "
-                    "o open in the writer · r reload · q quit", timeout=14)
+        """`?` — the keys, as a PAGE rather than a toast.
+
+        This was a 500-character notify on a 14-second timer: everything the
+        app could do, in one wrapped paragraph, gone before you finished it.
+        It was also missing tab, T, s, p and i, and it advertised `d trash`
+        when trash is `dd`. A help that is wrong about the destructive key is
+        worse than none.
+
+        It borrows `z`'s posture — full width, read-only, esc to leave — so
+        there is one way to be reading something here instead of two.
+        """
+        self._help = not self._help
+        self._readall = self._help
+        self.query_one("#body").set_class(self._help, "readall")
+        if self._help:
+            t = Text()
+            for section, rows in self.HELP:
+                t.append("\n")
+                if section:
+                    t.append(f"  {section}\n", f"bold {ACCENT}")
+                for key, what in rows:
+                    t.append(f"    {key:<14}", ACCENT if key else FAINT)
+                    t.append(f"{what}\n", "#d8d4cf" if key else FAINT)
+            self.query_one("#detailhdr", Label).update("KEYS")
+            self.query_one("#title", Static).update("")
+            self.query_one("#meta", Static).update("")
+            self.query_one("#hermes", Static).display = False
+            self.query_one("#previewtext", Static).update(t)
+            self.set_focus(self.query_one("#preview", VerticalScroll))
+        else:
+            self._paint_detail()
+            self.set_focus(self.query_one("#queue", ListView))
+        self._paint_status()
 
     # ── writing ─────────────────────────────────────────────────────────────
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -2441,6 +2515,10 @@ class TriageApp(App):
         # `escape` only — `z` is already an App binding, and handling it here
         # too toggled read mode twice per press, which looked like the key
         # doing nothing at all.
+        if self._help and event.key == "escape":
+            self.action_help()
+            event.stop()
+            return
         if self._readall and event.key == "escape":
             self.action_read_all()
             event.stop()

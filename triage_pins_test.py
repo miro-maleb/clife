@@ -65,7 +65,7 @@ async def settle(pilot, t=0.05):
 async def run():
     import triage
     import triage_tui
-    from textual.widgets import ListView
+    from textual.widgets import ListView, Static
 
     PV = triage_tui.PINNED_VIEWS
 
@@ -436,6 +436,29 @@ async def run():
             await app.reload()
             await settle(pilot)
         print("  [ok] search composes with tags and pins")
+
+        # ── every binding must be documented in `?` ──────────────────────
+        # The help was a 500-char notify that missed tab, T, s, p and i, and
+        # told you trash was `d` when it is `dd`. A help that is wrong about
+        # the destructive key is worse than no help, so this asserts coverage
+        # rather than trusting anyone to remember.
+        app.action_help()
+        await settle(pilot, 0.2)
+        text = app.query_one("#previewtext", Static).render().plain
+        NAME = {"slash": "/", "plus": "+", "minus": "-",
+                "question_mark": "?", "shift+tab": "S-tab"}
+        for b in triage_tui.TriageApp.BINDINGS:
+            probe = NAME.get(b.key, b.key)
+            if b.key == "d":
+                probe = "dd"            # doubled on the queue, single on chips
+            check(probe in text, "binding is documented in `?`",
+                  f"{b.key} ({b.action})")
+        check(app._help, "`?` opens the help page")
+        app.action_help()
+        await settle(pilot, 0.2)
+        check(not app._help and not app._readall, "`?` closes it again",
+              f"help={app._help} readall={app._readall}")
+        print("  [ok] every binding appears in `?`")
 
         # and finally: keep pressing things
         rng = random.Random(11)
