@@ -498,6 +498,46 @@ async def run():
         await reset()
         print("  [ok] the `only` slice")
 
+        # ── the cursor must be VISIBLE, not merely set ───────────────────
+        # Reported as "whenever I go into nvim or delete a file, the cursor
+        # disappears" -- and it was neither: those are just the two things
+        # that always repaint. `index` keeps its NUMBER across a repaint while
+        # the children are replaced, so re-assigning it is not a change,
+        # watch_index never runs, and no row gets `-highlight`. The list knew
+        # where the cursor was; nothing on screen did.
+        #
+        # So this asserts the CLASS, not the index. Checking `index is not
+        # None` is exactly the test that passed all along while the bar was
+        # invisible.
+        def lit(w):
+            i = w.index
+            return i is not None and "-highlight" in w.children[i].classes
+
+        queue = app.query_one("#queue", ListView)
+        tags = app.query_one("#taglist", ListView)
+        await reset()
+        for k in (0, 3, 7):
+            app._repaint_queue(keep=k)
+            await settle(pilot, 0.2)
+            if len(queue):
+                check(lit(queue), "queue cursor is lit after a repaint",
+                      f"keep={k} index={queue.index}")
+        app._tag_sig = None
+        app._paint_tags()
+        await settle(pilot, 0.2)
+        check(lit(tags), "tag cursor is lit after a repaint", f"index={tags.index}")
+        await app.reload()
+        await settle(pilot, 0.25)
+        check(lit(queue), "queue cursor survives a reload", f"index={queue.index}")
+        # and it stays lit while the focus is somewhere else, which is the
+        # state you come back to from the editor
+        app.set_focus(tags)
+        await settle(pilot, 0.2)
+        check(lit(queue), "queue cursor stays lit while unfocused")
+        app.set_focus(queue)
+        await settle(pilot, 0.15)
+        print("  [ok] the cursor is visible, not just set")
+
         # and finally: keep pressing things
         rng = random.Random(11)
         await reset()

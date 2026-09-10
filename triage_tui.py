@@ -146,7 +146,7 @@ Screen { background: #000000; }
 #taglist { height: 1fr; background: #000000; }
 #taglist > ListItem { padding: 0 1; }
 #taglist Static { text-wrap: nowrap; text-overflow: ellipsis; }
-#taglist > ListItem.--highlight { background: #241809; }
+#taglist > ListItem.-highlight { background: #241809; }
 
 #rightcol { width: 1fr; height: 1fr; layout: vertical; }
 /* The cap lives on the LIST, not on this container, and is set in ROWS by
@@ -183,12 +183,14 @@ Screen { background: #000000; }
 /* One row, one line. At the deck's ~27-column queue a wrapped title runs to a
    second unindented line and the list stops being scannable at a glance. */
 #queue Static { text-wrap: nowrap; text-overflow: ellipsis; }
-#queue > ListItem.--highlight { background: #241809; }
-/* NB: the `.--highlight` rules elsewhere in this sheet are DEAD — Textual
-   spells the class `-highlight`, one dash, so those four have never applied
-   and the highlight you see is the theme's. Left alone rather than fixed
-   here: making them live would change four colours at once, which is a
-   separate decision from this one.
+#queue > ListItem.-highlight { background: #241809; }
+/* THE UNFOCUSED CURSOR, which is the whole reason it kept vanishing.
+   These were spelled `.--highlight` — two dashes. Textual spells the class
+   `-highlight`, one dash, so they never applied, and an UNFOCUSED list had no
+   cursor styling at all: the row was still selected, and nothing on screen
+   said so. Reported as "whenever I go into nvim or delete a file, the cursor
+   disappears", and it was never about nvim or deleting — it was about focus
+   landing anywhere else, by any route.
 
    The cursor of the column you are DRIVING is brighter than the one you are
    not. Two lists and a chip row share j/k, Enter and `d`, and which of them
@@ -709,6 +711,33 @@ class TriageApp(App):
             out.append(ListItem(Static(t)))
         return out
 
+    @staticmethod
+    def _place_cursor(view, idx: int) -> None:
+        """Put a list's cursor on a row so that it is VISIBLE.
+
+        Two failures, and only fixing both makes a cursor appear:
+
+        `index` keeps its NUMBER across a repaint while the children are
+        replaced, so assigning the same number is not a change -- watch_index
+        never runs, and the fresh row is never given `-highlight`. The list
+        knows where the cursor is; nothing on screen does. Setting None first
+        makes the assignment a real transition.
+
+        And `clear()`/`extend()` MOUNT LATER. An index set now is validated
+        against the children that are still there, so the caller has to ask
+        again once the new ones have landed.
+
+        This is the disappearing cursor, and it was never about nvim or about
+        deleting a note -- those are just the two things that always repaint.
+        """
+        n = len(view)
+        if not n:
+            return
+        want = max(0, min(idx, n - 1))
+        if view.index == want:
+            view.index = None
+        view.index = want
+
     def _cursor_to(self, idx: int) -> None:
         """Put the queue cursor on a row, and mean it.
 
@@ -719,10 +748,7 @@ class TriageApp(App):
         until you pressed j.
         """
         def place() -> None:
-            v = self.query_one("#queue", ListView)
-            if not len(v):
-                return
-            v.index = max(0, min(idx, len(v) - 1))
+            self._place_cursor(self.query_one("#queue", ListView), idx)
         place()
         self.call_after_refresh(place)
 
@@ -998,7 +1024,16 @@ class TriageApp(App):
         view.clear()
         if items:
             view.extend(items)
-            view.index = min(keep or 0, len(items) - 1)
+            # index = None FIRST. `clear()` swaps the children out but leaves
+            # `index` holding its old NUMBER, so assigning that same number is
+            # not a change -- watch_index never fires, and the fresh row is
+            # never given `-highlight`. The list still knows where the cursor
+            # is; nothing on screen does.
+            #
+            # This is the disappearing cursor, and it was never about nvim or
+            # about deleting: those just happen to be the two things that
+            # always repaint. Any repaint did it.
+            self._cursor_to(min(keep or 0, len(items) - 1))
         self._paint_hdr()
         self._paint_children()
         self._paint_status()
@@ -1248,7 +1283,11 @@ class TriageApp(App):
         self.query_one("#taghdr", Label).update(
             f"TAGS — {shown}" + (f" / {len(self.vocab)}" if q else ""))
         if self.tag_names:
-            lst.index = min(keep or 0, len(self.tag_names) - 1)
+            # Same reason as the queue: a repaint replaces the rows, so the
+            # index has to CHANGE to re-mark one.
+            want = min(keep or 0, len(self.tag_names) - 1)
+            self._place_cursor(lst, want)
+            self.call_after_refresh(self._place_cursor, lst, want)
             # While a filter is up, park the cursor on the first REAL tag
             # rather than on a pinned view row. Ctrl+Enter pins what the
             # cursor is on, and the only reason it worked from the filter box
@@ -2252,9 +2291,18 @@ class TriageApp(App):
         if not row:
             return
         editor = shutil.which("nvim-write") or "nvim"
+        keep = self.query_one("#queue", ListView).index
         with self.suspend():
             subprocess.call([editor, str(KB / row["relpath"])])
         await self.reload()
+        # Come back to the note you left. suspend() hands the terminal to the
+        # editor and takes it back, and nothing puts focus anywhere on the way
+        # in — so the queue was live but unfocused, and (before the fix above)
+        # invisible with it.
+        view = self.query_one("#queue", ListView)
+        if self.rows:
+            view.index = min(keep or 0, len(self.rows) - 1)
+        self.set_focus(view)
 
     async def action_reload(self) -> None:
         """`r`. Kept even though the sidecar is polled: notes also change on
