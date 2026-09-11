@@ -70,6 +70,9 @@ HERE = Path(__file__).resolve().parent
 STATE_DIR = HERE / "state"
 SEEN_FILE = STATE_DIR / "seen.json"
 OUT_DIR = HERE / "out"
+# Where anything announces itself: report_watch sees a new file here and
+# the rail carries it as unread until it is read.
+REPORTS_DIR = Path.home() / "kb" / "outbox" / "reports"
 
 
 def log(msg: str) -> None:
@@ -561,6 +564,49 @@ def deliver(issue: dict, base: Path) -> Path:
     return latest
 
 
+def top_headline(issue: dict) -> str:
+    """The first story of the first column with one, for the push."""
+    for col in (issue.get("columns") or []):
+        for st in (col.get("stories") or []):
+            h = st.get("headline") or st.get("title")
+            if h:
+                return h
+    return ""
+
+
+def publish_report(issue: dict, md: str, n: int) -> None:
+    """Drop the issue into outbox/reports, which is how anything announces
+    itself here.
+
+    Not a phone push. `morning-brief` tried that with `--severity warn`, and
+    the alert policy is crit-only on purpose -- "an alert channel works because
+    it stays rare" -- so the notification it sent every morning was SUPPRESSED
+    every morning. It never reached the phone even on the days it ran.
+
+    A report is the right shape anyway: report_watch announces one the moment
+    it appears, and the rail's READ band carries it as unread until it is read.
+    A weekly newspaper wants a card waiting for him, not a buzz.
+
+    The frontmatter is the contract routers/reports.py reads -- title, emoji,
+    blurb, and a series so successive issues stack instead of crowding.
+    """
+    head = top_headline(issue) or f"{n} stories"
+    date = issue.get("date", "")
+    body = ("---\n"
+            f"title: {head[:120]}\n"
+            "emoji: \U0001f5de\n"
+            f"blurb: The Daily Tower — {date}\n"
+            "series: ai-rss\n"
+            "series_title: The Daily Tower\n"
+            "---\n") + md
+    try:
+        out = Path(REPORTS_DIR)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"ai-rss-{date}.md").write_text(body)
+    except OSError as e:
+        log(f"report publish failed: {e}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="ai-rss personal newspaper")
     ap.add_argument("--dry-run", action="store_true",
@@ -584,7 +630,10 @@ def main() -> None:
     if not args.dry_run:
         save_seen(seen)
 
-    log(f"done — {story_count(issue)} stories -> {out}")
+    n = story_count(issue)
+    if not args.dry_run and n:
+        publish_report(issue, render_markdown(issue), n)
+    log(f"done — {n} stories -> {out}")
     print(out)
 
 
