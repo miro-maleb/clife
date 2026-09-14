@@ -193,6 +193,42 @@ def vocabulary(items=None) -> dict:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+# A `#word` in a note's BODY. Must start with a letter, so `#1` and a markdown
+# `# heading` (space after the hash) are not candidates at all. A hex colour
+# like `#e8a34e` does start with a letter and IS a candidate — it is the
+# vocabulary check, not this pattern, that throws it out.
+_BODYTAG = re.compile(r"(?<![\w&])#([A-Za-z][\w/-]*)")
+
+
+def body_tags(text, vocab=None) -> list:
+    """The hashtags in `text` that ALREADY name a tag in use, normalised.
+
+    Capture doors write tags only from an explicit flag, never from the body —
+    otherwise a note containing `#define` or `#e8a34e` reads as tagged, counts
+    as placed, and drops out of the inbox view it was aimed at. That rule cost
+    more than it saved: half the unplaced queue was notes whose body said
+    `#todo` or `#blog` and whose frontmatter said nothing.
+
+    So the gesture is honoured, but only for words the vocabulary already has.
+    `#todo` and `#blog` are tags; `#define` and `#e8a34e` are not, and a tag
+    you have never used before still will not place a note by being typed in
+    passing. The failure mode is unchanged for everything except the words you
+    demonstrably meant.
+
+    Exact match after norm_tag, deliberately NOT the near-duplicate resolver:
+    `resolve_tags` exists to help someone who is choosing a tag, and a hash in
+    the middle of a sentence is not that. `#blogs` stays prose.
+    """
+    vocab = vocab if vocab is not None else vocabulary()
+    known = {norm_tag(t) for t in vocab}
+    out = []
+    for raw in _BODYTAG.findall(text or ""):
+        t = norm_tag(raw)
+        if t in known and t not in out:
+            out.append(t)
+    return out
+
+
 # Below this length an edit distance of 1 is noise, not a typo: ui/up/id are
 # all one edit apart and all mean different things.
 _NEAR_MIN_LEN = 4
@@ -604,6 +640,12 @@ def main(argv=None):
                    help="allow a tag the guard flagged as a near-duplicate")
     s.add_argument("--json", action="store_true")
 
+    bt = sub.add_parser("bodytags",
+                        help="hashtags in TEXT that already name a tag in use")
+    bt.add_argument("text", nargs="?", default="",
+                    help="the text; omit to read stdin")
+    bt.add_argument("--json", action="store_true")
+
     rt = sub.add_parser("retag", help="rename or merge a tag across the whole kb")
     rt.add_argument("old")
     rt.add_argument("new", nargs="?", default="",
@@ -744,6 +786,14 @@ def main(argv=None):
         _emit({"ok": True, "slug": it["slug"], "path": it["path"],
                "applied": got, "notes": notes, "not_present": missing},
               args, "\n".join(text))
+
+    elif args.cmd == "bodytags":
+        # The one door (`kb-inbox`) calls this so that "is this a real tag"
+        # keeps exactly one implementation. A shell script grepping the store
+        # itself would be the fifth hand-rolled tag reader in the system.
+        text = args.text if args.text else sys.stdin.read()
+        found = body_tags(text, vocabulary(load(include_daily=True)))
+        _emit({"tags": found}, args, "\n".join(found))
 
     elif args.cmd == "retag":
         # include_daily: a rename that skipped daily notes would leave `journal`
