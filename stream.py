@@ -60,6 +60,10 @@ _TAGLINE = re.compile(r"^\s*(?:#[\w/\-]+\s*)+$")
 # is the only one in the store; anchored to the line start and a short bare
 # key so a real sentence containing a colon is never eaten.
 _STRAY_FIELD = re.compile(r"^(?:source|captured|via):\s*\S*$", re.I)
+# A transcribed notebook page says where it came from on its first line. That is
+# provenance, not a title — left in, every transcription in a view reads
+# "originally written by hand".
+_PROVENANCE = re.compile(r"^originally (?:hand)?written(?: by hand)?:?$", re.I)
 _TRAILING_TAGS = re.compile(r"(?:\s+#[\w/\-]+)+\s*$")
 
 
@@ -100,7 +104,7 @@ def _title(body: str) -> str:
         m = _HEADING.match(s)
         if m:
             s = m.group(1).strip()
-        elif _TAGLINE.match(s) or _STRAY_FIELD.match(s):
+        elif _TAGLINE.match(s) or _STRAY_FIELD.match(s) or _PROVENANCE.match(s):
             continue
         # An inline tag trailing the one line the note has is the tag doing its
         # job, not part of the sentence: `buy music stand #todo` is titled
@@ -400,6 +404,11 @@ def load(include_daily=False) -> list:
                            or meta.get("date"))
         status = str(meta.get("status", "") or "").strip().lower()
         when = _norm_date(meta.get("when"))
+        # `written:` is when the words were first put down, for a note that
+        # reached the store later — a notebook page transcribed years on. Only
+        # `chrono` sorts on it; every recency view stays on `created`, because
+        # "what came in lately" is still a question about the store.
+        written = _norm_date(meta.get("written"))
         items.append({
             "slug": path.stem,
             "path": str(path),
@@ -408,6 +417,7 @@ def load(include_daily=False) -> list:
             "tags": _tags(meta),
             "status": status,
             "when": when.isoformat() if when else None,
+            "written": written.isoformat() if written else None,
             "created": created.strftime("%Y-%m-%d %H:%M") if created else None,
             "age_days": (today - created.date()).days if created else None,
         })
@@ -591,6 +601,18 @@ def render_list(rows, color=False, header=""):
     return "\n".join(out) + "\n"
 
 
+def render_chrono(rows, color=False, header=""):
+    c = _color(color)
+    out = ([c(f"  {header}", "bold"), ""] if header else [])
+    for it in rows:
+        tags = " ".join("#" + t for t in it["tags"])
+        out.append(f"  {c((it['on'] or '?').rjust(10), 'dim')}  "
+                   f"{it['title'][:54]:<54} {c(tags, 'cyan')}")
+    if not rows:
+        out.append(c("  (nothing)", "dim"))
+    return "\n".join(out) + "\n"
+
+
 # ── cli ────────────────────────────────────────────────────────────────────
 
 def _emit(payload, args, text):
@@ -622,6 +644,11 @@ def main(argv=None):
     l.add_argument("--tag", default=None)
     l.add_argument("--stale", type=int, default=None, metavar="DAYS")
     l.add_argument("--json", action="store_true")
+
+    ch = sub.add_parser("chrono",
+                        help="notes in the order they were WRITTEN, oldest first")
+    ch.add_argument("--tag", default=None)
+    ch.add_argument("--json", action="store_true")
 
     v = sub.add_parser("tags", help="the tag vocabulary in use, most-used first")
     v.add_argument("--json", action="store_true")
@@ -682,6 +709,22 @@ def main(argv=None):
                 if any(t == q or t.startswith(q + "/") for t in i["tags"])]
         rows.sort(key=lambda i: i["created"] or "", reverse=True)
         _emit(rows, args, render_list(rows, color, f"#{q} ({len(rows)})"))
+
+    elif args.cmd == "chrono":
+        # include_daily: a daily note is a journal entry, and a timeline of the
+        # journal that skipped them would have holes in it.
+        rows = load(include_daily=True)
+        if args.tag:
+            q = args.tag.lstrip("#").rstrip("/")
+            rows = [i for i in rows
+                    if any(t == q or t.startswith(q + "/") for t in i["tags"])]
+        # A note with no `written:` was written when it was captured, so the
+        # typed journal and the transcribed notebooks share one timeline.
+        for i in rows:
+            i["on"] = i["written"] or (i["created"] or "")[:10] or None
+        rows.sort(key=lambda i: (i["on"] or "", i["created"] or ""))
+        head = f"#{args.tag.lstrip('#')}" if args.tag else "STREAM"
+        _emit(rows, args, render_chrono(rows, color, f"{head} by date written ({len(rows)})"))
 
     elif args.cmd == "tags":
         # include_daily: `journal` is the most-used tag in the system and lives
