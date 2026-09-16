@@ -421,6 +421,60 @@ local function render_template(content)
   end))
 end
 
+-- A template may open with its own `---` block. Those keys are FIELDS for the
+-- note, not text: they go into the frontmatter kb-inbox already wrote rather
+-- than landing mid-body. `tags` is never taken from a template -- tags come
+-- only from -t -- and a key the note already has is left alone.
+--
+-- Returns the body lines to insert at the cursor, how many lines were added
+-- above `row`, and the line of the first EMPTY field (nil if none), which is
+-- where the cursor should go: an empty field is a question for the writer.
+function M.merge_template_fields(lines, row)
+  if lines[1] ~= "---" then return lines, 0, nil end
+  local close
+  for i = 2, #lines do
+    if lines[i] == "---" then close = i; break end
+  end
+  if not close then return lines, 0, nil end
+  local body = vim.list_slice(lines, close + 1)
+
+  local buf = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local fm_end
+  if buf[1] == "---" then
+    for i = 2, #buf do
+      if buf[i] == "---" then fm_end = i; break end
+    end
+  end
+  local have = {}
+  for i = 2, (fm_end or 1) - 1 do
+    local k = buf[i]:match("^([%w_-]+):")
+    if k then have[k] = true end
+  end
+
+  local add, empty = {}, nil
+  for i = 2, close - 1 do
+    local k = lines[i]:match("^([%w_-]+):")
+    if k and k ~= "tags" and not have[k] then
+      if lines[i]:match("^[%w_-]+:%s*$") then
+        table.insert(add, k .. ": ")
+        empty = empty or #add
+      else
+        table.insert(add, lines[i])
+      end
+    end
+  end
+  if #add == 0 then return body, 0, nil end
+
+  if fm_end then
+    vim.api.nvim_buf_set_lines(0, fm_end - 1, fm_end - 1, false, add)
+    return body, (fm_end <= row) and #add or 0, empty and (fm_end + empty - 1)
+  end
+  local block = vim.list_extend({ "---" }, add)
+  table.insert(block, "---")
+  vim.api.nvim_buf_set_lines(0, 0, 0, false, block)
+  return body, #block, empty and (1 + empty)
+end
+
 function M.template_insert()
   if not telescope_or_warn() then return end
   local pickers = require("telescope.pickers")
@@ -453,8 +507,19 @@ function M.template_insert()
         local raw = table.concat(vim.fn.readfile(sel.value), "\n")
         local lines = vim.split(render_template(raw), "\n", { plain = true })
         local row = vim.api.nvim_win_get_cursor(0)[1]
-        vim.api.nvim_buf_set_lines(0, row - 1, row - 1, false, lines)
+        local body, shift, focus = M.merge_template_fields(lines, row)
+        row = row + shift
+        vim.api.nvim_buf_set_lines(0, row - 1, row - 1, false, body)
         notify("inserted: " .. vim.fn.fnamemodify(sel.value, ":t:r"))
+        if focus then
+          -- scheduled: telescope is still tearing down its prompt, and a
+          -- startinsert issued inside that is undone when it finishes
+          vim.schedule(function()
+            local text = vim.api.nvim_buf_get_lines(0, focus - 1, focus, false)[1]
+            vim.api.nvim_win_set_cursor(0, { focus, #text })
+            vim.cmd("startinsert!")
+          end)
+        end
       end)
       return true
     end,
