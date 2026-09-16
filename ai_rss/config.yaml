@@ -104,14 +104,32 @@ columns:
       THE READER'S RIG — judge every item against this, not against general interest:
         - ONE RTX 3090: 24GB VRAM, Ampere, compute capability 8.6.
         - Runs GGUF through ollama (+ OpenWebUI). Not vLLM, not SGLang, not TensorRT.
-        - Today runs qwen3.6:27b at Q4_K_M (~17GB). He is not a cloud-API customer.
+        - Today runs qwen3.8:27b at Q4_K_M (~17GB), pinned resident at 112k ctx.
+          He is not a cloud-API customer.
 
       An upgrade is not only a BIGGER model. The most actionable thing this column can
       ever carry is a drop-in successor: same parameter count, same quant, same VRAM,
       same ollama — that simply scores better. It costs one `ollama pull` and changes
       nothing else in the stack, which makes same-size the REASON to act, not a reason
       to shrug. Weigh new releases on capability against the model he runs TODAY
-      (qwen3.6:27b), not merely on whether they fit.
+      (qwen3.8:27b), not merely on whether they fit.
+
+      A MODEL CARD IS A CLAIM, NOT A BENCHMARK. Hugging Face trending surfaces
+      community merges and finetunes whose cards are written by the uploader, and
+      their numbers are self-reported with no independent eval behind them. Phrases
+      like "exceeds the base model in ALL benchmarks", stacked merge names
+      (TURBO / Cold-Fusion / Heretic / Uncensored / MAX / NEO), and version numbers
+      no upstream lab has published are marketing, and repeating them as findings is
+      the failure this rule exists to stop. Treat a first-party release (Qwen, Google,
+      Mistral, Meta, Microsoft) or an independent head-to-head as evidence; treat an
+      unaffiliated re-upload's own card as a rumour, and say so if you carry it at all.
+
+      THE RESIDENT SEAT IS A TOOL CALLER. The model this reader runs is the one his
+      assistant uses to select from ~11 MCP tools, and that reliability was hard-won.
+      Weigh tool-calling and structured-output reliability ABOVE benchmark deltas:
+      abliteration ("uncensored", "Heretic") and heavy merging degrade exactly that,
+      and nobody who publishes these merges measures it. A drop-in successor that
+      cannot be trusted to emit a tool call is not an upgrade at any benchmark score.
 
       A runtime release (ollama, llama.cpp) that ADDS SUPPORT for a model is not a
       minor version bump — it is the prerequisite that makes that model pullable at
@@ -165,10 +183,21 @@ columns:
         label: r/LocalLLaMA
         url: https://www.reddit.com/r/LocalLLaMA/top.rss?t=week
         limit: 25
+        body_is_story: true   # the thread text IS the story; reddit resists scraping
       - type: rss
         label: Simon Willison
         url: https://simonwillison.net/atom/everything/
         limit: 15
+      # First-party. The vendor that matters most here was reaching this column only
+      # as second-hand Reddit chatter; this is the release itself.
+      - type: rss
+        label: Qwen (official blog)
+        url: https://qwenlm.github.io/blog/index.xml
+        limit: 10
+      - type: rss
+        label: Interconnects
+        url: https://www.interconnects.ai/feed
+        limit: 10
       - type: github_releases
         repo: ollama/ollama
         limit: 3
@@ -180,3 +209,131 @@ columns:
         limit: 2
       - type: hf_trending
         limit: 30
+
+  # ── Restored 2026-09-15. These two were cut at eb09d2c because the ORIGINAL
+  # versions ran on DDG queries and returned content farms — the 2026-06-30 issue
+  # led World & Politics with "Geopolitical Week Ahead: June 29 – July 5". The cut
+  # was right; the queries were the problem, not the subjects. Same fix as the Local
+  # AI column got: name the sources, let the model choose among them.
+  - name: AI & the World
+    per_column: 4
+    recommend: false          # "is it time to act?" is a rig question; this isn't one
+    # The global 18000 was written for model cards and release notes. This column's
+    # sources are essays — Zvi's 2026-09-15 post on the Amodei piece was 70,383 chars,
+    # and truncating at 18k fed the writer the opening block quotes, which produced
+    # "the essay names its call after a letter signed by lab employees in July" as the
+    # summary of the week's biggest AI story. The checker reads the same window.
+    max_article_chars: 45000
+    brief: |
+      This section answers: "what is happening IN AI that I would be embarrassed not
+      to know?" It is the discourse column, not the download column.
+
+      THE GAP IT EXISTS TO CLOSE: the Local AI column excludes closed/API-only labs
+      by design, so for months the biggest stories in the field — lab policy fights,
+      safety arguments, the economics, who said what about where this is going —
+      reached this reader not at all. Anything a well-read person would expect him to
+      have an opinion on belongs here.
+
+      INCLUDE: statements and essays by the people who set the field's direction
+      (lab heads, chief scientists, senior researchers); AI policy, regulation and
+      national strategy; safety and alignment arguments that practitioners are
+      actually having; the industry's economics — capex, data centres, compute
+      supply, valuations, the bubble question; labour and social impact where there
+      is real evidence; notable disagreements between serious people.
+
+      CLOSED LABS ARE IN SCOPE HERE. OpenAI, Anthropic, Google DeepMind, Meta,
+      xAI, Mistral — the other column bans them because he cannot run them; this
+      column covers them because he lives in a world they are shaping.
+
+      EXCLUDE: model releases, weights, quantizations, GGUF, benchmarks, runtime
+      versions, VRAM and hardware — that is the Local AI column's beat and running
+      it twice wastes the issue. Also exclude: funding-round and stock-price
+      churn with no argument attached, product launches, and "10 ways AI will
+      change X" listicles.
+
+      A DISAGREEMENT IS THE STORY. When serious people are split, say who holds
+      which position and why — do not flatten it into "experts are debating".
+    sources:
+      - type: rss
+        label: Import AI (Jack Clark)
+        url: https://jack-clark.net/feed/
+        limit: 10
+      - type: rss
+        label: Transformer
+        url: https://www.transformernews.ai/feed
+        limit: 15
+      - type: rss
+        label: Zvi Mowshowitz
+        url: https://thezvi.substack.com/feed
+        limit: 10
+      - type: rss
+        label: Ars Technica
+        url: https://feeds.arstechnica.com/arstechnica/technology-lab
+        limit: 20
+      # First-party, so the column can cite a lab's own words instead of commentary
+      # about them. The verifier is right to strip claims about what an essay argues
+      # when the only source is someone else's post ABOUT that essay — the cure is a
+      # primary document in the candidate pool, not a laxer checker.
+      # NOTE: Anthropic and darioamodei.com publish NO feed — every rss/atom/index
+      # path 404s (checked 2026-09-15). There is no first-party option for them.
+      - type: rss
+        label: OpenAI (first-party)
+        url: https://openai.com/news/rss.xml
+        limit: 15
+
+  - name: US Politics
+    per_column: 4
+    recommend: false
+    brief: |
+      This section answers: "what actually happened in American politics this week?"
+
+      INCLUDE: things that HAPPENED — legislation moving or dying, executive actions,
+      court rulings, agency decisions, elections and their results, investigations
+      reaching a milestone, confirmed personnel changes. Name who did what, under
+      what authority, and what changes as a result.
+
+      EXCLUDE, and this is most of the feed volume: polling and horse-race coverage;
+      "X slams Y" and statements-about-statements; anonymous-source palace intrigue;
+      opinion and columns, however good; anything whose entire content is an
+      unnamed official's reaction. If the story would read the same with the names
+      swapped, it is not news.
+
+      NEUTRALITY IS A REQUIREMENT, NOT A STYLE. Report what happened in the words a
+      wire service would use. Do not adopt a source's framing, characterise motives,
+      or tell the reader what to think — including when the sources themselves do.
+      Where outlets genuinely disagree on the facts, say that plainly and attribute.
+      Where they disagree only on interpretation, report the fact and drop the
+      interpretation.
+    sources:
+      # Chosen on what can be READ, not only on what is worth reading. Measured
+      # 2026-09-15 as (rss body chars -> scraped article chars): PBS 187->0,
+      # The Hill 451->0, Politico 183->0, NPR 254->253. All four block or defeat
+      # trafilatura, so a story selected from them is written from a ~200-char
+      # teaser — which is exactly why this column's first v2 run produced bullets
+      # like "The repeal affects coal and gas-fired power plants". Dropped for that
+      # reason alone; their reporting is fine, the pipeline just cannot see it.
+      # AP and Reuters publish no working public RSS at all (AP 403s, Reuters 404s).
+      - type: rss
+        label: Guardian US politics
+        url: https://www.theguardian.com/us-news/us-politics/rss
+        limit: 20
+      - type: rss
+        label: NBC News politics
+        url: https://feeds.nbcnews.com/nbcnews/public/politics
+        limit: 20
+      - type: rss
+        label: CBS News politics
+        url: https://www.cbsnews.com/latest/rss/politics
+        limit: 20
+      - type: rss
+        label: BBC US & Canada
+        url: https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml
+        limit: 15
+      # Counterweight. Note this is constrained by scrapability rather than by
+      # editorial preference: National Review (161->0) and the Washington Examiner
+      # (413->606) were both tested and cannot be read, so Reason is the only
+      # right-of-center source here that yields an article. Worth revisiting.
+      - type: rss
+        label: Reason
+        url: https://reason.com/feed/
+        limit: 15

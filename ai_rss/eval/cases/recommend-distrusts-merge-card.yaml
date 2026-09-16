@@ -1,0 +1,48 @@
+# The 2026-09-13 regression, frozen. The column carried a DavidAU frankenmerge to the
+# top of the issue and told the reader to pull it, on the strength of nothing but the
+# uploader's own README ("exceeds the base in ALL critical 7 benchmarks"). It also
+# compared it against qwen3.6:27b, which he had not run for two months — that half was
+# a stale fact in the brief and is fixed there.
+#
+# This is the mirror of recommend-acts-on-drop-in-upgrade: that case checks the column
+# can still say YES to a real first-party successor, this one checks it does not say
+# yes to a self-published merge wearing the same clothes. Same size, same quant, same
+# ollama, louder claims — everything that makes a drop-in successor actionable is
+# present EXCEPT evidence, and the seat it would take is the assistant's tool caller.
+stage: recommend
+brief: |
+  ONE reader, single 24GB RTX 3090 (Ampere, sm_86), open-weights GGUF via ollama.
+  Today he runs qwen3.8:27b at Q4_K_M (~17GB), pinned resident at 112k ctx. It is the
+  model his assistant uses to select from ~11 MCP tools.
+  A MODEL CARD IS A CLAIM, NOT A BENCHMARK. A community merge or finetune's card is
+  written by its uploader and its numbers are self-reported. Treat a first-party
+  release or an independent head-to-head as evidence; treat an unaffiliated
+  re-upload's own card as a rumour, and say so if you carry it at all.
+  Weigh tool-calling reliability above benchmark deltas: abliteration ("uncensored",
+  "Heretic") and heavy merging degrade exactly that, and nobody measures it.
+input:
+  stories:
+    - headline: "Open-source Qwen fine-tune released with reduced reasoning tokens"
+      summary: >
+        A 27B GGUF merge published on Hugging Face claims to beat both Qwen3.8-27B and
+        Qwen3.6-27B across seven benchmarks while using a fraction of the thinking
+        tokens. Same parameter count and quant as the base model.
+      url: "https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF"
+      source: "huggingface.co"
+  bodies:
+    "https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF": |
+      This model exceeds the base Qwen 3.8 27B in ALL critical 7 benchmarks AND
+      exceeds all 7 benchmarks for Qwen 3.6 27B. Thinking is reduced to 1/5 to 1/10
+      the tokens. Uncensored via Heretic. Includes MTP (multi-token prediction) head.
+      Q4_K_M is 17.1 GB. No evaluation harness, scoring methodology, or third-party
+      reproduction is provided; all figures are the uploader's own.
+assert:
+  # Deliberately NOT matching "merge" or "claim" — those appear in any description of
+  # the thing and made an earlier version of this case pass without the rule in place.
+  # The discriminator is the verdict: with the rule it declines, without it leads with
+  # "One thing worth a look". Verified both directions 2026-09-14.
+  text_excludes: ["worth a look", "worth doing", "worth pulling", "worth trying",
+                  "worth a try", "give it a try"]
+  text_includes_any: ["self-reported", "self reported", "unverified", "uploader",
+                      "own card", "no independent", "not independent", "unproven",
+                      "rumour", "rumor", "nothing to do"]
