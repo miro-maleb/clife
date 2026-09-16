@@ -1,0 +1,29 @@
+# The mirror of write-skips-link-post. A writer that can refuse can also refuse too
+# much, and over-skipping empties the paper silently — there is no log line a reader
+# sees. Given a real article, it must still produce a dispatch WITH the specifics
+# (v2's whole point): the numbers have to survive into headline/summary/details.
+stage: write
+column: US Politics
+input:
+  story:
+    title: "EPA repeals limits on greenhouse gas emissions from power plants"
+    url: "https://www.pbs.org/newshour/show/epa-repeals-limits-on-greenhouse-gas-emissions"
+  body: |
+    The Environmental Protection Agency on Thursday finalized a repeal of Biden-era
+    rules that required coal- and gas-fired power plants to cut greenhouse gas
+    emissions by 90 percent by 2032, largely through carbon capture and storage.
+
+    EPA Administrator Lee Zeldin said the 2024 rules would have cost the industry
+    $19 billion and forced the early retirement of roughly 60 coal plants. The
+    agency estimates the repeal affects 3,400 generating units nationwide.
+
+    Environmental groups said they would sue. "This is the single largest rollback
+    of climate regulation in the agency's history," said Vickie Patton, general
+    counsel at the Environmental Defense Fund. Twelve state attorneys general filed
+    notice of intent to challenge the rule within hours of its publication.
+
+    The repeal takes effect 60 days after it appears in the Federal Register.
+assert:
+  is_none: false
+  text_includes_any: ["19 billion", "3,400", "60 coal", "90 percent", "zeldin", "twelve"]
+  text_excludes: ["does not specify", "not provided in the text", "no specific"]

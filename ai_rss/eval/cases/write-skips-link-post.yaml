@@ -1,0 +1,26 @@
+# v2, 2026-09-15. The first v2 issue published "OpenAI Chief Scientist Warns on AI",
+# whose summary read "No specific technical details, limitations, or arguments are
+# provided in the text" and whose single detail restated his job title. The selector
+# had picked a newsletter LINK POST — a headline pointing at a primary document the
+# pipeline never fetched.
+#
+# Nothing downstream could catch it. verify only asks "is every claim supported?",
+# and a story that says nothing is trivially supported. So the writer refuses, and
+# this case pins the refusal.
+stage: write
+column: AI & the World
+input:
+  story:
+    title: "An Alien Mind: Jakub Pachocki Warns Us"
+    url: "https://thezvi.substack.com/p/an-alien-mind-jakub-pachocki-warns"
+  body: |
+    An Alien Mind: Jakub Pachocki Warns Us
+
+    Read more at the link below. Subscribers get the full post in their inbox.
+
+    Jakub Pachocki, OpenAI's Chief Scientist, dropped some truth bombs this week.
+
+    Subscribe now · Share · Leave a comment
+    © 2026 Zvi Mowshowitz · Privacy · Terms · Collection notice
+assert:
+  is_none: true

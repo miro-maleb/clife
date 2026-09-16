@@ -92,8 +92,13 @@ def from_rss(spec: dict) -> list[dict]:
         # Title + discussion text is the story for link-posts, where the body is
         # just "submitted by u/…". Keep both so the writer has something to chew.
         body = f"{title}\n\n{text}" if text else title
+        # Most feeds put a TEASER in <summary>, not the article. Carrying that
+        # through as the body is why blog-sourced stories read like headlines: the
+        # writer was summarizing a 300-char excerpt and doing it faithfully. So mark
+        # these as "go fetch the real thing", and let the few feeds whose body IS the
+        # story (reddit threads) opt out with `body_is_story: true`.
         out.append({"title": title, "url": link, "snippet": text[:300],
-                    "body": body})
+                    "body": body, "body_is_story": bool(spec.get("body_is_story"))})
     _log(f"{label}: {len(out)} items")
     return out
 

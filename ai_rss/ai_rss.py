@@ -16,7 +16,7 @@ Usage:
 Output contract (the web app reads latest.json):
     <outbox>/ai-rss/latest.json  ·  issue-<date>.json  ·  latest.md  ·  issue-<date>.md
     JSON: {"date","generated_at","columns":[{"name","stories":[
-           {"headline","summary","url","source"}],
+           {"headline","summary","url","source","details":[…]}],  # details optional
            "recommendation":{"verdict","notes":[…]}   # optional; omitted if the pass
           }]}                                         # is off or returns nothing
 Same-day reruns re-pick freely (seen-dedupe is against previous days only).
@@ -181,13 +181,13 @@ def drop_excluded(column: dict, candidates: list[dict]) -> list[dict]:
 
 
 def select(cfg: dict, column: str, candidates: list[dict],
-           brief: str | None = None) -> list[dict]:
+           brief: str | None = None, column_n: int | None = None) -> list[dict]:
     """Local LLM picks the most significant, reputable, non-sensational stories.
 
     A column's optional `brief` is its editorial standing order — what this section
     is *for* — and overrides generic newsworthiness when the two disagree.
     """
-    n = cfg["select"]["per_column"]
+    n = column_n or cfg["select"]["per_column"]
     menu = "\n".join(
         f"[{i}] {c['title']}\n     {c['snippet'][:200]}\n     {c['url']}"
         for i, c in enumerate(candidates)
@@ -245,8 +245,27 @@ def fetch_clean(cfg: dict, url: str) -> str | None:
                                include_tables=False, favor_precision=True)
 
 
-def write_story(cfg: dict, column: str, story: dict, body: str) -> dict | None:
+def _clean_details(raw) -> list[str]:
+    """Normalise the writer's `details` into a list of plain sentences.
+
+    Kept strict and boring on purpose: the field is optional everywhere downstream,
+    so anything malformed becomes [] rather than a rendering surprise. Strips the
+    bullet characters the model adds back despite being told not to.
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for d in raw:
+        t = str(d).strip().lstrip("-•* ").strip()
+        if t and t.lower() not in {x.lower() for x in out}:
+            out.append(t)
+    return out[:4]
+
+
+def write_story(cfg: dict, column: str, story: dict, body: str,
+                max_chars: int | None = None) -> dict | None:
     """Local LLM writes the dispatch. Returns a structured story dict, or None."""
+    max_chars = max_chars or cfg["write"]["max_article_chars"]
     system = (
         "You write short, calm newspaper dispatches. Plain, precise, "
         "non-sensational. No hype words, no 'breaking', no editorializing. "
@@ -254,31 +273,64 @@ def write_story(cfg: dict, column: str, story: dict, body: str) -> dict | None:
     )
     user = (
         f"Section: {column}\nSource title: {story['title']}\n\n"
-        f"Article text:\n{body[:cfg['write']['max_article_chars']]}\n\n"
+        f"Article text:\n{body[:max_chars]}\n\n"
         # The one thing thinking did better on deep sources was surface deployment
         # caveats (hardware/format/runtime limits) buried in the article. Ask for it
         # directly so the fast, non-thinking model catches them too.
         "If the source states a hardware requirement, file format, or runtime "
         "limitation that bears on whether a reader could actually run this, include "
         "it in the summary. Do not pad — if there is no such caveat, omit it. "
+        # v2 (2026-09-15): headline+2 sentences read as a list of links. `details`
+        # asks for the specifics a summary compresses away — and asking for BULLETS
+        # OF FACTS rather than "a longer summary" is deliberate: told to write more
+        # prose, a model pads with restatement; told to list what the source states,
+        # it either has specifics or it doesn't. Hence "omit rather than pad": a
+        # two-bullet story with numbers beats four bullets of throat-clearing.
+        # The 2026-09-15 v2 run published "OpenAI Chief Scientist Warns on AI" whose
+        # own summary said "no specific technical details, limitations, or arguments
+        # are provided in the text", plus one bullet restating his job title. The
+        # selector had picked a newsletter's LINK POST — a headline pointing at a
+        # primary document the pipeline never fetched. Nothing downstream could catch
+        # it: verify only asks "is this supported?", and a story that says nothing is
+        # perfectly supported. So the writer, the only stage holding both the promised
+        # story and the actual text, gets to refuse.
+        "If the article text does not actually contain the story — it is a link post, "
+        "a stub, a paywall notice, a table of contents, or it only mentions the "
+        "subject in passing — return {\"skip\": true} and nothing else. Do not write "
+        "a dispatch that reports the absence of information. "
+        "Then give the specifics the summary compresses out. Each detail must be a "
+        "concrete fact the source states: a number, a name, a date, an amount, who "
+        "is affected, what changes, what a named person actually argued, a stated "
+        "limitation. NOT restatement of the summary, NOT background you know from "
+        "elsewhere, NOT speculation about significance. If the source is thin, "
+        "return fewer details or none — padding is worse than brevity. "
         'Return JSON: {"headline": "<plain headline, <=12 words, no hype, no '
-        'markdown>", "summary": "<2-3 calm sentences: what happened and why it '
-        'matters>"}'
+        'markdown>", "summary": "<3-4 calm sentences: what happened and why it '
+        'matters>", "details": ["<specific fact from the source>", ...] (0-4 '
+        'items, each one sentence, no bullet characters)}'
     )
     try:
         d = json.loads(llm(cfg, system, user, json_mode=True, temperature=0.4))
+        if d.get("skip"):
+            log(f"  skip (source lacks the story): {story['title'][:52]}")
+            return None
         headline = str(d["headline"]).strip().lstrip("# ")
         summary = str(d["summary"]).strip()
+        details = _clean_details(d.get("details"))
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         log(f"  write parse failed: {e}")
         return None
     if not headline or not summary:
         return None
-    return {"headline": headline, "summary": summary,
-            "url": story["url"], "source": domain(story["url"])}
+    out = {"headline": headline, "summary": summary,
+           "url": story["url"], "source": domain(story["url"])}
+    if details:
+        out["details"] = details
+    return out
 
 
-def verify_story(cfg: dict, story: dict, body: str) -> dict | None:
+def verify_story(cfg: dict, story: dict, body: str,
+                 max_chars: int | None = None) -> dict | None:
     """Re-read a written story against its source. Fix it, or throw it out.
 
     The writer is the only stage that can invent facts, and nothing downstream could
@@ -306,13 +358,23 @@ def verify_story(cfg: dict, story: dict, body: str) -> dict | None:
         "or omission — only to statements the source cannot back. Reply ONLY as JSON."
     )
     user = (
-        f"SOURCE TEXT:\n{body[:cfg['write']['max_article_chars']]}\n\n"
-        f"HEADLINE: {story['headline']}\nSUMMARY: {story['summary']}\n\n"
-        'Return JSON: {"supported": <true if EVERY claim is backed by the source>, '
-        '"problems": ["<each unsupported claim, quoted>"], '
+        # Must be the SAME window the writer saw. Give the checker less and it
+        # reports supported facts as inventions, because the sentence backing them
+        # was truncated away — the correction pass would then delete good details.
+        f"SOURCE TEXT:\n{body[:max_chars or cfg['write']['max_article_chars']]}\n\n"
+        f"HEADLINE: {story['headline']}\nSUMMARY: {story['summary']}\n"
+        # The details carry the numbers and names, which is exactly where invention
+        # lands — checking the summary alone would leave the richest v2 field
+        # unguarded, which is worse than not having added it.
+        + (f"DETAILS:\n" + "\n".join(f"- {d}" for d in story["details"]) + "\n"
+           if story.get("details") else "")
+        + '\nReturn JSON: {"supported": <true if EVERY claim is backed by the '
+        'source>, "problems": ["<each unsupported claim, quoted>"], '
         '"fixed_headline": "<the headline, corrected if needed>", '
         '"fixed_summary": "<the summary rewritten using ONLY what the source '
-        'supports; keep it 2-3 calm sentences>"}'
+        'supports; keep it 3-4 calm sentences>", '
+        '"fixed_details": ["<each detail the source DOES support, corrected if '
+        'needed; drop the ones it does not>"]}'
     )
     try:
         d = json.loads(llm(cfg, system, user, json_mode=True, temperature=0.1))
@@ -328,7 +390,16 @@ def verify_story(cfg: dict, story: dict, body: str) -> dict | None:
         log(f"  ✗ dropped (unfixable): {story['headline'][:52]}")
         return None
     log(f"  ~ corrected: {story['headline'][:44]} — {problems[0][:60] if problems else '?'}")
-    return {**story, "headline": fixed_h, "summary": fixed_s, "corrected": True}
+    out = {**story, "headline": fixed_h, "summary": fixed_s, "corrected": True}
+    # Absent key vs. empty list matters: if the checker returned no `fixed_details`
+    # at all we cannot tell "all fine" from "all unsupported", so drop the field
+    # rather than keep bullets a failed check never cleared.
+    fixed_d = _clean_details(d.get("fixed_details"))
+    if fixed_d:
+        out["details"] = fixed_d
+    else:
+        out.pop("details", None)
+    return out
 
 
 # Lines worth handing the recommender verbatim: benchmark scores, sizes, version
@@ -399,6 +470,12 @@ def recommend(cfg: dict, column: dict, stories: list[dict],
     """
     if not stories or not cfg.get("recommend", {}).get("enabled"):
         return None
+    # Per-column opt-in. This pass asks "is it time to ACT?" against the reader's
+    # rig, which is a question only the Local AI column has. Run it over a news
+    # column and it answers a bill in Congress with a verdict about VRAM. Columns
+    # default to on, so a config that predates this keeps its behaviour.
+    if not column.get("recommend", True):
+        return None
     brief = column.get("brief", "")
     ev_chars = int(cfg.get("recommend", {}).get("evidence_chars", 1800))
     bodies = bodies or {}
@@ -467,6 +544,12 @@ def recommend(cfg: dict, column: dict, stories: list[dict],
     return {"verdict": verdict, "notes": notes}
 
 
+# Below this, an RSS <summary> is assumed to be an excerpt rather than the article.
+# Generous on purpose: over-fetching costs one request that the length guard throws
+# away, while under-fetching silently publishes a summary of a teaser.
+TEASER_CHARS = 2500
+
+
 # ── assembly ──────────────────────────────────────────────────────────────────
 def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                    update_seen: bool) -> dict:
@@ -490,7 +573,8 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
         log(f"[{col['name']}] {len(candidates)} fresh candidates")
         if not candidates:
             continue
-        chosen = select(cfg, col["name"], candidates, col.get("brief"))
+        chosen = select(cfg, col["name"], candidates, col.get("brief"),
+                        col.get("per_column"))
         log(f"[{col['name']}] selected {len(chosen)}")
         stories, bodies = [], {}
         for st in chosen:
@@ -503,15 +587,34 @@ def generate_issue(cfg: dict, only: str | None, seen: dict[str, str],
                 if body:  # keep the stats — the card alone won't say it's trending
                     body = f"{st.get('meta', '')}\n\n{body}"
             provided = bool(body)
+            # A short RSS body is a teaser, so try the article itself and keep it
+            # only if it is substantially longer — that guard means a failed or
+            # paywalled fetch, or a feed that already carries full text, costs
+            # nothing but the request. Sources whose body IS the story (reddit
+            # threads, release notes, model cards) are exempt and never re-fetched;
+            # those URLs resist scraping anyway.
+            if (body and not st.get("body_is_story") and not st.get("raw_url")
+                    and len(body) < TEASER_CHARS):
+                full = fetch_clean(cfg, st["url"])
+                if full and len(full) > len(body) * 1.5:
+                    log(f"  fetched full text: {len(body)} -> {len(full)} chars")
+                    body = full
+                else:
+                    # Say so. A silent failure here reads downstream as a thin
+                    # story and looks like the writer's fault; it is usually the
+                    # outlet blocking the scrape, which is a source decision.
+                    log(f"  teaser only ({len(body)} chars, site blocks scrape): "
+                        f"{domain(st['url'])}")
             if not body:
                 body = fetch_clean(cfg, st["url"])
             if not body or len(body) < (80 if provided else 250):
                 log(f"  skip (no text): {st['url']}")
                 continue
             log(f"  writing: {st['title'][:60]}")
-            s = write_story(cfg, col["name"], st, body)
+            max_chars = col.get("max_article_chars")
+            s = write_story(cfg, col["name"], st, body, max_chars)
             if s:
-                s = verify_story(cfg, s, body)   # may correct it, or drop it entirely
+                s = verify_story(cfg, s, body, max_chars)  # may correct, or drop
             if s:
                 stories.append(s)
                 bodies[s["url"]] = body      # source lines for the recommend pass
@@ -540,8 +643,12 @@ def render_markdown(issue: dict) -> str:
              "*Curated and written by local qwen on miro-tower.*\n"]
     for col in issue["columns"]:
         parts.append(f"\n## {col['name']}\n")
-        blocks = [f"### {s['headline']}\n\n{s['summary']}\n\n"
-                  f"[{s['source']}]({s['url']})" for s in col["stories"]]
+        blocks = []
+        for s in col["stories"]:
+            b = f"### {s['headline']}\n\n{s['summary']}\n"
+            if s.get("details"):
+                b += "\n" + "\n".join(f"- {d}" for d in s["details"]) + "\n"
+            blocks.append(b + f"\n[{s['source']}]({s['url']})")
         parts.append("\n\n---\n\n".join(blocks))
         rec = col.get("recommendation")
         if rec:

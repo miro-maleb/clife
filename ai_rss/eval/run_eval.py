@@ -39,8 +39,10 @@ def _blob(stage: str, out) -> str:
     """The searchable text an output reduces to, per stage."""
     if out is None:
         return ""
-    if stage == "verify":
-        return f"{out.get('headline','')} {out.get('summary','')}"
+    if stage in ("verify", "write"):
+        # details carry the numbers and names in v2, so assertions must see them
+        return (f"{out.get('headline','')} {out.get('summary','')} "
+                + " ".join(out.get("details", [])))
     if stage == "recommend":
         return f"{out.get('verdict','')} " + " ".join(out.get("notes", []))
     if stage == "select":
@@ -117,6 +119,11 @@ def run_stage(cfg: dict, case: dict):
     if stage == "verify":
         cfg.setdefault("verify", {})["enabled"] = True
         return ai_rss.verify_story(cfg, inp["story"], inp["body"]), []
+    if stage == "write":
+        # The only stage that can silently drop a story (returns None on skip), so
+        # it needs both directions pinned: refuses a link post, keeps a real article.
+        return ai_rss.write_story(cfg, col["name"], inp["story"], inp["body"],
+                                  case.get("max_article_chars")), []
     if stage == "recommend":
         cfg.setdefault("recommend", {})["enabled"] = True
         # Optional: {url: article text}. Cases that supply it exercise the source-line
