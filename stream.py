@@ -815,13 +815,15 @@ def main(argv=None):
         got = apply_set(it, add_tags=add or None, rm_tags=rm or None)
 
         # Coming off the plate with nothing else on it makes the note UNTAGGED,
-        # which is not merely unfiled: `cl inbox --prune-noise` hard-deletes
-        # untagged notes it judges to be noise, and a just-finished errand
-        # reads exactly like noise. Say so rather than let it go quietly — the
-        # note is meant to go back through triage, not to evaporate.
+        # which is not merely unfiled: `cl inbox --prune-noise` feeds on
+        # untagged notes, and a just-finished errand reads a lot like noise.
+        # Since 2026-09-15 that takes a confident judgement against a rubric
+        # that explicitly protects errands, and the trash is restorable by
+        # name — so this is a "go back through triage", not a "it evaporated".
         if args.done and "tags" in got and not got["tags"]:
-            notes = list(notes) + ["now untagged — it will show in triage, and "
-                                   "`--prune-noise` can delete it from there"]
+            notes = list(notes) + ["now untagged — it will show in triage; "
+                                   "`--prune-noise` may bin it (recover with "
+                                   "`cl triage restore`)"]
         changed = ", ".join(f"{k}: {v or '(cleared)'}" for k, v in got.items())
         text = [f"  {it['title']}", f"  → {changed or 'nothing to change'}"]
         text += [f"  · {n}" for n in notes]

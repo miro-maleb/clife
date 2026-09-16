@@ -657,16 +657,22 @@ def prune_items():
     if not items:
         return {"items": []}
     valid = {it["file"] for it in items}
+    by_file = {it["file"]: it for it in items}
     out = []
     for s in ai.prune_inbox(items):
         f = (s.get("file") or "").strip().strip("[]").strip()
         if f not in valid:
             continue
+        src = by_file.get(f, {})
         out.append({
             "file": f,
             "noise": bool(s.get("noise")),
-            "confidence": s.get("confidence", 0),
+            "confidence": _as_float(s.get("confidence"), 0.0),
             "summary": (s.get("summary") or "")[:120],
+            # carried from the item, not the model: `from` was read off the
+            # judgement dict here and so was always "" in the trashed record.
+            "from": src.get("from", ""),
+            "source": src.get("source", ""),
         })
     return {"items": out}
 
@@ -674,33 +680,147 @@ def prune_items():
 TRASH = KB / ".trash"
 
 
-def _trash_file(file):
-    """Move to kb/.trash/ instead of deleting — recoverable until the AI filter is trusted."""
+def _trash_file(file, reason="manual"):
+    """Move to kb/.trash/ instead of deleting — recoverable until the AI filter is trusted.
+
+    Records the origin relpath in triage's `trashed` sidecar on the way out.
+    `cl triage restore` needs that record and refuses a file without one, so a
+    path that trashed without writing it produced files nothing could put back:
+    46 of 150 in .trash on 2026-09-15, every one of them from --prune-noise or
+    from `ni_route delete`. The record is written HERE, at the one chokepoint
+    all three callers share, rather than at each of them.
+    """
     TRASH.mkdir(parents=True, exist_ok=True)
     dest = TRASH / file.name
     if dest.exists():
         dest = TRASH / f"{file.stem}-{datetime.now().strftime('%H%M%S')}{file.suffix}"
+    try:
+        rel = str(file.relative_to(KB))
+    except ValueError:
+        rel = f"notes/{file.name}"
     file.rename(dest)
+    try:
+        import triage                      # lazy: triage imports inbox at module level
+        tr = triage.load_trashed()
+        tr[dest.name] = {"from": rel, "slug": file.stem, "reason": reason,
+                         "at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+        triage.save_slots(triage.load_slots(), tr)
+    except Exception:
+        pass                               # a failed record must not lose the file
     return dest
 
 
-def prune_noise(dry_run=False):
-    """AI spam-filter: move items flagged noise to trash (recoverable). Idempotent.
+# Two guards stand between a model's opinion and a deleted file. Both are here
+# because neither existed: `confidence` was computed by the judge, returned in
+# the payload, and then never read — a 0.15 hunch deleted exactly as hard as a
+# 0.97 certainty. And an untagged note was eligible the instant it was written,
+# so a capture you were still thinking about could be judged and binned before
+# you got back to it.
+PRUNE_MIN_CONFIDENCE = float(os.environ.get("CL_PRUNE_MIN_CONFIDENCE", "0.85"))
+PRUNE_MIN_AGE_HOURS = float(os.environ.get("CL_PRUNE_MIN_AGE_HOURS", "24"))
+
+TRASH_LOG = KB / "_state" / "trash-log.md"
+
+
+def _as_float(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _note_age_hours(f):
+    """Hours since the note was written. Frontmatter first, mtime as the floor.
+
+    `captured:` wins over `created:` where both exist, and `T` normalises to a
+    space — older notes carry `created: YYYY-MM-DDTHH:MM:SS` and sorting the two
+    formats together interleaves them by format rather than by time.
+    """
+    now = datetime.now()
+    try:
+        raw = f.read_text(errors="replace")[:400]
+    except OSError:
+        return 0.0
+    stamp = _fm_field(raw, "captured") or _fm_field(raw, "created")
+    if stamp:
+        v = stamp.replace("T", " ").strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return (now - datetime.strptime(v, fmt)).total_seconds() / 3600
+            except ValueError:
+                continue
+    try:
+        return (now.timestamp() - f.stat().st_mtime) / 3600
+    except OSError:
+        return 0.0
+
+
+def _log_trash(rows):
+    """Append what was eaten to a markdown ledger under _state/.
+
+    Not JSON, and not in notes/ — a ledger in the store would itself be an
+    untagged note and this function's own next run would be entitled to eat it.
+    The point of the ledger is that the filter becomes reviewable: until you can
+    read back what it took and why, trust never accrues and the honest advice
+    stays "be careful, it deletes things".
+    """
+    if not rows:
+        return
+    try:
+        TRASH_LOG.parent.mkdir(parents=True, exist_ok=True)
+        new = not TRASH_LOG.exists()
+        with TRASH_LOG.open("a", encoding="utf-8") as fh:
+            if new:
+                fh.write("# Trash log\n\nWritten by `cl inbox --prune-noise`. "
+                         "Restore any line with `cl triage restore <file>`.\n")
+            fh.write(f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+            for r in rows:
+                fh.write(f"- `{r['file']}` — conf {r['confidence']:.2f} — "
+                         f"{r.get('summary') or '(no summary)'}\n")
+    except OSError:
+        pass
+
+
+def prune_noise(dry_run=False, min_confidence=None, min_age_hours=None):
+    """AI spam-filter: move high-confidence noise to trash (recoverable). Idempotent.
 
     This is the auto-filter — "streams heavy, output light": run it after ingest so
     obvious spam never reaches the human. Trash keeps it recoverable while trust builds.
+
+    A note survives unless the judge says noise AND says so above the confidence
+    floor AND the note is older than the age floor. `skipped` reports every near
+    miss with its reason, so a run that takes nothing still tells you what it was
+    looking at — the previous version reported only a `kept` count, which is why
+    it read as arbitrary.
     """
-    trashed, kept = [], 0
+    floor = PRUNE_MIN_CONFIDENCE if min_confidence is None else float(min_confidence)
+    age_floor = PRUNE_MIN_AGE_HOURS if min_age_hours is None else float(min_age_hours)
+    trashed, skipped, kept = [], [], 0
     for it in prune_items().get("items", []):
         f = inbox_path / it["file"]
-        if it.get("noise") and f.exists():
-            if not dry_run:
-                _trash_file(f)
-            trashed.append({"file": it["file"], "from": it.get("from", ""),
-                            "summary": it.get("summary", "")})
-        else:
+        if not f.exists():
+            continue
+        conf = _as_float(it.get("confidence"), 0.0)
+        rec = {"file": it["file"], "from": it.get("from", ""),
+               "source": it.get("source", ""), "confidence": conf,
+               "summary": it.get("summary", "")}
+        if not it.get("noise"):
             kept += 1
-    return {"trashed": trashed, "kept": kept, "dry_run": dry_run}
+            continue
+        age = _note_age_hours(f)
+        if age < age_floor:
+            skipped.append({**rec, "why": f"too new ({age:.1f}h < {age_floor:g}h)"})
+            continue
+        if conf < floor:
+            skipped.append({**rec, "why": f"low confidence ({conf:.2f} < {floor:g})"})
+            continue
+        if not dry_run:
+            _trash_file(f, reason=f"prune-noise conf={conf:.2f}")
+        trashed.append(rec)
+    if not dry_run:
+        _log_trash(trashed)
+    return {"trashed": trashed, "skipped": skipped, "kept": kept,
+            "floor": floor, "age_floor": age_floor, "dry_run": dry_run}
 
 
 def ni_todo(file):
@@ -747,7 +867,7 @@ def ni_route(filename, dest, value="", area=""):
     if dest == "household":    return ni_shopping(file, "household")
     if dest == "improvement":  return ni_improvement(file)
     if dest == "skip":         return {"ok": True, "msg": "skipped"}
-    if dest == "delete":       _trash_file(file); return {"ok": True, "msg": "trashed"}
+    if dest == "delete":       _trash_file(file, reason="route delete"); return {"ok": True, "msg": "trashed"}
     if dest == "task":         return ni_task(file, value)
     if dest == "project":      return ni_paste_project(file, value)
     if dest == "newproject":   return ni_new_project(file, value, area)
@@ -784,8 +904,12 @@ def main():
     parser.add_argument("--prune", action="store_true",
                         help="AI coarse-prune: flag noise + summarize, as JSON (routing stays human)")
     parser.add_argument("--prune-noise", action="store_true",
-                        help="AI spam-filter: move noise items to trash (recoverable); emits JSON")
+                        help="AI spam-filter: move high-confidence noise to trash (recoverable); emits JSON")
     parser.add_argument("--dry-run", action="store_true", help="with --prune-noise: preview only")
+    parser.add_argument("--min-confidence", type=float, default=None,
+                        help=f"with --prune-noise: judge confidence floor (default {PRUNE_MIN_CONFIDENCE:g})")
+    parser.add_argument("--min-age-hours", type=float, default=None,
+                        help=f"with --prune-noise: never touch notes newer than this (default {PRUNE_MIN_AGE_HOURS:g}h)")
     parser.add_argument("--route", nargs=2, metavar=("FILE", "DEST"),
                         help="non-interactively route FILE to DEST; emits JSON")
     parser.add_argument("--value", default="", help="selection for picker routes (project/calendar/target/name)")
@@ -808,7 +932,9 @@ def main():
         print(json.dumps(prune_items()))
         return
     if getattr(args, "prune_noise", False):
-        print(json.dumps(prune_noise(dry_run=args.dry_run)))
+        print(json.dumps(prune_noise(dry_run=args.dry_run,
+                                     min_confidence=args.min_confidence,
+                                     min_age_hours=args.min_age_hours)))
         return
     if args.route:
         filename, dest = args.route

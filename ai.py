@@ -38,10 +38,17 @@ def prune_inbox(items):
             parts.append(f'subject: {it["subject"]}')
         parts.append(it["text"][:500])
         return " | ".join(parts)
-    listing = "\n".join(f'{i+1}. [{it["file"]}] {blob(it)}' for i, it in enumerate(items))
+    def kind(it):
+        return "EMAIL" if (it.get("source") == "email" or it.get("from")) else "NOTE"
+
+    listing = "\n".join(f'{i+1}. <{kind(it)}> [{it["file"]}] {blob(it)}'
+                        for i, it in enumerate(items))
     prompt = f"""
 You help triage a personal inbox. A HUMAN does all the routing — do NOT route,
-categorize, or guess where an item should go. Two jobs per item:
+categorize, or guess where an item should go. Three jobs per item:
+
+Every item is tagged <EMAIL> or <NOTE>. They get DIFFERENT noise rules, because
+they arrive by different doors. Read the tag first.
 
 1. summary: what the item is ACTUALLY about, plain words, <= 10 words, identifiable at a glance.
    - Read the whole body and say what it's about. NEVER answer with just a brand or logo
@@ -49,10 +56,32 @@ categorize, or guess where an item should go. Two jobs per item:
    - Ignore logo lines, sender addresses, greetings ("Hello Miro"), and links.
    - For a short personal note/task: the text itself is usually already the summary — keep it.
 
-2. noise: true if it's promotional / automated / a notification / a marketing, policy, or
-   security email / a receipt / a newsletter — anything from a company with no personal action.
-   Be DECISIVE: obvious company or automated emails are noise=true with high confidence.
-   false only for things the user personally wrote or that need the user's action.
+2. noise — the rule depends on the tag.
+
+   <EMAIL>: noise=true for promotional / automated / notification / marketing,
+   policy or security mail / receipts / newsletters — anything from a company
+   with no personal action. Be DECISIVE here; obvious company or automated mail
+   is noise=true with high confidence.
+
+   <NOTE>: a human sat down and typed this. The bar is MUCH higher and the
+   default is false. noise=true ONLY when the item contains no content at all:
+   a stray keystroke ("j", "asdf"), an empty or unfilled template, an obvious
+   test artifact ("test-capture"). Nothing else qualifies.
+
+   For a <NOTE>, these are NOT noise, however thin they look:
+   - a bare task or errand ("make budget", "call the plumber")
+   - a shopping or household list, even an empty-looking one with a heading
+   - a name, a number, a URL, a book title, a single line of a half-thought
+   - a generated report or daily brief that simply has not been tagged yet
+   - anything about practice, people, health, money or writing
+   Short is not noise. Cryptic is not noise. Untagged is not noise — it only
+   means the human has not yet decided where it belongs.
+
+3. confidence: 0.0-1.0, and it is a REAL GATE, not decoration. Anything you
+   mark noise below the caller's floor is kept. Give a high number only when
+   you would be comfortable with the item being deleted on the strength of it.
+   When you are unsure, say so with a low number rather than by flipping noise
+   to false — the low number is the useful signal.
 
 Items:
 {listing}
