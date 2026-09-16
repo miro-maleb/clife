@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
-"""kb-lint — deterministic health sweep over ~/kb. Report-only; never edits a note.
+"""kb-lint — health sweep over ~/kb. Report-only; never edits a note.
 
-Layer 1 (this file): no LLM, so nothing here can hallucinate. It reports only what is
-mechanically true — a link points at nothing, a deadline has passed. That is the whole
-design: the checks that can't be wrong ship first, and a contradiction/stale-claim pass
-(Layer 2, LLM) can layer on later without ever touching these. See
-~/kb/notes/ideas/overnight-local-ai-jobs.md.
+Written against the FLAT kb: one store, ~/kb/notes, placed by frontmatter tags
+(flattened 2026-09-07). The version before this scoped everything by directory,
+and after the flatten that failed quietly on every check at once — the deadline
+check looked for `project.md` files that no longer exist and reported 0 forever,
+the contradiction pass saw a single "folder" holding every note and read its
+first six alphabetically, and the stale pass read journals and letters as status
+reports because the paths that used to exclude them were gone. So scoping here is
+by TAG, and tag questions are asked of `stream`, never of hand-walked frontmatter.
 
-Checks:
-  broken-link       a [[wikilink]] resolving to no file/folder in the vault
-    · unresolved-concept   a broken target referenced >=2x — probably a note worth
-                           creating, not a typo (Karpathy's "system emits its own todo")
-  overdue-deadline  an active/on-hold project.md whose `deadline:` is in the past
+Layer 1 — deterministic, no LLM, so nothing in it can hallucinate:
+  shard              a subdirectory inside notes/ — something composing a path
+  broken-link        a [[wikilink]] naming no file in the kb, split by what to DO:
+    · dissolved-dir       a path-style link whose note still exists under a flat
+                          name — the flatten moved the note, the link kept the path
+    · memory-slug         names one of Claude's memory files: a Claude-written note
+                          linking its own memory. Nothing to create.
+    · unresolved-concept  referenced >=2x — probably a note worth writing
+                          (Karpathy's "system emits its own todo")
+  overdue-deadline   any note whose `deadline:` has passed and `status:` isn't closed
+  tag-drift          two tags in use that stream's own tag guard calls one idea
+  transcription      a page "originally written by hand" with no `written:` date
+
+Layer 2 — `--deep`, the local model; every item is for review, not trust:
+  stale claims       per note, claim-bearing notes only (records excluded by tag)
+  contradictions     within a tag's notes, each adversarially verified
 
 Deliberately NOT here, and why:
-  orphans      — this kb isn't a zettelkasten; ~85% of files (recipes, logs, weeks,
-                 inbox, agent configs) aren't meant to be linked, so orphan reports
-                 would be noise. Would need tight scoping to be useful.
-  stale review — Surface's Projects tab already flags projects unreviewed in 14d;
-                 no point duplicating the nag here.
+  orphans   — most of the store (journal, recipes, captures) is not meant to be
+              linked; an orphan report would be noise.
+  untagged  — that is the inbox VIEW (`cl stream inbox`, triage), not a defect.
+  frontmatter schema — `cl lint` owns it.
+  Wikilinks inside `code` or fenced blocks are text, not links, and are skipped.
 
-Resolution note: with no folder-note plugin, Obsidian technically sees [[hearth]] (a
-folder, no hearth.md) as unresolved — but it's intentional. So a directory-name match
-counts as resolved; otherwise 24 intentional [[hearth]] links would drown the one real
-signal ([[calm-interface]], referenced but never written).
-
-    kb_lint.py                 # scan, write ~/kb/log/_lint/latest.md + dated, print summary
+    kb_lint.py                 # scan, write ~/kb/_lint/latest.md + dated, print summary
     kb_lint.py --stdout        # print the report, don't write it
+    kb_lint.py --deep          # add Layer 2 (the weekly timer runs this)
 """
 from __future__ import annotations
 
@@ -39,9 +49,13 @@ import sys
 from pathlib import Path
 
 import requests
-import yaml
 
-KB = Path(os.path.expanduser("~/kb"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # the clife root
+import fm        # noqa: E402
+import stream    # noqa: E402
+from paths import KB, STORE   # noqa: E402
+
+# Surface's /reports serves this directory by name — don't move it.
 LINT_DIR = KB / "_lint"
 
 # ── Layer 2 (LLM) config ──────────────────────────────────────────────────────
@@ -59,141 +73,216 @@ LINT_DIR = KB / "_lint"
 # Build those (a note pair that genuinely contradicts, one that only looks like it
 # does) before touching this line.
 OLLAMA_HOST = os.environ.get("KB_LINT_OLLAMA", "http://127.0.0.1:11434")
-MODEL = os.environ.get("KB_LINT_MODEL", "qwen3.6:27b")
-NUM_CTX = 16384
+MODEL = os.environ.get("KB_LINT_MODEL", "qwen3.8-112k")
+# No NUM_CTX. This job ran 17GB of its own beside the pinned resident because
+# ollama keys a loaded model by (name, context) — asking for a different one
+# forces a full unload/reload. The tag carries 112k; reuse what is already up.
 
-# Only these top-level dirs hold standing CLAIMS that can go stale or contradict.
-# Logs are timestamped records (not claims), recipes/shopping/weeks/inbox are not
-# assertions, archive is frozen, agent configs aren't prose. Feeding them the LLM
-# would be cost with no signal — the same "scope tightly or drown in noise" lesson.
-CLAIM_DIRS = {"projects", "ideas", "notes", "systems", "orientations", "goals"}
+# A note carrying any of these is a RECORD or a piece of writing, not a standing
+# claim: a journal entry, a poem, a letter, a recipe, a blog post, a book's notes.
+# These used to be excluded by path (log/, drafts/, recipes/). With one directory the
+# path says nothing, and the first flat run flagged a personal letter as
+# stale status. Matched hierarchically: `writing` covers `writing/letter`. Daily
+# notes and transcriptions (`written:`) are records by construction and excluded too.
+RECORD_TAGS = {"journal", "writing", "poem", "recipe", "archive", "blog", "book",
+               "shopping", "teaching-story"}
 MIN_CLAIM_CHARS = 200          # a stub too short to hold a stale claim
 DOC_TRUNC = 8000               # per-doc text fed to the stale pass
 CLUSTER_DOC_TRUNC = 3500       # per-doc excerpt in a contradiction cluster
-CLUSTER_MAX_DOCS = 6           # biggest folder we'll feed at once
+CLUSTER_MAX_DOCS = 6           # biggest tag group fed at once
 
-# Dirs whose contents we neither scan nor count as link targets. `_lint` is our own
-# output (don't lint the linter); `oil:` is an oil.nvim accident (untracked cruft);
-# templates carry intentional placeholder links; archive is frozen history.
-SKIP_DIRS = {".git", ".obsidian", "_lint", "oil:", "templates", "archive"}
+# A deadline on a note in one of these states is history, not a debt.
+CLOSED_STATUSES = {"done", "dropped", "cut", "superseded", "archived", "abandoned",
+                   "parked"}
+
+# Neither scanned nor counted as link targets. `_lint` is our own output; `outbox`
+# and `_state` are generated; `.trash` is prune-noise's bin and `recovery` a rescue
+# copy; templates carry intentional placeholder links; `oil:` is an oil.nvim accident.
+SKIP_DIRS = {".git", ".obsidian", "_lint", "oil:", "templates", "outbox", "_state",
+             ".trash", "recovery", "log"}
+
+# Claude's memory files. Claude-written notes link them as [[slug]], which renders
+# like any wikilink and names nothing in the kb. No directory (another machine) just
+# means nothing gets this label.
+MEMORY_DIR = (Path.home() / ".claude" / "projects"
+              / str(Path.home()).replace("/", "-") / "memory")
 
 WIKILINK = re.compile(r"!?\[\[([^\]]+)\]\]")
-# Non-note link targets that legitimately exist as files in the vault.
-KNOWN_EXTS = (".md", ".canvas", ".base", ".excalidraw", ".png", ".jpg", ".pdf")
-
-STALE_PROJECT_STATUSES = {"active", "on-hold"}
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_CODESPAN = re.compile(r"`[^`\n]*`")
 
 
 def _skip(rel: Path) -> bool:
     return any(part in SKIP_DIRS for part in rel.parts)
 
 
-# ── build the resolution index ────────────────────────────────────────────────
-def build_index() -> tuple[set[str], set[str]]:
-    """Return (resolvable_names, rel_paths). A wikilink resolves if its target hits
-    either: a name (file basename in several ext-stripped forms, or a directory name),
-    or a vault-relative path (for path-style links like [[drafts/march-2026]])."""
+def _md_files():
+    for md in sorted(KB.rglob("*.md")):
+        if not _skip(md.relative_to(KB)):
+            yield md
+
+
+def _body(md: Path, limit: int) -> str:
+    """Note text minus its frontmatter, truncated."""
+    _, body, _ = fm.split(md)
+    return body.strip()[:limit]
+
+
+# ── links ─────────────────────────────────────────────────────────────────────
+def build_index() -> set[str]:
+    """Every name a wikilink can resolve to, lowercased. The store is flat, so a
+    link resolves by NAME — its last path segment — and any directory part is
+    decoration at best."""
     names: set[str] = set()
-    rel_paths: set[str] = set()
     for root, dirs, files in os.walk(KB):
-        rootp = Path(root)
-        rel_root = rootp.relative_to(KB)
-        # prune skipped dirs in-place so os.walk doesn't descend
+        rel_root = Path(root).relative_to(KB)
         dirs[:] = [d for d in dirs if not _skip(rel_root / d)]
-        if _skip(rel_root) and rel_root != Path("."):
-            continue
-        for d in dirs:
-            names.add(d)                                   # folder-note targets
         for f in files:
-            names.add(f)                                   # exact filename incl ext
-            stem_md = f[:-3] if f.endswith(".md") else f   # drop trailing .md
-            names.add(stem_md)
-            names.add(f.split(".")[0])                     # pure stem (hearth-map.excalidraw.md -> hearth-map)
-            rel = (rel_root / f) if rel_root != Path(".") else Path(f)
-            rel_paths.add(str(rel))
-            if f.endswith(".md"):
-                rel_paths.add(str(rel)[:-3])               # path without .md
-    return names, rel_paths
+            f = f.lower()
+            names.add(f)
+            names.add(f.removesuffix(".md"))
+            names.add(f.split(".")[0])          # hearth-map.excalidraw.md -> hearth-map
+    return names
 
 
-def resolves(target: str, names: set[str], rel_paths: set[str]) -> bool:
-    t = target.split("|")[0]                # drop display alias
-    t = t.split("#")[0].strip()             # drop heading/block anchor
-    t = t.lstrip("./").strip()
-    if not t:                               # pure same-file #anchor
-        return True
-    last = t.split("/")[-1]
-    cands = {t, last, last[:-3] if last.endswith(".md") else last, last.split(".")[0]}
-    if cands & names:
-        return True
-    # path-style: literal relative path, with or without .md, and adding a default ext
-    if t in rel_paths or f"{t}.md" in rel_paths:
-        return True
-    if last.endswith(KNOWN_EXTS) and (t in rel_paths):
-        return True
-    return False
+def _target(raw: str) -> str:
+    t = raw.split("|")[0].split("#")[0].strip()
+    while t.startswith(("./", "../")):
+        t = t.split("/", 1)[1]
+    return t
 
 
-# ── checks ────────────────────────────────────────────────────────────────────
-def scan_links(names: set[str], rel_paths: set[str]) -> dict[str, list[tuple]]:
-    """Return {broken_target: [(file, line, raw), ...]} across the vault."""
+def resolves(t: str, names: set[str]) -> bool:
+    if not t:                                   # a pure same-file #anchor
+        return True
+    last = t.split("/")[-1].lower()
+    return bool({last, last.removesuffix(".md"), last.split(".")[0]} & names)
+
+
+def scan_links(names: set[str]) -> dict[str, list[tuple]]:
+    """{broken_target: [(file, line, raw), ...]}. Code is masked first: a
+    `[[ -f ]]` shell guard or a backticked `[[slug]]` is quoted text, and
+    rendering does not make it a link either."""
     broken: dict[str, list[tuple]] = {}
-    for md in KB.rglob("*.md"):
-        rel = md.relative_to(KB)
-        if _skip(rel):
-            continue
+    for md in _md_files():
+        rel = str(md.relative_to(KB))
         try:
             lines = md.read_text(errors="replace").splitlines()
         except OSError:
             continue
+        fenced = False
         for i, line in enumerate(lines, 1):
-            for m in WIKILINK.finditer(line):
-                target = m.group(1)
-                if not resolves(target, names, rel_paths):
-                    key = target.split("|")[0].split("#")[0].strip().lstrip("./")
-                    broken.setdefault(key, []).append((str(rel), i, m.group(0)))
+            if _FENCE.match(line):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
+            for m in WIKILINK.finditer(_CODESPAN.sub("", line)):
+                t = _target(m.group(1))
+                if not resolves(t, names):
+                    broken.setdefault(t, []).append((rel, i, m.group(0)))
     return broken
 
 
-def _frontmatter(md: Path) -> dict | None:
-    try:
-        text = md.read_text(errors="replace")
-    except OSError:
-        return None
-    if not text.startswith("---"):
-        return None
-    end = text.find("\n---", 3)
-    if end < 0:
-        return None
-    try:
-        data = yaml.safe_load(text[3:end])
-        return data if isinstance(data, dict) else None
-    except yaml.YAMLError:
-        return None
+def dissolved(t: str, stems: set[str]) -> tuple[bool, str | None]:
+    """For a path-style target: (is its directory gone, the flat note it meant).
+
+    Gone means gone from disk — `outbox/ai-rss/latest` points into a directory that
+    still exists, and the ai-rss NOTE is not what it wanted, so it gets no hint.
+    For a dissolved path the note is usually named by a segment —
+    projects/personal-tasks/project meant personal-tasks — and only a segment that
+    IS a note now counts: the suggestion is a file that exists, never a guess."""
+    parts = t.split("/")
+    if len(parts) < 2 or (KB / "/".join(parts[:-1])).is_dir():
+        return False, None
+    for seg in reversed(parts[:-1]):
+        if seg.lower() in stems:
+            return True, seg
+    return True, None
 
 
-def scan_deadlines(today: dt.date) -> list[tuple]:
-    """Active/on-hold project.md files with a deadline in the past."""
+def _memory_slugs() -> set[str]:
+    if not MEMORY_DIR.is_dir():
+        return set()
+    return {p.stem.lower() for p in MEMORY_DIR.glob("*.md") if p.name != "MEMORY.md"}
+
+
+# ── store checks ──────────────────────────────────────────────────────────────
+def scan_shards() -> list[tuple[str, int]]:
+    """Directories inside the flat store. Three components rebuilt notes/2026/09/
+    within an hour of the flatten because mkdir(parents=True) never errors; a
+    directory here is the same class of bug, and nothing else will notice it."""
+    if not STORE.is_dir():
+        return []
+    return sorted((str(d.relative_to(KB)), sum(1 for _ in d.rglob("*.md")))
+                  for d in STORE.iterdir() if d.is_dir() and not d.name.startswith("."))
+
+
+def scan_deadlines(items: list[dict], today: dt.date) -> list[tuple]:
+    """Any note with a past `deadline:` whose `status:` is not closed. A project is a
+    note tagged projects/<name> now, so there is no project.md to look for."""
     overdue = []
-    for md in KB.rglob("project.md"):
-        rel = md.relative_to(KB)
-        if _skip(rel):
+    for it in items:
+        if "archive" in it["tags"]:
             continue
-        fm = _frontmatter(md)
-        if not fm or fm.get("status") not in STALE_PROJECT_STATUSES:
+        meta = fm.read(Path(it["path"]))
+        raw = str(meta.get("deadline") or "").split("#")[0].strip()
+        if not raw:
             continue
-        dl = fm.get("deadline")
-        if isinstance(dl, dt.date) and dl < today:
-            overdue.append((str(rel), dl, fm.get("status"), (today - dl).days))
-        elif isinstance(dl, str) and dl.strip():
-            try:
-                d = dt.date.fromisoformat(dl.strip())
-                if d < today:
-                    overdue.append((str(rel), d, fm.get("status"), (today - d).days))
-            except ValueError:
-                pass
-    overdue.sort(key=lambda x: -x[3])
-    return overdue
+        status = str(meta.get("status") or "").split("#")[0].strip().lower()
+        if status in CLOSED_STATUSES:
+            continue
+        try:
+            d = dt.date.fromisoformat(raw)
+        except ValueError:
+            continue
+        if d < today:
+            overdue.append((it["relpath"], d, status or "no status", (today - d).days))
+    return sorted(overdue, key=lambda x: -x[3])
+
+
+def scan_tag_drift(vocab: dict) -> list[tuple]:
+    """Pairs of tags in use that stream's tag guard would refuse to let coexist —
+    the same check a capture door runs before minting a tag, run over the
+    vocabulary as it stands. A pair here got past the guard by another door: a
+    hand edit, a typo in frontmatter, a note older than the guard.
+
+    Returns (smaller, n, larger, n); on a tie the nested spelling is the larger,
+    since a hierarchy is what the vocabulary is converging on."""
+    pairs: dict[frozenset, tuple] = {}
+    for t in vocab:
+        others = {k: n for k, n in vocab.items() if k != t}
+        c = stream.classify_tag(t, others)
+        if c["verdict"] not in ("variant", "near"):
+            continue
+        for k in c["candidates"]:
+            if k.startswith(t + "/") or t.startswith(k + "/"):
+                continue                    # parent and child: the hierarchy working
+            if k == "projects/" + t or t == "projects/" + k:
+                continue                    # a project's tag beside its topic, by design
+            pairs.setdefault(frozenset((t, k)), (t, k))
+    out = []
+    for a, b in pairs.values():
+        big, small = sorted((a, b), key=lambda x: (vocab[x], x.count("/"), x),
+                            reverse=True)
+        out.append((small, vocab[small], big, vocab[big]))
+    return sorted(out)
+
+
+def scan_transcriptions(items: list[dict]) -> list[str]:
+    """Pages marked as transcribed that carry no parseable `written:` date. Until
+    they do, `cl stream chrono` files them under the day they were typed."""
+    out = []
+    for it in items:
+        if it["written"]:
+            continue
+        try:
+            head = _body(Path(it["path"]), 400).splitlines()[:5]
+        except OSError:
+            continue
+        if any(stream._PROVENANCE.match(line.strip()) for line in head):
+            out.append(it["relpath"])
+    return sorted(out)
 
 
 # ── Layer 2: LLM passes (the --deep sweep) ────────────────────────────────────
@@ -216,7 +305,7 @@ def _llm(system: str, user: str, temperature: float = 0.2) -> str:
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "stream": False, "think": False, "format": "json",
-        "options": {"temperature": temperature, "num_ctx": NUM_CTX},
+        "options": {"temperature": temperature},
     }
     r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=600)
     r.raise_for_status()
@@ -224,37 +313,27 @@ def _llm(system: str, user: str, temperature: float = 0.2) -> str:
     return re.sub(r"<think>.*?</think>", "", c, flags=re.DOTALL).strip()
 
 
-def _claim_files() -> list[Path]:
+def _is_record(it: dict) -> bool:
+    return (bool(stream._DAILY.match(it["slug"])) or bool(it["written"])
+            or any(t == r or t.startswith(r + "/")
+                   for t in it["tags"] for r in RECORD_TAGS))
+
+
+def _claim_notes(items: list[dict]) -> list[dict]:
     """Substantive, claim-bearing notes only — the LLM's scope."""
     out = []
-    for md in KB.rglob("*.md"):
-        rel = md.relative_to(KB)
-        if _skip(rel) or rel.parts[0] not in CLAIM_DIRS:
-            continue
-        # Blog/journal drafts are creative writing in narrative present tense, not
-        # status claims — flagging "I'm renting a room in the Catskills" as stale is
-        # a category error. Skip any drafts/ folder.
-        if "drafts" in rel.parts or md.name.endswith(".excalidraw.md"):
+    for it in items:
+        if _is_record(it) or it["path"].endswith(".excalidraw.md"):
             continue
         try:
-            if len(md.read_text(errors="replace")) >= MIN_CLAIM_CHARS:
-                out.append(md)
+            if len(_body(Path(it["path"]), MIN_CLAIM_CHARS)) >= MIN_CLAIM_CHARS:
+                out.append(it)
         except OSError:
             pass
     return out
 
 
-def _body(md: Path, limit: int) -> str:
-    """Note text minus its frontmatter, truncated."""
-    t = md.read_text(errors="replace")
-    if t.startswith("---"):
-        end = t.find("\n---", 3)
-        if end >= 0:
-            t = t[end + 4:]
-    return t.strip()[:limit]
-
-
-def stale_pass(files: list[Path], today: dt.date, log=lambda s: None) -> list[dict]:
+def stale_pass(notes: list[dict], today: dt.date, log=lambda s: None) -> list[dict]:
     """Per-doc: flag time-bound claims that today has probably overtaken. O(n), no
     pairing. Conservative by construction — most notes have zero."""
     system = (
@@ -272,40 +351,45 @@ def stale_pass(files: list[Path], today: dt.date, log=lambda s: None) -> list[di
         "an empty list is the common, correct answer. Never invent. Reply ONLY as JSON."
     )
     out = []
-    for md in files:
-        rel = str(md.relative_to(KB))
-        fm = _frontmatter(md) or {}
-        date = fm.get("created") or fm.get("updated") or "unknown"
+    for it in notes:
+        rel = it["relpath"]
+        date = it["written"] or it["created"] or "unknown"
         user = (f"Note: {rel}\nWritten: {date}\nToday: {today.isoformat()}\n\n"
-                f"{_body(md, DOC_TRUNC)}\n\n"
+                f"{_body(Path(it['path']), DOC_TRUNC)}\n\n"
                 'Return JSON: {"stale": [{"claim": "<short quote>", "why": "<one line>"}]}')
         try:
-            items = [i for i in _json_list(_llm(system, user), "stale")
+            found = [i for i in _json_list(_llm(system, user), "stale")
                      if isinstance(i, dict) and i.get("claim")]
         except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
             log(f"  stale skip {rel}: {e}")
             continue
-        if items:
-            log(f"  {rel}: {len(items)} stale")
-            out.append({"file": rel, "items": items})
+        if found:
+            log(f"  {rel}: {len(found)} stale")
+            out.append({"file": rel, "items": found})
     return out
 
 
-def _clusters(files: list[Path]) -> list[tuple[str, list[Path]]]:
-    """Group claim-bearing files by their immediate parent dir — a project + its
-    sub-projects/notes is the tightest topical unit and the likeliest place for an
-    internal contradiction. Only folders with 2+ files, capped in size."""
-    by_dir: dict[str, list[Path]] = {}
-    for md in files:
-        by_dir.setdefault(str(md.parent.relative_to(KB)), []).append(md)
-    return [(d, fs[:CLUSTER_MAX_DOCS]) for d, fs in sorted(by_dir.items())
-            if len(fs) >= 2]
+def _clusters(notes: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Claim notes grouped by TAG, the flat store's topical unit. Smallest groups
+    first: a specific tag is the likeliest place for two notes to state one fact two
+    ways. A big tag is capped to its newest notes, since a contradiction is usually a
+    recent note overtaking an older one."""
+    by_tag: dict[str, list[dict]] = {}
+    for it in notes:
+        for t in it["tags"]:
+            by_tag.setdefault(t, []).append(it)
+    groups = []
+    for t, its in sorted(by_tag.items(), key=lambda kv: (len(kv[1]), kv[0])):
+        if len(its) >= 2:
+            newest = sorted(its, key=lambda i: i["created"] or "", reverse=True)
+            groups.append((t, newest[:CLUSTER_MAX_DOCS]))
+    return groups
 
 
-def contradiction_pass(files: list[Path], log=lambda s: None) -> list[dict]:
-    """Within each project-folder cluster, ask for factual contradictions, then
-    adversarially VERIFY each before reporting — the ai-rss fact-check lesson: a fresh
-    skeptic told to default to 'not a contradiction' kills the plausible-but-wrong ones."""
+def contradiction_pass(notes: list[dict], log=lambda s: None) -> list[dict]:
+    """Within each tag cluster, ask for factual contradictions, then adversarially
+    VERIFY each before reporting — the ai-rss fact-check lesson: a fresh skeptic
+    told to default to 'not a contradiction' kills the plausible-but-wrong ones."""
     find_sys = (
         "You find CONTRADICTIONS across a person's related notes: two places asserting "
         "incompatible FACTS about the same thing (status, decision, number, name, date). "
@@ -319,21 +403,25 @@ def contradiction_pass(files: list[Path], log=lambda s: None) -> list[dict]:
         "cannot both be true now. Superseded-over-time, different scope, or vagueness = not a "
         "contradiction. Reply ONLY as JSON."
     )
-    out = []
-    for d, group in _clusters(files):
-        blob = "\n\n".join(f"=== {md.name} ===\n{_body(md, CLUSTER_DOC_TRUNC)}"
-                           for md in group)
-        user = (f"Folder: {d}\nNotes:\n\n{blob}\n\n"
+    out, seen = [], set()
+    for tag, group in _clusters(notes):
+        blob = "\n\n".join(f"=== {it['slug']} ===\n{_body(Path(it['path']), CLUSTER_DOC_TRUNC)}"
+                           for it in group)
+        user = (f"Notes sharing the tag #{tag}:\n\n{blob}\n\n"
                 'Return JSON: {"conflicts": [{"a": "<quote from one note>", '
                 '"b": "<quote from another>", "issue": "<one line>"}]}')
         try:
             found = _json_list(_llm(find_sys, user), "conflicts")
         except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
-            log(f"  contra skip {d}: {e}")
+            log(f"  contra skip #{tag}: {e}")
             continue
         for c in found:
             if not (isinstance(c, dict) and c.get("a") and c.get("b")):
                 continue
+            key = frozenset((c["a"], c["b"]))      # one note pair can share several tags
+            if key in seen:
+                continue
+            seen.add(key)
             vuser = (f"Note A says: {c['a']}\nNote B says: {c['b']}\n"
                      f"Claimed issue: {c.get('issue','')}\n\n"
                      'Return JSON: {"real": <true|false>, "why": "<one line>"}')
@@ -342,16 +430,31 @@ def contradiction_pass(files: list[Path], log=lambda s: None) -> list[dict]:
             except (requests.RequestException, json.JSONDecodeError, ValueError):
                 continue
             if isinstance(v, dict) and v.get("real"):
-                log(f"  {d}: contradiction confirmed")
-                out.append({"folder": d, **c, "why": v.get("why", "")})
+                log(f"  #{tag}: contradiction confirmed")
+                out.append({"tag": tag, **c, "why": v.get("why", "")})
     return out
 
 
 # ── report ────────────────────────────────────────────────────────────────────
-def render(broken: dict, overdue: list, today: dt.date,
+def _refs(refs: list[tuple], cap: int = 6) -> str:
+    s = ", ".join(f"`{f}:{ln}`" for f, ln, _ in refs[:cap])
+    return s + (f" +{len(refs) - cap} more" if len(refs) > cap else "")
+
+
+def render(r: dict, today: dt.date,
            stale: list | None = None, contradictions: list | None = None) -> str:
-    concepts = {k: v for k, v in broken.items() if len(v) >= 2}
-    typos = {k: v for k, v in broken.items() if len(v) == 1}
+    broken = r["broken"]
+    memory, moved, concepts, typos = {}, {}, {}, {}
+    for t, refs in broken.items():
+        gone, hint = dissolved(t, r["stems"])
+        if t.split("/")[-1].lower() in r["memory"]:
+            memory[t] = refs
+        elif gone:
+            moved[t] = (refs, hint)
+        elif len(refs) >= 2:
+            concepts[t] = refs
+        else:
+            typos[t] = refs
     total_broken = sum(len(v) for v in broken.values())
     deep = stale is not None or contradictions is not None
     stale = stale or []
@@ -362,27 +465,72 @@ def render(broken: dict, overdue: list, today: dt.date,
          "*Report only — nothing was changed."
          + (" Deep pass (local qwen) ran.*\n" if deep else " Deterministic, no AI.*\n"),
          "## Summary\n",
-         f"- **{total_broken}** broken wikilink(s) across **{len(broken)}** distinct target(s)",
-         f"- **{len(concepts)}** unresolved concept(s) (referenced 2+ times — worth a note?)",
-         f"- **{len(overdue)}** overdue project deadline(s)"]
+         f"- **{len(r['shards'])}** shard director(ies) inside `notes/`",
+         f"- **{total_broken}** broken wikilink(s) across **{len(broken)}** target(s): "
+         f"**{len(concepts)}** unresolved concept(s), **{len(moved)}** into dissolved "
+         f"directories, **{len(memory)}** to Claude's memory, **{len(typos)}** one-off(s)",
+         f"- **{len(r['overdue'])}** overdue deadline(s)",
+         f"- **{len(r['drift'])}** tag pair(s) naming one idea",
+         f"- **{len(r['transcriptions'])}** transcription(s) without `written:`"]
     if deep:
-        p.append(f"- **{stale_n}** possible stale claim(s) · "
-                 f"**{len(contradictions)}** verified contradiction(s) *(AI, review each)*")
+        p.append(f"- **{stale_n}** possible stale claim(s) in {r['claim_n']} claim-bearing "
+                 f"notes · **{len(contradictions)}** verified contradiction(s) "
+                 "*(AI, review each)*")
     p.append("")
+
+    if r["shards"]:
+        p.append("## Shards inside notes/ — fix first\n")
+        p.append("*The store is flat. A directory here means something composed a path "
+                 "instead of calling `kb-inbox` or importing `paths.STORE`.*\n")
+        for d, n in r["shards"]:
+            p.append(f"- `{d}/` — {n} note(s)")
+        p.append("")
+
+    if r["overdue"]:
+        p.append("## Overdue deadlines\n")
+        for f, d, status, days in r["overdue"]:
+            p.append(f"- **{d.isoformat()}** ({days}d ago, `{status}`) — `{f}`")
+        p.append("")
+
+    if r["drift"]:
+        p.append("## Tag drift — one idea, two tags\n")
+        p.append("*Pairs the tag guard would refuse today. If they do mean the same "
+                 "thing, `cl stream retag <old> <new>` merges them (dry run first).*\n")
+        for small, ns, big, nb in r["drift"]:
+            p.append(f"- `#{small}` ({ns}) ↔ `#{big}` ({nb})")
+        p.append("")
+
+    if r["transcriptions"]:
+        p.append("## Transcriptions without `written:`\n")
+        p.append("*They sort under the day they were typed until they carry the date "
+                 "they were written.*\n")
+        for f in r["transcriptions"]:
+            p.append(f"- `{f}`")
+        p.append("")
 
     if concepts:
         p.append("## Unresolved concepts — referenced but never written")
         p.append("*A link you lean on with no home. Create the note, or fix the name.*\n")
-        for tgt, refs in sorted(concepts.items(), key=lambda x: -len(x[1])):
-            p.append(f"### `[[{tgt}]]` — {len(refs)} references")
-            for f, ln, _ in refs:
-                p.append(f"- `{f}:{ln}`")
-            p.append("")
+        for tgt, refs in sorted(concepts.items(), key=lambda x: (-len(x[1]), x[0])):
+            p.append(f"- `[[{tgt}]]` — {len(refs)}×: {_refs(refs)}")
+        p.append("")
 
-    if overdue:
-        p.append("## Overdue project deadlines\n")
-        for f, d, status, days in overdue:
-            p.append(f"- **{d.isoformat()}** ({days}d ago, `{status}`) — `{f}`")
+    if moved:
+        p.append("## Links into dissolved directories\n")
+        p.append("*The link kept a path the flatten removed. Where a segment still "
+                 "names a note, that note is the suggestion; otherwise nothing by that "
+                 "name survived.*\n")
+        for tgt, (refs, hint) in sorted(moved.items()):
+            to = f"→ `[[{hint}]]`" if hint else "→ *no note by that name*"
+            p.append(f"- `[[{tgt}]]` {to} — {_refs(refs)}")
+        p.append("")
+
+    if memory:
+        p.append("## Links to Claude's memory, not the kb\n")
+        p.append("*A Claude-written note linking one of its own memory files. Nothing "
+                 "to create — unlink it, or put the fact in the note.*\n")
+        for tgt, refs in sorted(memory.items(), key=lambda x: (-len(x[1]), x[0])):
+            p.append(f"- `[[{tgt}]]` — {_refs(refs)}")
         p.append("")
 
     if typos:
@@ -395,7 +543,7 @@ def render(broken: dict, overdue: list, today: dt.date,
     if contradictions:
         p.append("## Possible contradictions *(AI-flagged, verified — still check each)*\n")
         for c in contradictions:
-            p.append(f"- **`{c['folder']}`** — {c.get('issue','')}")
+            p.append(f"- **`#{c['tag']}`** — {c.get('issue','')}")
             p.append(f"    - A: *{c['a']}*")
             p.append(f"    - B: *{c['b']}*")
         p.append("")
@@ -408,34 +556,47 @@ def render(broken: dict, overdue: list, today: dt.date,
                 p.append(f"- *{it['claim']}* — {it.get('why','')}")
             p.append("")
 
-    if not (concepts or overdue or typos or stale or contradictions):
+    if not (r["shards"] or broken or r["overdue"] or r["drift"] or r["transcriptions"]
+            or stale or contradictions):
         p.append("Nothing flagged. The kb is clean. ✓")
     return "\n".join(p) + "\n"
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="deterministic kb health lint")
+    ap = argparse.ArgumentParser(description="kb health lint (report only)")
     ap.add_argument("--stdout", action="store_true", help="print, don't write a file")
     ap.add_argument("--deep", action="store_true",
                     help="add the LLM pass (stale claims + verified contradictions)")
-    ap.add_argument("--limit", type=int, help="cap claim-files in --deep (for testing)")
+    ap.add_argument("--limit", type=int, help="cap claim notes in --deep (for testing)")
     args = ap.parse_args()
 
     today = dt.date.today()
-    names, rel_paths = build_index()
-    broken = scan_links(names, rel_paths)
-    overdue = scan_deadlines(today)
+    # include_daily: for a sweep, a daily note is a note like any other — the
+    # record-vs-claim distinction is made per check, not by leaving files unread.
+    items = stream.load(include_daily=True)
+    names = build_index()
+    r = {
+        "broken": scan_links(names),
+        "stems": {p.stem.lower() for p in STORE.glob("*.md")},
+        "memory": _memory_slugs(),
+        "shards": scan_shards(),
+        "overdue": scan_deadlines(items, today),
+        "drift": scan_tag_drift(stream.vocabulary(items)),
+        "transcriptions": scan_transcriptions(items),
+        "claim_n": 0,
+    }
 
     stale = contradictions = None
     if args.deep:
         log = lambda s: print(s, file=sys.stderr, flush=True)
-        files = _claim_files()
+        notes = _claim_notes(items)
         if args.limit:
-            files = files[:args.limit]
-        log(f"deep pass: {len(files)} claim-bearing notes via {MODEL}")
-        stale = stale_pass(files, today, log)
-        contradictions = contradiction_pass(files, log)
-    report = render(broken, overdue, today, stale, contradictions)
+            notes = notes[:args.limit]
+        r["claim_n"] = len(notes)
+        log(f"deep pass: {len(notes)} claim-bearing notes via {MODEL}")
+        stale = stale_pass(notes, today, log)
+        contradictions = contradiction_pass(notes, log)
+    report = render(r, today, stale, contradictions)
 
     if args.stdout:
         print(report)
@@ -443,12 +604,14 @@ def main() -> None:
     LINT_DIR.mkdir(exist_ok=True)
     (LINT_DIR / f"lint-{today.isoformat()}.md").write_text(report)
     (LINT_DIR / "latest.md").write_text(report)
-    total = sum(len(v) for v in broken.values())
+    total = sum(len(v) for v in r["broken"].values())
     extra = ""
     if args.deep:
         extra = (f", {sum(len(s['items']) for s in (stale or []))} stale, "
                  f"{len(contradictions or [])} contradiction(s)")
-    print(f"kb-lint: {total} broken link(s), {len(overdue)} overdue deadline(s){extra} "
+    print(f"kb-lint: {len(r['shards'])} shard(s), {total} broken link(s), "
+          f"{len(r['overdue'])} overdue, {len(r['drift'])} tag drift, "
+          f"{len(r['transcriptions'])} undated transcription(s){extra} "
           f"-> {LINT_DIR}/latest.md")
 
 
