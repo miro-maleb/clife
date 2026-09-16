@@ -1063,7 +1063,18 @@ class TriageApp(App):
         self.rows = triage.queue(self._items, tag=self.view_tag, pins=self.pins,
                                  search=self.search)
         self._order_rows()
-        self.vocab = stream.vocabulary(self._items)
+        # The column counts what the VIEWS will show. An archived note is
+        # hidden everywhere except `#archive`, so it contributes to that tag
+        # and to nothing else -- otherwise a note tagged `hearth, archive`
+        # would add one to the hearth row and then not be there when you
+        # opened it. None carry a second tag today; this is so that stays true
+        # the first time one does.
+        self.vocab = stream.vocabulary(
+            [i for i in self._items if triage.ARCHIVE not in i["tags"]])
+        self.vocab[triage.ARCHIVE] = sum(
+            1 for i in self._items if triage.ARCHIVE in i["tags"]) or None
+        if self.vocab[triage.ARCHIVE] is None:
+            del self.vocab[triage.ARCHIVE]
         self.parents = _rollups(self._items)
         self._n_unplaced = sum(1 for i in self._items if not i["tags"])
         self._n_all = len(self._items)

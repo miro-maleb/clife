@@ -131,6 +131,7 @@ def save_slots(slots: dict, trashed: dict | None = None) -> None:
 UNTAGGED = None          # the default view: notes nobody has placed yet
 ALL = "*"                # every note, placed or not
 BARE = "!"               # prefix: this tag EXACTLY, none of its children
+ARCHIVE = "archive"      # the shelf: present, findable, and out of the way
 
 
 def bare(tag: str) -> str:
@@ -224,8 +225,29 @@ def queue(items=None, tag=UNTAGGED, pins=(), search="") -> list:
     # note: two or three words that were definitely in it, in no order you
     # can recall.
     terms = [w for w in str(search or "").lower().split() if w]
+
+    # THE ARCHIVE IS HIDDEN FROM BROWSING AND FOUND BY SEARCH.
+    #
+    # `archive` means "keep this, stop showing it to me": eight Hermes
+    # transcripts were tagged it to get them out of the way, and they went on
+    # padding `all`, appearing as a facet, and weighting every count. So it is
+    # excluded from every view unless the query ASKS for it -- the view tag is
+    # archive, or archive is pinned.
+    #
+    # One exception, and it is the point: a SEARCH still reaches it. Search is
+    # the fallback that makes tagging optional -- "I know I wrote it down" --
+    # and a search that quietly skips part of the store is worse than no
+    # search, because you cannot tell the difference between "not there" and
+    # "not shown". Hiding from browsing costs nothing; hiding from search
+    # costs the promise of the key.
+    asked_for = (str(tag or "").lstrip(BARE) == ARCHIVE
+                 or any(str(p).lstrip(BARE) == ARCHIVE for p in pinq))
+    hide_archive = not asked_for and not terms
+
     rows = []
     for it in items:
+        if hide_archive and ARCHIVE in it["tags"]:
+            continue
         if pinq and not all(_match(it, p) for p in pinq):
             continue
         if tag == ALL:
