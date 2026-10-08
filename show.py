@@ -26,7 +26,7 @@ from rich.rule import Rule
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import projects as proj
+import projects_legacy as proj
 from tui_common import ACCENT, ACCENT_DIM, BODY, BORDER, MUTED
 
 console = Console()

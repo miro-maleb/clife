@@ -256,6 +256,13 @@ def main():
         try:
             with f.open("rb") as fp:
                 msg = email.message_from_binary_file(fp, policy=email.policy.default)
+            # 2026-10-06: newsletters subscribed with this address feed the
+            # overnight news digest (~/hearth/digest), not the working desk. A
+            # mailing list announces itself in its headers; a mail Miro forwards
+            # to himself never carries these. Left unseen; the digest tracks its own.
+            if msg.get("List-Unsubscribe") or msg.get("List-Id"):
+                console.print(f"  [grey50]newsletter → digest[/grey50]  {msg.get('Subject', '')[:60]}")
+                continue
             captured = datetime.now()
             md = message_to_inbox_md(msg, captured)
             stamp = captured.strftime("%Y-%m-%d-%H%M%S")

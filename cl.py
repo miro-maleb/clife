@@ -22,10 +22,12 @@ COMMANDS = {
     "orientations": "orientations",
     "lint":        "lint",
     "inbox":       "inbox",
-    "projects":    "projects",
+    "projects":    "projects_legacy",
     "notes":       "notes",
     "tags":        "tags",
     "stream":      "stream",
+    "todo":        "todo_cli",
+    "links":       "links",
     "triage":      "triage",
     "review":      "review",
     "chat":        "chat",
@@ -45,7 +47,7 @@ HELP = """
 
   cl capture                  quick text capture — one line per item → inbox
   cl capture --voice          voice capture — say 'break' between items, Ctrl+C to finish
-  cl capture --journal        capture directly to today's journal (text or voice)
+  cl capture --journal        RETIRED 2026-10-05 (no daily notes)
   cl ingest [--dry-run]       pull new email from kb-capture maildir → inbox
   cl inbox [--tui]            route inbox files — c(calendar→pool)/n/t/p/v/g/h/i/s/d
   cl notes                    flat fzf browser over every note
@@ -54,21 +56,25 @@ HELP = """
   cl notes --area NAME        filter to one area
   cl notes --project NAME     filter to one project
   cl notes --tag NAME         filter to one tag
-  cl stream [agenda]          the agenda view — todo items grouped by intent date
-  cl stream inbox             untagged notes (the inbox view, over whole notes)
-  cl stream tag TAG           every stream note carrying TAG (hierarchical)
-  cl stream ls [--status --tag --stale N]   filter the whole stream
-  cl stream tags              the tag vocabulary in use, most-used first
-  cl stream set SLUG [--todo|--done|--archive] [--when fri|+3d|none]
-                     [--tag a,b] [--untag a] [--new]
-                              --tag is guarded against near-duplicates of tags
-                              already in use; --new overrides, --untag removes
+  cl todo [list] [--json]     the todo list (~/kb/todo.md), Sooner then Later
+  cl todo add [--sooner] TEXT add an item (Later unless --sooner)
+  cl todo done MATCH          delete the one open item matching every word
+  cl todo sweep               drop checked lines (phone/Obsidian check-offs)
+  cl stream [agenda]          todo.md as two bands, sooner + on the plate (age from git)
+  cl stream inbox             working/ — every capture not yet filed out, newest first
+  cl stream chrono            writing/ working/ threads/ by date written
+  cl stream ls [--stale N]    filter working/
+  cl stream tag|tags|set|retag   RETIRED 2026-10-05 (tags are gone) — say so, exit 0
   cl triage                   the unplaced queue, one suggestion slot per note
   cl triage suggest SLUG --tags a,b [--note "..."] [--flag dup|junk|ask]
   cl triage trash SLUG        move a note to ~/kb/.trash (recoverable)
   cl triage restore [NAME]    put a trashed note back; no NAME lists them
   cl stream render            write the read-only agenda artifact to outbox/reports
   cl stream ... --json        every view emits JSON (nvim / Surface / Hermes)
+  cl links resolve NAME       the file a [[wikilink]] points at (exit 1 if none)
+  cl links out PATH           the links going out of one note
+  cl links back NAME          the notes linking in (backlinks — derived, never stored)
+  cl links orphans            writing/working/threads notes (not journal) with no link in or out
   cl tags                     index inline #tags across daily notes + block counts
   cl tags TAG                 show every daily block carrying TAG (hierarchical: book → book/x)
   cl tags [--all|--path P] [--json]   scan whole kb / a path; JSON for the nvim picker

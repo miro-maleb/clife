@@ -15,10 +15,32 @@ from kb_utils import insert_journal_bullet, today_journal
 try:
     from rich.console import Console
     from rich.rule import Rule
-    console = Console()
+    import theme
+    # highlight=False: rich's default highlighter picks numbers out of any
+    # string and bolds them, so a filename came out as a ransom note —
+    # `2026`-`09`-`16` each in bold against the mute grey it was asked for.
+    console = Console(highlight=False)
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
+
+# Importing readline is what makes input() an editable line: arrow keys, ^A/^E
+# and history instead of literal escape characters. It was never imported here,
+# so `cl capture` has always been a dumb line reader.
+#
+# \001/\002 wrap the colour escapes. They tell readline "these bytes take no
+# columns" — without them it thinks the prompt is ~13 characters wide and
+# redraws long lines in the wrong place.
+try:
+    import readline  # noqa: F401
+except ImportError:
+    pass
+
+
+def _prompt(hex_colour):
+    esc = hex_colour.lstrip("#")
+    r, g, b = (int(esc[i:i + 2], 16) for i in (0, 2, 4))
+    return f"  \001\033[38;2;{r};{g};{b}m\002❯\001\033[0m\002 "
 
 MODEL = "/usr/share/whisper.cpp-model-base.en-q5_1/ggml-base.en-q5_1.bin"
 TMPWAV = "/tmp/lo-capture.wav"
@@ -129,14 +151,12 @@ def unique_inbox_path(stamp, index=None):
 
 
 def write_inbox(text, stamp, index=None):
-    """Frontmatter matters: `tags: []` is the ONLY thing marking this as an
-    inbox item now that the inbox is a view. A bare file with no frontmatter
-    still reads as unplaced, but writing the fields keeps every capture door
-    ($mod+c, nvim-write, Surface, kb-inbox) emitting the same shape."""
+    """One capture, one file in working/ (2026-10-05). Tags are retired, so the
+    frontmatter is just `created:` — the folder says it is waiting on a decision."""
     from datetime import datetime as _dt
     path = unique_inbox_path(stamp, index)
     path.write_text(f"---\ncreated: {_dt.now().strftime('%Y-%m-%d %H:%M')}\n"
-                    f"tags: []\n---\n\n{text.strip()}\n")
+                    f"---\n\n{text.strip()}\n")
     return path
 
 
@@ -150,13 +170,20 @@ def text_mode(journal=False):
 
     console.print()
     dest_label = "journal" if journal else "inbox"
-    console.print(Rule(f"[bold steel_blue1]  Capture → {dest_label}  [/bold steel_blue1]", style="steel_blue1 dim"))
+    # The Surface capture lens, at terminal scale: the accent chip, the note's
+    # destination in mute beside it, then a hairline in the border colour. No
+    # box drawing — Surface has no frame around the composer either.
+    console.print(f"  {theme.CHIP('CAPTURE')}  [{theme.MUTE}]→ {dest_label}[/]")
+    console.print(Rule(style=theme.RULE))
     console.print()
 
     try:
         while True:
             try:
-                line = input("  > ").strip()
+                # An accent caret, the way Surface sets caret-color:var(--accent)
+                # on the composer. The prompt goes to input() itself, not to a
+                # separate print — readline has to own the whole line.
+                line = input(_prompt(theme.PROMPT)).strip()
             except EOFError:
                 break
 
@@ -166,12 +193,16 @@ def text_mode(journal=False):
             # Refresh stamp each line so rapid entries get unique names
             stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 
+            # Surface flashes a green "captured" chip and the note appears in
+            # the stream. Here the line you typed is already on screen, so the
+            # confirmation is one quiet line under it: the tick in --done, the
+            # filename in --mute, nothing competing with what you wrote.
             if journal:
                 append_journal(line)
-                console.print("[dark_sea_green4]    → journal[/dark_sea_green4]")
+                console.print(f"    [{theme.DONE}]✓[/] [{theme.MUTE}]journal[/]")
             else:
                 path = write_inbox(line, stamp)
-                console.print(f"[dark_sea_green4]    → notes/{path.name}[/dark_sea_green4]")
+                console.print(f"    [{theme.DONE}]✓[/] [{theme.MUTE}]{path.name}[/]")
 
             count += 1
 
@@ -179,10 +210,12 @@ def text_mode(journal=False):
         pass
 
     console.print()
+    console.print(Rule(style=theme.RULE))
     if count:
-        console.print(f"  [grey50]{count} item{'s' if count != 1 else ''} → {dest_label}[/grey50]")
-    console.print()
-    console.print(Rule(style="steel_blue1 dim"))
+        console.print(f"  [{theme.DIM}]{count} item{'s' if count != 1 else ''}[/] "
+                      f"[{theme.MUTE}]→ {dest_label}[/]")
+    else:
+        console.print(f"  [{theme.MUTE}]nothing captured[/]")
     console.print()
 
 
@@ -332,9 +365,11 @@ def voice_mode(journal=False):
             pass
 
     console.print()
-    console.print(Rule("[bold steel_blue1]  Capture → voice  [/bold steel_blue1]", style="steel_blue1 dim"))
+    console.print(f"  {theme.CHIP('CAPTURE')}  [{theme.MUTE}]→ voice[/]")
+    console.print(Rule(style=theme.RULE))
     console.print()
-    console.print("  [grey70]Recording...[/grey70]  [grey50]Ctrl+C when done[/grey50]")
+    console.print(f"  [{theme.ACCENT}]●[/] [{theme.INK}]Recording[/]  "
+                  f"[{theme.MUTE}]Ctrl+C when done[/]")
     console.print()
 
     proc = subprocess.Popen(
@@ -348,7 +383,7 @@ def voice_mode(journal=False):
         proc.terminate()
         proc.wait()
 
-    console.print("\n  [grey50]Transcribing...[/grey50]")
+    console.print(f"\n  [{theme.MUTE}]Transcribing…[/]")
 
     result = subprocess.run(
         ["whisper-cli", TMPWAV, "-m", MODEL, "-otxt", "-of", TMPOUT],
@@ -363,14 +398,14 @@ def voice_mode(journal=False):
 
     txt_file = Path(TMPOUT + ".txt")
     if not txt_file.exists():
-        console.print("  [rosy_brown](no transcription output)[/rosy_brown]")
+        console.print(f"  [{theme.DIM}]no transcription output[/]")
         return
 
     text = txt_file.read_text().strip()
     txt_file.unlink()
 
     if not text:
-        console.print("  [rosy_brown](no speech detected)[/rosy_brown]")
+        console.print(f"  [{theme.DIM}]no speech detected[/]")
         return
 
     # Split on whole-word "break" or "brake" (case-insensitive), consuming trailing punctuation
@@ -378,7 +413,7 @@ def voice_mode(journal=False):
     chunks = [c.strip() for c in chunks if c.strip()]
 
     if not chunks:
-        console.print("  [rosy_brown](nothing captured)[/rosy_brown]")
+        console.print(f"  [{theme.MUTE}]nothing captured[/]")
         return
 
     stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -388,17 +423,19 @@ def voice_mode(journal=False):
     for i, chunk in enumerate(chunks, 1):
         if journal:
             append_journal(chunk)
-            console.print(f"[dark_sea_green4]  [{i}] → journal[/dark_sea_green4]")
+            console.print(f"  [{theme.DONE}]✓[/] [{theme.MUTE}]journal[/]")
         else:
             index = i if use_index else None
             path = write_inbox(chunk, stamp, index)
-            console.print(f"[dark_sea_green4]  [{i}] → notes/{path.name}[/dark_sea_green4]")
+            console.print(f"  [{theme.DONE}]✓[/] [{theme.MUTE}]{path.name}[/]")
 
-        display = chunk if len(chunk) <= 80 else chunk[:77] + "..."
-        console.print(f"      [grey70]{display}[/grey70]")
+        display = chunk if len(chunk) <= 80 else chunk[:77] + "…"
+        console.print(f"    [{theme.INK}]{display}[/]")
 
     console.print()
-    console.print(Rule(style="steel_blue1 dim"))
+    console.print(Rule(style=theme.RULE))
+    console.print(f"  [{theme.DIM}]{len(chunks)} item{'s' if len(chunks) != 1 else ''}[/] "
+                  f"[{theme.MUTE}]→ {'journal' if journal else 'inbox'}[/]")
     console.print()
 
 
@@ -416,9 +453,16 @@ def main():
   lo capture            quick text capture — one line per item → inbox
   lo capture --voice    voice capture — say 'break'/'brake' between items, Ctrl+C to finish
                         (pending offline recordings are processed automatically on next use)
-  lo capture --journal  capture directly to today's journal (with either mode)
+  lo capture --journal  RETIRED 2026-10-05 (no daily notes)
   lo capture --text STR non-interactive: capture STR and exit (web/automation)
 """)
+        return
+
+    if args.journal:
+        # RETIRED 2026-10-05: no daily notes any more, and writing/journal/ is
+        # Miro's own hand — nothing appends to it automatically.
+        print("cl capture --journal is retired (2026-10-05): no daily notes. "
+              "Plain `cl capture` lands in working/.")
         return
 
     if args.text is not None:
@@ -433,7 +477,7 @@ def main():
             print("→ journal")
         else:
             path = write_inbox(text, stamp)
-            print(f"→ notes/{path.name}")
+            print(f"→ working/{path.name}")
         return
 
     # Auto-drain pending offline recordings on any capture invocation (Termux only)

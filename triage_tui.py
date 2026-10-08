@@ -114,6 +114,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import stream            # noqa: E402
 import triage            # noqa: E402
+from paths import STORE  # noqa: E402
 
 CL = str(Path(__file__).resolve().parent / "cl")
 KB = stream.KB
@@ -551,6 +552,9 @@ class TriageApp(App):
         # neighbourhood, or None. Tracked rather than inferred so that
         # returning home cannot remove a pin YOU put there.
         self._walk_pin = None
+        # Single-use: set by the walk when IT moves the tag cursor, consumed
+        # by the very next taglist Highlighted. See `_preview_tag`.
+        self._walk_moved = False
         # The tag at position 0 of an anchored walk, when there is one. A walk
         # started from #writing has writing as home; a walk started from a
         # query that is already several pins deep has no home, only facets.
@@ -968,7 +972,12 @@ class TriageApp(App):
         # this was a neighbour list, and rendered raw tag names under `also`.
         kids = any(str(f).startswith(str(fam[0]) + "/") for f in fam[1:])
         if kids:
-            t.append("children  ", FAINT)
+            # Named, not just "children". Standing on `projects/elder-ai` the
+            # strip is nine OTHER projects, and a bare heading made them read
+            # as tags being suggested FOR the open note — which is the one
+            # thing this row never does. Saying `projects/` says both what the
+            # row is and which family Tab is about to walk.
+            t.append(f"{fam[0]}/  ", FAINT)
         else:
             # With pins up the strip IS the query builder, so it says what has
             # been built. `also` alone would leave the pins visible only in
@@ -1082,34 +1091,99 @@ class TriageApp(App):
             self._slots_seen = triage.SLOTS.stat().st_mtime
         except OSError:
             self._slots_seen = 0.0
+        # Stamped HERE rather than in the poll, so a reload skipped because he
+        # was mid-walk or mid-word leaves the signature stale and the poll
+        # comes back around for it in two seconds instead of losing the change.
+        self._store_seen = _store_sig()
         self._paint_tags()
         self._repaint_queue()
 
     async def _poll_slots(self) -> None:
-        """Re-read when the sidecar changes underneath us.
+        """Re-read when the sidecar OR THE STORE changes underneath us.
 
-        mtime only, not the file contents: this fires every two seconds for as
-        long as the pane is open, and a full reload re-reads every note in the
-        stream. The stat is the cheap question; the reload is the expensive
-        answer, and it only runs when the answer changed.
+        Two signatures, both cheap: the sidecar's mtime, and a scandir of the
+        store. This fires every two seconds for as long as the pane is open,
+        and a full reload re-reads every note in the stream. The stat is the
+        cheap question; the reload is the expensive answer, and it only runs
+        when the answer changed.
 
-        Never while the tag box has focus — a repaint rewrites that box from
-        the row's suggestions, so an auto-reload mid-word would eat what he was
-        typing. The poll comes back around in two seconds.
+        The store half is the one that was missing. The poll watched only
+        `triage.json`, so a note written from anywhere else — the writer next
+        door, Surface, the phone, `kb-inbox` from a script — was invisible
+        here until `r`. A tag column that is stale until you think to refresh
+        it is a tag column you cannot trust, and the whole point of this pane
+        is that it is a live view of the store.
+
+        DEFERRED, never forced, whenever a repaint would take something away
+        from him:
+
+        * an Input has focus — a repaint rewrites the tag box from the row's
+          suggestions, so a reload mid-word would eat what he was typing
+        * a family walk is in progress — `reload()` drops `_fam_anchor` by
+          design, and a Tab walk whose strip changes under it is a walk that
+          loses its place
+        * help is up — it owns the pane; repainting behind it is invisible
+          work that costs a frame
+
+        In all three the signature is left UNSTAMPED, so nothing is lost: the
+        poll comes back around in two seconds and reloads once he is done.
         """
-        if isinstance(self.focused, Input):
+        if isinstance(self.focused, Input) or self._fam_anchor or self._help:
             return
         try:
             m = triage.SLOTS.stat().st_mtime
         except OSError:
-            return                       # no sidecar yet — nothing to notice
-        if m == self._slots_seen:
+            m = self._slots_seen         # no sidecar yet — nothing to notice
+        sig = _store_sig()
+        if m == self._slots_seen and sig == getattr(self, "_store_seen", ()):
             return
         before = sum(1 for r in self.rows if r["suggested"] or r["note"])
-        await self.reload()             # re-stamps _slots_seen
+        await self._reload_in_place()   # re-stamps both signatures
         after = sum(1 for r in self.rows if r["suggested"] or r["note"])
         if after > before:
             self.notify(f"{after - before} new suggestion(s) from the chat")
+
+    async def _reload_in_place(self) -> None:
+        """A reload that does not move anything he is standing on.
+
+        Every other reload in this app happens because he ACTED, and landing
+        the cursor on the row he just changed is the point of it. This one
+        happens because a file changed — possibly on another machine, possibly
+        while he is reading — so the requirement inverts: it has to be
+        invisible except for the row that appeared.
+
+        `_repaint_queue` already carries the queue index across, and
+        `_paint_tags` carries the tag column's. The reader does not carry
+        anything: `_paint_detail` rewrites `#previewtext` and the scroll goes
+        home, so a note dropped into the store while he was two thirds of the
+        way down a long one would throw him back to the top of it. Restoring
+        the offset is the whole difference between a live view and an
+        interruption.
+
+        Twice, for the same reason `_cursor_to` asserts twice — the repaint
+        that rebuilt the reader can land AFTER the scroll is set.
+        """
+        pv = self.query_one("#preview", VerticalScroll)
+        off = pv.scroll_offset
+        # The SLUG, not the index. A note that arrives sorts in above the one
+        # he is reading as often as not, and then holding the index holds the
+        # wrong note: row 0 is still row 0 and the reader underneath it has
+        # silently become a different file. That is the exact thing this
+        # method exists to prevent, and it is invisible -- nothing moves on
+        # screen except the words.
+        cur = self._current()
+        slug = cur["slug"] if cur else None
+        await self.reload()
+        if slug is not None:
+            i = next((k for k, r in enumerate(self.rows) if r["slug"] == slug), None)
+            if i is not None:
+                self._cursor_to(i)
+
+        def restore() -> None:
+            pv.scroll_to(x=off.x, y=off.y, animate=False)
+
+        restore()
+        self.call_after_refresh(restore)
 
     def _current(self) -> dict | None:
         i = self.query_one("#queue", ListView).index
@@ -1253,16 +1327,19 @@ class TriageApp(App):
             t.append(f"  {count}".rjust(10 + len("unplaced") - len(label)), FAINT)
             lst.append(ListItem(Static(t)))
         q = self._tag_filter.lower()
-        # Parents are merged into the same most-used-first order rather than
-        # grouped above their children. The column answers "what is this
-        # about", and `projects` (13 notes) is a bigger answer than `blog`
-        # (10) — sorting it away from its weight to sit beside its children
-        # would make the list two lists.
-        # parents LAST, so a tag that also has children takes the rolled-up
-        # count rather than the flat one — one row, and its number is what
-        # selecting it will show.
-        merged = sorted({**self.vocab, **getattr(self, "parents", {})}.items(),
-                        key=lambda kv: -kv[1])
+        # parents LAST in the merge, so a tag that also has children takes the
+        # rolled-up count rather than the flat one — one row, and its number is
+        # what selecting it will show.
+        parents = getattr(self, "parents", {})
+        if q:
+            # While a filter is up the column is a SEARCH RESULT, not the
+            # vocabulary. Grouping it would either print parent rows that do
+            # not match what was typed, or indent children under a parent that
+            # the filter removed — both of which are a hierarchy that lies.
+            merged = [(k, v, 0) for k, v in
+                      sorted({**self.vocab, **parents}.items(), key=lambda kv: -kv[1])]
+        else:
+            merged = _grouped(self.vocab, parents)
         # With pins up, the column stops being the vocabulary and becomes the
         # FACETS of what is pinned -- only tags that still leave notes, with
         # the count of the intersection rather than of the whole store. A
@@ -1273,9 +1350,9 @@ class TriageApp(App):
             for r in self.rows:
                 for t in r["tags"]:
                     live[t] += 1
-            merged = [(k, v) for k, v in sorted(live.items(), key=lambda kv: (-kv[1], kv[0]))
+            merged = [(k, v, 0) for k, v in sorted(live.items(), key=lambda kv: (-kv[1], kv[0]))
                       if k not in self.pins]
-        for name, count in merged:
+        for name, count, depth in merged:
             if q and q not in name.lower():
                 continue
             self.tag_names.append(name)
@@ -1285,8 +1362,17 @@ class TriageApp(App):
             # row includes what is under it" — true both for `projects/`,
             # which nobody has ever applied as a word, and for `blog/`, which
             # is a real tag that also has children.
-            parent = name in getattr(self, "parents", {})
-            label = (name + "/" if parent else name)[:15]
+            parent = name in parents
+            if depth:
+                # A child under its own parent row wears its last segment
+                # only. The indent and the row above already say the prefix,
+                # and repeating `projects/` nine times is what pushed
+                # `projects/elder-ai` past the 15-column truncation and put
+                # `projects/elder-` on screen — the part that identifies the
+                # tag cut off in favour of the part shared by every sibling.
+                label = (" " + name.split("/", 1)[1])[:15]
+            else:
+                label = (name + "/" if parent else name)[:15]
             row.append(label, ACCENT if parent else "#d8d4cf")
             # Measured off the LABEL, not the name: the parent's trailing
             # slash is a character too, and counting the name left every
@@ -1506,15 +1592,39 @@ class TriageApp(App):
         self._repaint_queue(keep=0)
         self.notify(f"unpinned #{gone}" + (f" — {self._view_label()}" if self.pins else ""))
 
-    def _drop_walk_pin(self) -> None:
-        """Take down the pin Tab raised, if it is still ours to take down."""
+    def _drop_walk_pin(self) -> bool:
+        """Take down the pin Tab raised, if it is still ours to take down.
+
+        Reports whether it actually took one down, because a caller that
+        short-circuits on "nothing changed" has to know that the QUERY changed
+        even when the tag did not.
+        """
         if self._walk_pin is None:
-            return
-        if self._walk_pin in self.pins:
+            return False
+        hit = self._walk_pin in self.pins
+        if hit:
             self.pins.remove(self._walk_pin)
             if self._pin_return:
                 self._pin_return.pop()
         self._walk_pin = None
+        return hit
+
+    def _end_walk(self) -> None:
+        """Take Tab's walk down and repaint what is left, without moving view.
+
+        The pin is part of the QUERY, so dropping it changes the rows even
+        though `view_tag` is untouched. Everything that ends a walk by GOING
+        somewhere gets the repaint from `_load_view`; this is the one way out
+        that stays put.
+        """
+        self._fam_anchor = []
+        self._fam_home = None
+        if not self._drop_walk_pin():
+            return
+        self.rows = triage.queue(self._items, tag=self.view_tag,
+                                 pins=self.pins, search=self.search)
+        self._order_rows()
+        self._repaint_queue(keep=0)
 
     def action_cycle_child(self, step: int = 1) -> None:
         """Tab — walk the family, and the walk IS the opening.
@@ -1579,6 +1689,12 @@ class TriageApp(App):
             lst = self.query_one("#taglist", ListView)
             want = self.tag_names.index(nxt)
             if lst.index != want:
+                # Flagged, because the Highlighted this fires is otherwise
+                # indistinguishable from him moving onto that row himself --
+                # and while a walk is up those two mean opposite things. This
+                # move is a CONSEQUENCE of the view changing; his is how he
+                # leaves the walk.
+                self._walk_moved = True
                 lst.index = want
 
     def _disarm_trash(self) -> None:
@@ -1800,14 +1916,19 @@ class TriageApp(App):
             return
         try:
             if getattr(event.list_view, "id", "") == "taglist":
-                self._preview_tag(event.list_view.index)
+                # Consumed HERE rather than inside `_preview_tag`, which is
+                # gated on the tag column having focus -- and Tab is pressed
+                # with focus on the queue, so the gate would return before the
+                # flag was ever cleared and leave it set for a later move.
+                walked, self._walk_moved = self._walk_moved, False
+                self._preview_tag(event.list_view.index, from_walk=walked)
                 return
             self._paint_detail()
         except NoMatches:
             return
 
     # ── live preview ────────────────────────────────────────────────────────
-    def _preview_tag(self, i) -> None:
+    def _preview_tag(self, i, from_walk: bool = False) -> None:
         """Moving over a tag LOADS it. No Enter required.
 
         Enter was a step that bought nothing: you cannot tell whether a tag is
@@ -1838,7 +1959,32 @@ class TriageApp(App):
         if self._picking:
             return
         tag = self.tag_names[i]
+        # Moving onto the tag you are already viewing is normally nothing to
+        # do -- except while Tab is mid-walk, when it is exactly how you LEAVE
+        # one. The walk's pin is still narrowing the rows, so "the same tag"
+        # is not the same VIEW, and returning here left `#ai` pinned with no
+        # walk left to take it down. Which row that is depends on how the tag
+        # column happens to be ordered, which is why grouping the column by
+        # family is what made it show up.
         if tag == self.view_tag:
+            # Moving onto the tag you are already viewing is normally nothing
+            # to do -- but while Tab's pin is up it is how the walk ENDS. The
+            # tag has not changed and the QUERY has, so returning flat left
+            # `projects/clife + ai` on screen under a header that said
+            # `projects/clife` alone. Which row that is depends on how the tag
+            # column happens to be ordered, which is why grouping the column
+            # by family is what made it show up.
+            #
+            # `from_walk` is the whole distinction: the walk moves this cursor
+            # itself to keep the column in step, so every Tab step arrives
+            # here looking exactly like him landing on the row by hand. One is
+            # the walk keeping up; the other is him leaving it.
+            #
+            # Wound up HERE rather than through the debounced load: there is
+            # no new view to fetch, and routing it through `_load_view` would
+            # make every step of a walk schedule a query.
+            if self._walk_pin and not from_walk:
+                self._end_walk()
             return
         if self._preview_timer is not None:
             self._preview_timer.stop()
@@ -2452,17 +2598,41 @@ class TriageApp(App):
             if n and n not in seen:
                 seen.add(n)
                 after.append(n)
+        # SOONER IS ON THE PLATE BY ITSELF. `todo` beside `todo/sooner` is the
+        # redundant pair the child was chosen to avoid, and `cl stream set`
+        # cannot express it anyway — `--sooner` takes the parent off.
+        if SOONER in seen and POOL_TAG in seen:
+            seen.discard(POOL_TAG)
+            after = [t for t in after if t != POOL_TAG]
         add = [t for t in after if t not in before]
         rm = [t for t in before if t not in after]
         if not add and not rm:
             self.notify("no change")
             self.set_focus(self.query_one("#queue", ListView))
             return
+        # POOL MEMBERSHIP DOES NOT GO THROUGH `--tag`. It is spelled in tags
+        # like everything else, but `todo/sooner` arriving as a proposal beside
+        # `todo` is exactly the shape the near-duplicate guard is built to
+        # flag — so `s` refused itself with "'todo/sooner' looks like: todo"
+        # and wrote nothing, every time, for as long as no note carried the
+        # child. `cl stream set` has flags for these two precisely because
+        # they are the vocabulary rather than a proposal against it.
+        want_pool, want_soon = POOL_TAG in seen, SOONER in seen
+        had_pool, had_soon = POOL_TAG in before, SOONER in before
         flags = []
-        if add:
-            flags += ["--tag", ",".join(add)]
-        if rm:
-            flags += ["--untag", ",".join(rm)]
+        if (want_pool, want_soon) != (had_pool, had_soon):
+            if want_soon:
+                flags.append("--sooner")      # adds the child, drops the parent
+            elif want_pool:
+                flags.append("--later" if had_soon else "--todo")
+            else:
+                flags.append("--done")        # takes both off
+        tag_add = [t for t in add if t not in (POOL_TAG, SOONER)]
+        tag_rm = [t for t in rm if t not in (POOL_TAG, SOONER)]
+        if tag_add:
+            flags += ["--tag", ",".join(tag_add)]
+        if tag_rm:
+            flags += ["--untag", ",".join(tag_rm)]
         res = self._write(row, *flags)
         if not res.get("ok"):
             return                     # text stays in the box, ready to fix
@@ -2694,6 +2864,62 @@ SOONER = "todo/sooner"
 PROJECTS = "projects/"
 
 
+
+def _store_sig() -> tuple:
+    """Cheap "did the store change" — how many notes, and the newest mtime.
+
+    One scandir over ~238 entries with no file opened, against a reload that
+    reads all 238. The stat is the question; the reload is the answer, and it
+    only runs when the answer changed. Count AND mtime because either alone
+    has a blind spot: an edit in place does not change the count, and a note
+    added and another deleted inside the same second barely moves the max.
+    """
+    n, newest = 0, 0.0
+    try:
+        with os.scandir(STORE) as it:
+            for e in it:
+                if e.name.endswith(".md"):
+                    n += 1
+                    m = e.stat().st_mtime
+                    if m > newest:
+                        newest = m
+    except OSError:
+        return ()                      # no store to read — say nothing changed
+    return (n, newest)
+
+
+def _grouped(vocab: dict, parents: dict) -> list:
+    """The vocabulary as FAMILIES — heaviest family first, children under it.
+
+    Flat most-used-first was the earlier call, and the reasoning was that the
+    column answers "what is this about", so `projects` (17) is a bigger answer
+    than `blog` (10) and sorting it away from its weight to sit beside its
+    children would make the column two lists. In use that was backwards. It
+    scattered the nine `projects/*` tags down a 46-row column between `recipe`
+    and `poem`, so finding the sibling of the tag you were standing on meant
+    reading every row — and the column is navigated far more often than it is
+    ranked. Weight still orders the FAMILIES against each other; inside one,
+    the family is contiguous.
+
+    Returns (name, count, depth) — depth 1 is a child that has a parent row
+    directly above it, which is the only case that may drop its prefix.
+    """
+    counts = {**vocab, **parents}
+    fams: dict = {}
+    for name in counts:
+        fams.setdefault(str(name).split("/")[0], []).append(name)
+    out = []
+    # The family's weight is the parent's rolled-up count where there is one,
+    # so `projects/` ranks on all 17 rather than on the 0 notes that carry the
+    # bare word. A root with no rollup is a lone tag and ranks on itself.
+    for root in sorted(fams, key=lambda r: (-(parents.get(r) or counts.get(r) or 0), r)):
+        has_head = root in counts
+        if has_head:
+            out.append((root, counts[root], 0))
+        for k in sorted((n for n in fams[root] if n != root),
+                        key=lambda n: (-counts[n], n)):
+            out.append((k, counts[k], 1 if has_head else 0))
+    return out
 def main() -> None:
     if not sys.stdin.isatty():
         print("cl triage --tui needs a terminal.", file=sys.stderr)

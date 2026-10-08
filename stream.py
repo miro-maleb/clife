@@ -39,8 +39,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fm  # noqa: E402
 
 KB = Path(os.environ.get("KB_DIR", str(Path.home() / "kb")))
-from paths import STORE
-STREAM = STORE
+from paths import STORE, TODO, WRITING, WORKING, THREADS  # noqa: E402
+import todo  # noqa: E402
+STREAM = STORE          # = working/ since 2026-10-05
+# Tags were retired 2026-10-05: the commands that read or wrote them say so and
+# exit 0, so an old caller degrades to "nothing" instead of a traceback.
+RETIRED = "tags are retired (2026-10-05) — folders + todo.md now; see `cl todo`"
 OUTBOX = KB / "outbox" / "reports"
 
 # The pool is a tag, and urgent is its CHILD — not a second flat tag. Flat
@@ -197,40 +201,135 @@ def vocabulary(items=None) -> dict:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
-# A `#word` in a note's BODY. Must start with a letter, so `#1` and a markdown
-# `# heading` (space after the hash) are not candidates at all. A hex colour
-# like `#e8a34e` does start with a letter and IS a candidate — it is the
-# vocabulary check, not this pattern, that throws it out.
-_BODYTAG = re.compile(r"(?<![\w&])#([A-Za-z][\w/-]*)")
+# ── body tags ──────────────────────────────────────────────────────────────
+# A `#tag` in a note's BODY is a tag, exactly as Obsidian reads it (2026-10-04).
+#
+# It used to be the other way round: only frontmatter counted, and three
+# separate machines existed to hoist body hashtags up into it — kb-inbox at
+# capture, an nvim-write save hook, and a tower sweep for notes written on the
+# phone. Each was a door that could be missed (a `#dream` typed in Obsidian sat
+# untagged and exposed to --prune-noise). Reading the body here retires all
+# three, and makes this module agree with Obsidian's tag pane and Dataview's
+# `file.tags`, so every face sees the same set.
+#
+# Obsidian's rules, which is also the false-positive defence that the old
+# "only words the vocabulary already has" gate used to be:
+#   - a tag starts at the start of a line or after whitespace (`page#section`,
+#     `[[note#heading]]` and URLs are not tags)
+#   - fenced code and inline code are skipped (`#define`, `#include`)
+#   - it must contain a non-digit (`#1`, `#2026` are not tags)
+#   - `# heading` has a space after the hash, so it is never a candidate
+# What still gets through is a hex colour in prose (`#e8a34e`) — Obsidian
+# counts that too, and the tag index shows it the day it happens.
+
+_FENCED = re.compile(r"^(```|~~~)[^\n]*\n.*?^\1[^\n]*$", re.M | re.S)
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+_TAG_STOP = r"\s#!@$%^&*()=+\[\]{};:'\",.<>?\\|`~"
+_BODYTAG = re.compile(r"(?:(?<=\s)|^)#([^" + _TAG_STOP + r"]+)", re.M)
+
+
+def _code_spans(text):
+    """[(start, end)] of fenced and inline code, which hold no tags."""
+    spans = [m.span() for m in _FENCED.finditer(text)]
+    for m in _INLINE_CODE.finditer(text):
+        if not any(a <= m.start() < b for a, b in spans):
+            spans.append(m.span())
+    return spans
+
+
+def _tag_matches(text):
+    """Every body-tag match outside code, as (match, normalised tag)."""
+    spans = _code_spans(text)
+    for m in _BODYTAG.finditer(text or ""):
+        if any(a <= m.start() < b for a, b in spans):
+            continue
+        raw = m.group(1).rstrip("/-")
+        if not re.search(r"[^\d/]", raw):
+            continue                                   # #1, #2026
+        t = norm_tag(raw)
+        if t:
+            yield m, t
 
 
 def body_tags(text, vocab=None) -> list:
-    """The hashtags in `text` that ALREADY name a tag in use, normalised.
+    """The tags in a note body, normalised, in order of first appearance.
 
-    Capture doors write tags only from an explicit flag, never from the body —
-    otherwise a note containing `#define` or `#e8a34e` reads as tagged, counts
-    as placed, and drops out of the inbox view it was aimed at. That rule cost
-    more than it saved: half the unplaced queue was notes whose body said
-    `#todo` or `#blog` and whose frontmatter said nothing.
-
-    So the gesture is honoured, but only for words the vocabulary already has.
-    `#todo` and `#blog` are tags; `#define` and `#e8a34e` are not, and a tag
-    you have never used before still will not place a note by being typed in
-    passing. The failure mode is unchanged for everything except the words you
-    demonstrably meant.
-
-    Exact match after norm_tag, deliberately NOT the near-duplicate resolver:
-    `resolve_tags` exists to help someone who is choosing a tag, and a hash in
-    the middle of a sentence is not that. `#blogs` stays prose.
+    `vocab` given: only those it already names — the old gated reading, kept
+    for callers that still want "did they mean an EXISTING tag".
     """
-    vocab = vocab if vocab is not None else vocabulary()
-    known = {norm_tag(t) for t in vocab}
+    known = {norm_tag(t) for t in vocab} if vocab is not None else None
     out = []
-    for raw in _BODYTAG.findall(text or ""):
-        t = norm_tag(raw)
-        if t in known and t not in out:
+    for _, t in _tag_matches(text):
+        if (known is None or t in known) and t not in out:
             out.append(t)
     return out
+
+
+def note_tags(path) -> list:
+    """Every tag one note file carries: frontmatter then body, normalised. The
+    single-note form of what load() computes, for modules that hold a path."""
+    path = Path(path)
+    meta = fm.read(path)
+    _, body, _ = fm.split(path)
+    return list(dict.fromkeys([norm_tag(t) for t in _tags(meta)] + body_tags(body)))
+
+
+def _edit_body_tags(body, fn):
+    """Rewrite body tags through fn(tag) -> new tag | "" (remove) | None (keep).
+
+    Removal is careful with prose: a tag on a line of nothing but tags, or
+    opening or closing a line, is deleted with its space; a tag mid-sentence
+    loses only its hash ("talked about #buddhism today" -> "talked about buddhism today"),
+    because deleting the word would change what was written."""
+    out, pos = [], 0
+    for m, t in list(_tag_matches(body)):
+        new = fn(t)
+        if new is None:
+            continue
+        out.append(body[pos:m.start()])
+        pos = m.end()
+        if new:
+            out.append("#" + new)
+            continue
+        line_start = body.rfind("\n", 0, m.start()) + 1
+        line_end = body.find("\n", m.end())
+        line_end = len(body) if line_end == -1 else line_end
+        rest = body[m.end():line_end]
+        # A tag opening a line, closing it, or on a line of only tags is a
+        # LABEL ("#todo fix the sink", "buy stand #todo") and goes; one in the
+        # middle of a sentence is a word and only loses its hash.
+        if _TAGLINE.match(body[line_start:line_end]) or not rest.strip() \
+                or _TRAILING_TAGS.fullmatch(rest) or m.start() == line_start:
+            # drop it with one side's whitespace: the space before it, or —
+            # when it opens the line — the space after it
+            prev = "".join(out)
+            if m.start() == line_start:
+                out = [prev]
+                while pos < len(body) and body[pos] in " \t":
+                    pos += 1
+            else:
+                out = [prev.rstrip(" \t")]
+        else:
+            out.append(m.group(1))                     # unhash, keep the word
+    out.append(body[pos:])
+    text = "".join(out)
+    # A line that removal emptied goes too (edits never add or remove newlines,
+    # so the old and new lines pair up one to one). Blank lines that were
+    # already blank stay.
+    before, after = body.split("\n"), text.split("\n")
+    if len(before) == len(after):
+        text = "\n".join(a for b, a in zip(before, after) if a.strip() or not b.strip())
+    return text
+
+
+def _write_body(path: Path, new_body: str):
+    fm_lines, _, had = fm.split(path)
+    text = path.read_text()
+    trailing = text.endswith("\n")
+    out = ("\n".join(["---", *fm_lines, "---"]) + "\n" + new_body) if had else new_body
+    if trailing and not out.endswith("\n"):
+        out += "\n"
+    path.write_text(out)
 
 
 # Below this length an edit distance of 1 is noise, not a typo: ui/up/id are
@@ -377,15 +476,14 @@ def resolve_tags(raws, vocab, *, allow_new=False) -> tuple[list, list, list]:
     return list(dict.fromkeys(apply)), notes, blocked
 
 
-def load(include_daily=False) -> list:
+def load(include_daily=False, dirs=None) -> list:
     """Every stream note as a plain dict. Cheap enough to do on every call —
     the stream is a few hundred small files — which keeps every face reading
     live state instead of a cache that can be stale or wrong."""
     items = []
-    if not STREAM.is_dir():
-        return items
     today = date.today()
-    for path in sorted(STREAM.rglob("*.md")):
+    paths = sorted(p for d in (dirs or (STREAM,)) if d.is_dir() for p in d.rglob("*.md"))
+    for path in paths:
         if path.name.startswith((".", "_")) or path.name == "README.md":
             continue
         if not include_daily and _DAILY.match(path.stem):
@@ -414,7 +512,13 @@ def load(include_daily=False) -> list:
             "path": str(path),
             "relpath": str(path.relative_to(KB)),
             "title": _title(body),
-            "tags": _tags(meta),
+            # A tag is a tag wherever it is written — frontmatter or body
+            # (see "body tags" above). `fm_tags`/`body_tags` say where, for the
+            # writers that have to change it.
+            "tags": list(dict.fromkeys(
+                [norm_tag(t) for t in _tags(meta)] + body_tags(body))),
+            "fm_tags": _tags(meta),
+            "body_tags": body_tags(body),
             "status": status,
             "when": when.isoformat() if when else None,
             "written": written.isoformat() if written else None,
@@ -441,7 +545,53 @@ def is_sooner(it) -> bool:
     return SOONER in (norm_tag(x) for x in it["tags"])
 
 
+def _line_ages(today=None):
+    """{0-based line index: days since that line of todo.md was written}, from
+    `git blame` — todo.md carries no dates, and git already knows when each line
+    arrived. A line not yet committed is 0 days old. Blame failing (no git, no
+    file) means every age is 0, never a crash: age only sorts and nudges."""
+    import subprocess
+    today = today or date.today()
+    try:
+        out = subprocess.run(["git", "-C", str(TODO.parent), "blame", "--line-porcelain",
+                              "--", TODO.name], capture_output=True, text=True,
+                             timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    ages, n = {}, 0
+    for ln in out.splitlines():
+        if ln.startswith("author-time "):
+            ages[n] = max(0, (today - date.fromtimestamp(int(ln.split()[1]))).days)
+            n += 1
+    return ages
+
+
+def todo_items(today=None):
+    """Open todo.md lines as agenda rows. todo.py owns the parsing; this only
+    shapes rows into the keys every consumer already reads (nudge, Surface
+    /review, kbview, Hermes): slug/title/age_days/tags. `slug` is the text
+    slugified — `cl todo done <slug>` matches it word for word."""
+    ages = _line_ages(today)
+    rows = []
+    for it in todo.open_items():
+        slug = re.sub(r"[^a-z0-9]+", "-", it["text"].lower()).strip("-")[:80] or "todo"
+        rows.append({"slug": slug, "title": it["text"], "text": it["text"],
+                     "band": it["band"], "path": str(TODO),
+                     "relpath": str(TODO.relative_to(KB)) if TODO.is_relative_to(KB) else str(TODO),
+                     "tags": [], "age_days": ages.get(it["line"], 0)})
+    return rows
+
+
 def agenda_groups(items, today=None):
+    """The two bands of todo.md (2026-10-05: the todo list is a file, not a tag).
+    `items` is ignored and kept only for call compatibility."""
+    groups = {k: [] for k in AGENDA_KEYS}
+    for it in todo_items(today):
+        groups["sooner" if it["band"] == "Sooner" else "later"].append(it)
+    return groups
+
+
+def _old_agenda_groups(items, today=None):
     """Split the pool into the two bands. Order is the order you read them in."""
     groups = {k: [] for k in AGENDA_KEYS}
     for it in items:
@@ -486,17 +636,27 @@ def apply_set(item, *, add_tags=None, rm_tags=None):
     to be another command."""
     path = Path(item["path"])
     updates = {}
-    tags = list(item["tags"])
+    fm_tags = list(item.get("fm_tags", item["tags"]))
+    have = {norm_tag(t) for t in item["tags"]}
     if add_tags:
-        tags = list(dict.fromkeys(tags + list(add_tags)))
-    if rm_tags:
-        drop = {norm_tag(t) for t in rm_tags}
-        tags = [t for t in tags if norm_tag(t) not in drop]
-    if tags != item["tags"]:
-        updates["tags"] = tags
-    if not updates:
+        # Added tags go in frontmatter — unless the note already carries them
+        # anywhere, body included.
+        fm_tags = list(dict.fromkeys(fm_tags + [t for t in add_tags if norm_tag(t) not in have]))
+    drop = {norm_tag(t) for t in rm_tags or []}
+    if drop:
+        fm_tags = [t for t in fm_tags if norm_tag(t) not in drop]
+    if fm_tags != list(item.get("fm_tags", item["tags"])):
+        updates["tags"] = fm_tags
+    body_hit = drop & set(item.get("body_tags", []))
+    if not updates and not body_hit:
         return {}
-    fm.set_fields(path, updates)
+    if updates:
+        fm.set_fields(path, updates)
+    if body_hit:
+        # Removing a tag that lives in the body means editing the body.
+        _, body, _ = fm.split(path)
+        _write_body(path, _edit_body_tags(body, lambda t: "" if t in drop else None))
+        updates["body_untagged"] = sorted(body_hit)
     return updates
 
 
@@ -534,7 +694,7 @@ def retag_plan(items, old, new):
                 after.append(t)
         if after != before:
             plan.append({"slug": it["slug"], "path": it["path"],
-                         "before": before, "after": after})
+                         "before": before, "after": after, "old": old, "new": new})
     return plan
 
 
@@ -542,7 +702,29 @@ def apply_retag(plan):
     """Write a plan out. Whole-list `tags:` writes, one note at a time, through
     fm.set_fields — so a note the plan did not name is not opened at all."""
     for row in plan:
-        fm.set_fields(Path(row["path"]), {"tags": row["after"]})
+        path = Path(row["path"])
+        old, new = row.get("old"), row.get("new", "")
+        meta = fm.read(path)
+        fm_before = [norm_tag(t) for t in _tags(meta)]
+        fm_after = []
+        for t in fm_before:
+            if old and (t == old or t.startswith(old + "/")):
+                if not new:
+                    continue
+                t = new + t[len(old):]
+            if t not in fm_after:
+                fm_after.append(t)
+        if fm_after != fm_before:
+            fm.set_fields(path, {"tags": fm_after})
+        if old:
+            _, body, _ = fm.split(path)
+            def swap(t):
+                if t == old or t.startswith(old + "/"):
+                    return (new + t[len(old):]) if new else ""
+                return None
+            nb = _edit_body_tags(body, swap)
+            if nb != body:
+                _write_body(path, nb)
     return len(plan)
 
 
@@ -583,8 +765,8 @@ def render_agenda(groups, today=None, color=False, show_pool=True):
             out.append(line)
         out.append("")
     if not any(groups[k] for k in groups):
-        out.append(c("  nothing tagged `#todo` yet.", "dim"))
-        out.append(c("  mark one:  cl stream set <slug> --todo", "dim"))
+        out.append(c("  todo.md is empty.", "dim"))
+        out.append(c("  add one:  cl todo add [--sooner] TEXT", "dim"))
         out.append("")
     return "\n".join(out)
 
@@ -689,6 +871,16 @@ def main(argv=None):
         args.cmd, args.json, args.no_pool = "agenda", False, False
 
     color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+    if args.cmd in ("tag", "tags", "set", "bodytags", "retag"):
+        # Retired, not removed: exit 0 with an empty answer of the old shape.
+        if getattr(args, "json", False):
+            empty = {"tag": [], "tags": {"tags": []}, "bodytags": {"tags": []}}
+            print(json.dumps(empty.get(args.cmd, {"ok": True, "retired": RETIRED})))
+        else:
+            print(RETIRED)
+        return
+
     items = load()
 
     if args.cmd == "agenda":
@@ -699,9 +891,11 @@ def main(argv=None):
               args, render_agenda(g, color=color, show_pool=not args.no_pool))
 
     elif args.cmd == "inbox":
-        rows = [i for i in items if not i["tags"]]
-        rows.sort(key=lambda i: i["created"] or "")
-        _emit(rows, args, render_list(rows, color, f"INBOX ({len(rows)})"))
+        # The inbox is working/ (2026-10-05): every capture lands there, one file
+        # each, until it is filed out. Newest first.
+        rows = load(include_daily=True, dirs=(WORKING,))
+        rows.sort(key=lambda i: i["created"] or "", reverse=True)
+        _emit(rows, args, render_list(rows, color, f"WORKING ({len(rows)})"))
 
     elif args.cmd == "tag":
         q = args.tag.lstrip("#").rstrip("/")
@@ -713,17 +907,16 @@ def main(argv=None):
     elif args.cmd == "chrono":
         # include_daily: a daily note is a journal entry, and a timeline of the
         # journal that skipped them would have holes in it.
-        rows = load(include_daily=True)
+        # writing/ working/ threads/ — not archive/, which is the past by intent.
         if args.tag:
-            q = args.tag.lstrip("#").rstrip("/")
-            rows = [i for i in rows
-                    if any(t == q or t.startswith(q + "/") for t in i["tags"])]
+            print(RETIRED, file=sys.stderr)
+        rows = load(include_daily=True, dirs=(WRITING, WORKING, THREADS))
         # A note with no `written:` was written when it was captured, so the
         # typed journal and the transcribed notebooks share one timeline.
         for i in rows:
             i["on"] = i["written"] or (i["created"] or "")[:10] or None
         rows.sort(key=lambda i: (i["on"] or "", i["created"] or ""))
-        head = f"#{args.tag.lstrip('#')}" if args.tag else "STREAM"
+        head = "KB"
         _emit(rows, args, render_chrono(rows, color, f"{head} by date written ({len(rows)})"))
 
     elif args.cmd == "tags":

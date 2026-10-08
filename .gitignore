@@ -11,3 +11,6 @@ ai_rss/out/
 ai_rss/state/seen.json
 *.bak
 *.bak.[0-9]*
+
+# the router's few-shot examples are his real notes — personal, never public
+router_examples.json

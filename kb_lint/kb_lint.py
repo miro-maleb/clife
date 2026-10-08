@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """kb-lint — health sweep over ~/kb. Report-only; never edits a note.
 
+2026-10-05: rescoped to the folder layout (writing/ working/ threads/ archive/,
+paths.NOTE_DIRS). Tags are retired, so records and clusters are told apart by
+FOLDER again; subdirectories under writing/ are legitimate, so the old "shard"
+check is gone and a duplicate filename across folders is flagged instead (a
+[[link]] to it resolves by folder rank — links.DIR_RANK — which may not be the
+one you meant). The history below is the flat-store version.
+
 Written against the FLAT kb: one store, ~/kb/notes, placed by frontmatter tags
 (flattened 2026-09-07). The version before this scoped everything by directory,
 and after the flatten that failed quietly on every check at once — the deadline
@@ -11,7 +18,7 @@ reports because the paths that used to exclude them were gone. So scoping here i
 by TAG, and tag questions are asked of `stream`, never of hand-walked frontmatter.
 
 Layer 1 — deterministic, no LLM, so nothing in it can hallucinate:
-  shard              a subdirectory inside notes/ — something composing a path
+  duplicate-name     one filename in two folders — links resolve to only one
   broken-link        a [[wikilink]] naming no file in the kb, split by what to DO:
     · dissolved-dir       a path-style link whose note still exists under a flat
                           name — the flatten moved the note, the link kept the path
@@ -20,7 +27,6 @@ Layer 1 — deterministic, no LLM, so nothing in it can hallucinate:
     · unresolved-concept  referenced >=2x — probably a note worth writing
                           (Karpathy's "system emits its own todo")
   overdue-deadline   any note whose `deadline:` has passed and `status:` isn't closed
-  tag-drift          two tags in use that stream's own tag guard calls one idea
   transcription      a page "originally written by hand" with no `written:` date
 
 Layer 2 — `--deep`, the local model; every item is for review, not trust:
@@ -53,7 +59,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # the clife root
 import fm        # noqa: E402
 import stream    # noqa: E402
-from paths import KB, STORE   # noqa: E402
+from paths import KB, NOTE_DIRS, WRITING, ARCHIVE   # noqa: E402
 
 # Surface's /reports serves this directory by name — don't move it.
 LINT_DIR = KB / "_lint"
@@ -73,7 +79,7 @@ LINT_DIR = KB / "_lint"
 # Build those (a note pair that genuinely contradicts, one that only looks like it
 # does) before touching this line.
 OLLAMA_HOST = os.environ.get("KB_LINT_OLLAMA", "http://127.0.0.1:11434")
-MODEL = os.environ.get("KB_LINT_MODEL", "qwen3.8-112k")
+MODEL = os.environ.get("KB_LINT_MODEL", "resident")
 # No NUM_CTX. This job ran 17GB of its own beside the pinned resident because
 # ollama keys a loaded model by (name, context) — asking for a different one
 # forces a full unload/reload. The tag carries 112k; reuse what is already up.
@@ -95,127 +101,34 @@ CLUSTER_MAX_DOCS = 6           # biggest tag group fed at once
 CLOSED_STATUSES = {"done", "dropped", "cut", "superseded", "archived", "abandoned",
                    "parked"}
 
-# Neither scanned nor counted as link targets. `_lint` is our own output; `outbox`
-# and `_state` are generated; `.trash` is prune-noise's bin and `recovery` a rescue
-# copy; templates carry intentional placeholder links; `oil:` is an oil.nvim accident.
-SKIP_DIRS = {".git", ".obsidian", "_lint", "oil:", "templates", "outbox", "_state",
-             ".trash", "recovery", "log"}
-
-# Claude's memory files. Claude-written notes link them as [[slug]], which renders
-# like any wikilink and names nothing in the kb. No directory (another machine) just
-# means nothing gets this label.
-MEMORY_DIR = (Path.home() / ".claude" / "projects"
-              / str(Path.home()).replace("/", "-") / "memory")
-
-WIKILINK = re.compile(r"!?\[\[([^\]]+)\]\]")
-_FENCE = re.compile(r"^\s*(```|~~~)")
-_CODESPAN = re.compile(r"`[^`\n]*`")
+# The wikilink layer lives in links.py — the regex, the flat-store name rule, the
+# code masking and the broken/dissolved logic all used to be defined right here.
+# They moved out when nvim-write and Surface needed to follow a link too: three
+# copies of "what does [[x]] point at" is exactly the shape of the four disagreeing
+# tag readers this kb already paid for. kb_lint is now one caller among several.
+from links import (SKIP_DIRS, MEMORY_DIR, WIKILINK, build_index,  # noqa: E402,F401
+                   scan_links, dissolved, resolves, target as _target,
+                   memory_stems as _memory_slugs, md_files as _md_files,
+                   skip as _skip)
 
 
-def _skip(rel: Path) -> bool:
-    return any(part in SKIP_DIRS for part in rel.parts)
-
-
-def _md_files():
-    for md in sorted(KB.rglob("*.md")):
-        if not _skip(md.relative_to(KB)):
-            yield md
-
-
-def _body(md: Path, limit: int) -> str:
-    """Note text minus its frontmatter, truncated."""
+def _body(md, limit: int) -> str:
+    """Note text minus its frontmatter, truncated. Layer 2 feeds the model this."""
     _, body, _ = fm.split(md)
     return body.strip()[:limit]
 
 
-# ── links ─────────────────────────────────────────────────────────────────────
-def build_index() -> set[str]:
-    """Every name a wikilink can resolve to, lowercased. The store is flat, so a
-    link resolves by NAME — its last path segment — and any directory part is
-    decoration at best."""
-    names: set[str] = set()
-    for root, dirs, files in os.walk(KB):
-        rel_root = Path(root).relative_to(KB)
-        dirs[:] = [d for d in dirs if not _skip(rel_root / d)]
-        for f in files:
-            f = f.lower()
-            names.add(f)
-            names.add(f.removesuffix(".md"))
-            names.add(f.split(".")[0])          # hearth-map.excalidraw.md -> hearth-map
-    return names
-
-
-def _target(raw: str) -> str:
-    t = raw.split("|")[0].split("#")[0].strip()
-    while t.startswith(("./", "../")):
-        t = t.split("/", 1)[1]
-    return t
-
-
-def resolves(t: str, names: set[str]) -> bool:
-    if not t:                                   # a pure same-file #anchor
-        return True
-    last = t.split("/")[-1].lower()
-    return bool({last, last.removesuffix(".md"), last.split(".")[0]} & names)
-
-
-def scan_links(names: set[str]) -> dict[str, list[tuple]]:
-    """{broken_target: [(file, line, raw), ...]}. Code is masked first: a
-    `[[ -f ]]` shell guard or a backticked `[[slug]]` is quoted text, and
-    rendering does not make it a link either."""
-    broken: dict[str, list[tuple]] = {}
-    for md in _md_files():
-        rel = str(md.relative_to(KB))
-        try:
-            lines = md.read_text(errors="replace").splitlines()
-        except OSError:
-            continue
-        fenced = False
-        for i, line in enumerate(lines, 1):
-            if _FENCE.match(line):
-                fenced = not fenced
-                continue
-            if fenced:
-                continue
-            for m in WIKILINK.finditer(_CODESPAN.sub("", line)):
-                t = _target(m.group(1))
-                if not resolves(t, names):
-                    broken.setdefault(t, []).append((rel, i, m.group(0)))
-    return broken
-
-
-def dissolved(t: str, stems: set[str]) -> tuple[bool, str | None]:
-    """For a path-style target: (is its directory gone, the flat note it meant).
-
-    Gone means gone from disk — `outbox/ai-rss/latest` points into a directory that
-    still exists, and the ai-rss NOTE is not what it wanted, so it gets no hint.
-    For a dissolved path the note is usually named by a segment —
-    projects/personal-tasks/project meant personal-tasks — and only a segment that
-    IS a note now counts: the suggestion is a file that exists, never a guess."""
-    parts = t.split("/")
-    if len(parts) < 2 or (KB / "/".join(parts[:-1])).is_dir():
-        return False, None
-    for seg in reversed(parts[:-1]):
-        if seg.lower() in stems:
-            return True, seg
-    return True, None
-
-
-def _memory_slugs() -> set[str]:
-    if not MEMORY_DIR.is_dir():
-        return set()
-    return {p.stem.lower() for p in MEMORY_DIR.glob("*.md") if p.name != "MEMORY.md"}
-
-
 # ── store checks ──────────────────────────────────────────────────────────────
-def scan_shards() -> list[tuple[str, int]]:
-    """Directories inside the flat store. Three components rebuilt notes/2026/09/
-    within an hour of the flatten because mkdir(parents=True) never errors; a
-    directory here is the same class of bug, and nothing else will notice it."""
-    if not STORE.is_dir():
-        return []
-    return sorted((str(d.relative_to(KB)), sum(1 for _ in d.rglob("*.md")))
-                  for d in STORE.iterdir() if d.is_dir() and not d.name.startswith("."))
+def scan_dupes() -> list[tuple[str, list[str]]]:
+    """One filename in two places under NOTE_DIRS. A [[link]] resolves by name, so
+    only one of them is reachable (links.DIR_RANK picks which) — the other is
+    either a stale copy or a note that needs a distinct name."""
+    seen: dict[str, list[str]] = {}
+    for d in NOTE_DIRS:
+        if d.is_dir():
+            for md in sorted(d.rglob("*.md")):
+                seen.setdefault(md.name.lower(), []).append(str(md.relative_to(KB)))
+    return sorted((n, ps) for n, ps in seen.items() if len(ps) > 1)
 
 
 def scan_deadlines(items: list[dict], today: dt.date) -> list[tuple]:
@@ -223,7 +136,7 @@ def scan_deadlines(items: list[dict], today: dt.date) -> list[tuple]:
     note tagged projects/<name> now, so there is no project.md to look for."""
     overdue = []
     for it in items:
-        if "archive" in it["tags"]:
+        if Path(it["path"]).is_relative_to(ARCHIVE):
             continue
         meta = fm.read(Path(it["path"]))
         raw = str(meta.get("deadline") or "").split("#")[0].strip()
@@ -314,9 +227,11 @@ def _llm(system: str, user: str, temperature: float = 0.2) -> str:
 
 
 def _is_record(it: dict) -> bool:
+    """By FOLDER since 2026-10-05: everything under writing/ (journal, poems,
+    letters, blog, stories, dreams/ideas) and archive/ is a record, not a claim."""
+    p = Path(it["path"])
     return (bool(stream._DAILY.match(it["slug"])) or bool(it["written"])
-            or any(t == r or t.startswith(r + "/")
-                   for t in it["tags"] for r in RECORD_TAGS))
+            or p.is_relative_to(WRITING) or p.is_relative_to(ARCHIVE))
 
 
 def _claim_notes(items: list[dict]) -> list[dict]:
@@ -376,8 +291,8 @@ def _clusters(notes: list[dict]) -> list[tuple[str, list[dict]]]:
     recent note overtaking an older one."""
     by_tag: dict[str, list[dict]] = {}
     for it in notes:
-        for t in it["tags"]:
-            by_tag.setdefault(t, []).append(it)
+        # Tags are retired (2026-10-05): the folder is the cluster now.
+        by_tag.setdefault(str(Path(it["relpath"]).parent), []).append(it)
     groups = []
     for t, its in sorted(by_tag.items(), key=lambda kv: (len(kv[1]), kv[0])):
         if len(its) >= 2:
@@ -465,12 +380,11 @@ def render(r: dict, today: dt.date,
          "*Report only — nothing was changed."
          + (" Deep pass (local qwen) ran.*\n" if deep else " Deterministic, no AI.*\n"),
          "## Summary\n",
-         f"- **{len(r['shards'])}** shard director(ies) inside `notes/`",
+         f"- **{len(r['dupes'])}** filename(s) present in more than one folder",
          f"- **{total_broken}** broken wikilink(s) across **{len(broken)}** target(s): "
          f"**{len(concepts)}** unresolved concept(s), **{len(moved)}** into dissolved "
          f"directories, **{len(memory)}** to Claude's memory, **{len(typos)}** one-off(s)",
          f"- **{len(r['overdue'])}** overdue deadline(s)",
-         f"- **{len(r['drift'])}** tag pair(s) naming one idea",
          f"- **{len(r['transcriptions'])}** transcription(s) without `written:`"]
     if deep:
         p.append(f"- **{stale_n}** possible stale claim(s) in {r['claim_n']} claim-bearing "
@@ -478,26 +392,18 @@ def render(r: dict, today: dt.date,
                  "*(AI, review each)*")
     p.append("")
 
-    if r["shards"]:
-        p.append("## Shards inside notes/ — fix first\n")
-        p.append("*The store is flat. A directory here means something composed a path "
-                 "instead of calling `kb-inbox` or importing `paths.STORE`.*\n")
-        for d, n in r["shards"]:
-            p.append(f"- `{d}/` — {n} note(s)")
+    if r["dupes"]:
+        p.append("## One name, several folders — fix first\n")
+        p.append("*A [[link]] resolves by name to only one of these "
+                 "(writing > threads > working > archive). Rename or remove the other.*\n")
+        for n, ps in r["dupes"]:
+            p.append(f"- `{n}` — " + ", ".join(f"`{x}`" for x in ps))
         p.append("")
 
     if r["overdue"]:
         p.append("## Overdue deadlines\n")
         for f, d, status, days in r["overdue"]:
             p.append(f"- **{d.isoformat()}** ({days}d ago, `{status}`) — `{f}`")
-        p.append("")
-
-    if r["drift"]:
-        p.append("## Tag drift — one idea, two tags\n")
-        p.append("*Pairs the tag guard would refuse today. If they do mean the same "
-                 "thing, `cl stream retag <old> <new>` merges them (dry run first).*\n")
-        for small, ns, big, nb in r["drift"]:
-            p.append(f"- `#{small}` ({ns}) ↔ `#{big}` ({nb})")
         p.append("")
 
     if r["transcriptions"]:
@@ -556,7 +462,7 @@ def render(r: dict, today: dt.date,
                 p.append(f"- *{it['claim']}* — {it.get('why','')}")
             p.append("")
 
-    if not (r["shards"] or broken or r["overdue"] or r["drift"] or r["transcriptions"]
+    if not (r["dupes"] or broken or r["overdue"] or r["transcriptions"]
             or stale or contradictions):
         p.append("Nothing flagged. The kb is clean. ✓")
     return "\n".join(p) + "\n"
@@ -573,15 +479,14 @@ def main() -> None:
     today = dt.date.today()
     # include_daily: for a sweep, a daily note is a note like any other — the
     # record-vs-claim distinction is made per check, not by leaving files unread.
-    items = stream.load(include_daily=True)
+    items = stream.load(include_daily=True, dirs=NOTE_DIRS)
     names = build_index()
     r = {
         "broken": scan_links(names),
-        "stems": {p.stem.lower() for p in STORE.glob("*.md")},
+        "stems": {p.stem.lower() for d in NOTE_DIRS if d.is_dir() for p in d.rglob("*.md")},
         "memory": _memory_slugs(),
-        "shards": scan_shards(),
+        "dupes": scan_dupes(),
         "overdue": scan_deadlines(items, today),
-        "drift": scan_tag_drift(stream.vocabulary(items)),
         "transcriptions": scan_transcriptions(items),
         "claim_n": 0,
     }
@@ -609,8 +514,8 @@ def main() -> None:
     if args.deep:
         extra = (f", {sum(len(s['items']) for s in (stale or []))} stale, "
                  f"{len(contradictions or [])} contradiction(s)")
-    print(f"kb-lint: {len(r['shards'])} shard(s), {total} broken link(s), "
-          f"{len(r['overdue'])} overdue, {len(r['drift'])} tag drift, "
+    print(f"kb-lint: {len(r['dupes'])} duplicate name(s), {total} broken link(s), "
+          f"{len(r['overdue'])} overdue, "
           f"{len(r['transcriptions'])} undated transcription(s){extra} "
           f"-> {LINT_DIR}/latest.md")
 

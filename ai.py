@@ -14,10 +14,10 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 # One model for everything on this box, deliberately. The tower has a single
 # 24 GB card and a 27B at 64k holds ~21.7 GiB of it, so a second model is not a
 # second option — it is a full evict-and-reload (~25 s) every time the caller
-# changes. qwen3.8-112k resident beats qwen3:8b plus thrash even on the small,
+# changes. resident resident beats qwen3:8b plus thrash even on the small,
 # frequent calls this default serves. See the Surface /ai lens for what is
 # actually on the card. Override with CL_AI_MODEL.
-MODEL = os.environ.get("CL_AI_MODEL", "qwen3.8-112k")
+MODEL = os.environ.get("CL_AI_MODEL", "resident")
 
 # ── inbox coarse pruning ─────────────────────────────────────────────────────
 #
@@ -405,7 +405,7 @@ Return ONLY JSON:
 # job that would justify reaching for something heavier again, and because a
 # separate name documents which calls are quality-critical.
 # Override with CL_COMPOSE_MODEL.
-COMPOSE_MODEL = os.environ.get("CL_COMPOSE_MODEL", "qwen3.8-112k")
+COMPOSE_MODEL = os.environ.get("CL_COMPOSE_MODEL", "resident")
 
 
 def proofread(text):
@@ -570,6 +570,57 @@ THREAD:
 # 18/18 = 18/18 across six frozen cases for ~5x the runtime (see
 # ai_rss/config.yaml). Proofreading is further from thinking's strength than any
 # of those stages — a reasoning pass here invents edits rather than finding them.
+
+# ── tarot reading interpretation ─────────────────────────────────────────────
+#
+# Called by Surface's /api/tarot/interpret, which the phone app posts to. The
+# app sends each card already bundled with its position AND both meanings, so
+# the model is never asked to recall what "the crossing card" means or what the
+# Five of Pentacles is — it only has to do the part that actually needs a
+# reader: relate them to each other.
+
+def interpret_reading(spread_name, spread_blurb, question, cards, timeout=300):
+    """Interpret a laid-out spread. `cards` is a list of dicts with keys
+    position, position_meaning, card, reversed, card_meaning.
+
+    Returns "" on failure, like every other caller here."""
+    lines = []
+    for i, c in enumerate(cards, 1):
+        rev = " (reversed)" if c.get("reversed") else ""
+        block = (f"{i}. Position: {c['position']} — {c['position_meaning']}\n"
+                 f"   Card drawn: {c['card']}{rev} — {c['card_meaning']}")
+        for s_ in (c.get("card_implications") or []):
+            block += f"\n     - {s_}"
+        lines.append(block)
+    asked = f"\nThe querent asked: {question.strip()}\n" if (question or "").strip() else ""
+
+    prompt = f"""You are reading tarot for someone who knows the cards and wants
+a reading, not a glossary. The spread is {spread_name}: {spread_blurb}
+{asked}
+Each card below is given with the position it landed in, what that position
+means in this spread, what the card means, and a list of senses that card can
+carry. All of it is supplied — do not restate any of it back. Where a card has
+several possible senses, your job is to say which one this position selects. Your job is the part that needs a reader: what these
+particular cards mean IN these particular positions, and what they say together.
+
+{chr(10).join(lines)}
+
+Write the reading in two parts.
+
+First, go position by position. For each one, a short paragraph on what this
+card lands as HERE — the friction or fit between the card and the seat it took.
+Name the card and position so it can be followed.
+
+Then a final section headed "Altogether" that reads the spread as one thing:
+the pattern across the cards, what reinforces what, what contradicts what, and
+what the reading is actually pointing at. This part matters most.
+
+Write plainly. No mystical register, no second-person prophecy, no hedging
+about how the cards "may suggest". Say what you see. If the cards genuinely
+conflict, say that rather than smoothing it into a moral."""
+
+    return _generate_text(prompt, timeout=timeout, num_predict=1600, temperature=0.6)
+
 
 def _generate_json(prompt, timeout=180, model=None):
     """POST to ollama with JSON-constrained output; return parsed dict ({} on failure)."""

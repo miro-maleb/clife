@@ -30,6 +30,7 @@ Commands:
 | `cl tags` | index inline `#tags` across daily notes; `cl tags TAG` shows every block carrying it |
 | `cl stream` | views over the capture stream — `agenda`, `inbox`, `tag`, `ls`, `set`. A view is a query, never a file |
 | `cl stream tags` | the tag vocabulary already in use, most-used first — the list `--tag` is guarded against |
+| `cl links` | the wikilink layer — `resolve`, `out`, `back` (backlinks, derived never stored), `orphans`, `suggest` (embedding similarity → `## Related` candidates; dry run unless `--write`). One owner for what `[[x]]` points at; kb-lint, nvim-write and Surface all read it |
 | `cl triage` | the unplaced queue, one suggestion slot per note; `cl triage suggest` fills a slot |
 | `cl triage --tui` | the triage surface (M-4 in the Bridge deck) — tag box, vocabulary as you type, `d` trashes |
 | `cl new-project` | scaffold a new project |

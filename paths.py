@@ -19,12 +19,32 @@ from pathlib import Path
 
 KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
 
-# THE store. One flat directory holding every note — captures, dailies,
-# projects, recipes, blog drafts. Placement is frontmatter `tags:`, never a
-# directory: a directory that encodes what a note IS is the mistake this
-# replaced (writing/_stream, projects/, life/, notes/ideas/ were four of them).
-# Nothing composes this path itself; import it.
-STORE = KB / "notes"
+# THE LAYOUT (2026-10-05 redesign — replaces the 2026-09-07 flat tag store).
+# Folders say WHO a note is for and where it is in its life, never what it is:
+#   writing/  the only part Miro browses: poems/ stories/ blog/ letters/ journal/,
+#             plus dreams.md and ideas.md (append-only)
+#   working/  the capture desk: every new capture lands here, one file each; the
+#             router files it out or it stays; 60 days untouched -> archive/
+#   threads/  written FOR CLAUDE to resume a conversation or project; INDEX.md first
+#   archive/  finished or gone quiet; nothing is deleted
+#   todo.md   the todo list: `## Sooner` / `## Later` checkbox lines (clife/todo.py)
+# Tags are retired. Nothing composes these paths itself; import them.
+WRITING = KB / "writing"
+WORKING = KB / "working"
+THREADS = KB / "threads"
+ARCHIVE = KB / "archive"
+TODO = KB / "todo.md"
+RHYTHM = KB / "rhythm.md"                  # the shape of the week; never a checklist
+PROJECTS = THREADS / "INDEX.md"            # project/idea status, in bands: Active · Ideas · Asleep · Reference
+DREAMS = WRITING / "dreams.md"
+IDEAS = WRITING / "ideas.md"
+JOURNAL = WRITING / "journal"
+NOTE_DIRS = (WRITING, WORKING, THREADS, ARCHIVE)   # everything a reader may scan
+
+# Legacy name. Every pre-redesign module imports STORE as "where new notes go";
+# pointing it at working/ keeps those writers correct until each is rewritten.
+# Do NOT use it for new code, and do not scan it expecting the whole kb.
+STORE = WORKING
 
 # Tower-local state (not git-synced): the calendar-pool DB, the lint report, etc.
 DATA_DIR = Path(os.environ.get("CLIFE_DATA_DIR", str(Path.home() / ".local" / "share" / "clife"))).expanduser()

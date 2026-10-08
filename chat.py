@@ -10,7 +10,7 @@ The point of this tool is *seamless* switching between fast (nothink) and deep
 The model, conversation history, and the loaded project note all persist across
 the switch — flipping think on/off never resets the thread.
 
-Model: local qwen via ollama. Defaults to qwen3.8-112k, the pinned resident (a 27B
+Model: local qwen via ollama. Defaults to resident, the pinned resident (a 27B
 over the 8B for open-ended project thinking — it catches the non-obvious). Fast
 turns on the 27B run ~25-35s; `.m qwen3:8b` drops that to a few seconds if you
 want pure speed over depth. Streams tokens so it feels live regardless.
@@ -29,7 +29,7 @@ except ImportError:
 from paths import KB, STORE
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
-MODEL = os.environ.get("CL_CHAT_MODEL", "qwen3.8-112k")
+MODEL = os.environ.get("CL_CHAT_MODEL", "resident")
 PROJECTS = STORE
 
 # ANSI — clife already leans on rich elsewhere, but raw codes keep streaming simple.
@@ -118,7 +118,7 @@ def stream_reply(messages, think, show_thinking):
         "stream": True,
         # No num_ctx: ollama keys a loaded model by its context, so naming one
         # here would evict the pinned resident and load a second 17GB copy.
-        # The qwen3.8-112k tag carries its context from the Modelfile.
+        # The resident tag carries its context from the Modelfile.
         "options": {"temperature": 0.7},
     }
     req = urllib.request.Request(

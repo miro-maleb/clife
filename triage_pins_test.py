@@ -341,7 +341,14 @@ async def run():
             await settle(pilot, 0.08)
             await pilot.press("h")
             await settle(pilot, 0.2)
-            lst.index = 3
+            # A row that is not the one the walk just landed on. Hardcoding
+            # `3` assumed the column was ordered by weight: once it groups by
+            # family, row 3 can BE where the walk stopped, and assigning the
+            # index it already holds emits no Highlighted at all -- so the
+            # check passed or failed on the tag column's sort order rather
+            # than on anything about walks.
+            lst.index = next(k for k in range(PV, len(app.tag_names))
+                             if k != lst.index)
             await settle(pilot, 0.35)
             check(app.pins == [], "leaving the walk drops its pin", str(app.pins))
 

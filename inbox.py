@@ -22,7 +22,9 @@ import pool
 
 console = Console()
 
-notes_path = KB / "notes"
+# 2026-10-05: ~/kb/notes/ is gone. Every new file this module writes lands in
+# working/ (paths.STORE is an alias for WORKING); nothing composes kb paths here.
+notes_path = STORE
 project_path = STORE
 # There is no inbox FOLDER. Untagged captures live in the stream's YYYY/MM
 # shards like every other note, and "inbox" is the set of notes nobody has
@@ -33,19 +35,16 @@ inbox_path = STORE
 pinned_path = STORE / ".pinned"   # vestigial: no pinned items exist
 
 
-_UNPLACED_TAGS_RE = re.compile(r"^tags:(.*)$", re.M)
-
-
 def _is_unplaced(f):
-    """An inbox item is a note with no tags — unplaced, still needing a decision."""
-    try:
-        head = f.read_text(errors="replace")[:400]
-    except OSError:
-        return False
-    if not head.startswith("---"):
-        return True                      # no frontmatter at all = unplaced
-    m = _UNPLACED_TAGS_RE.search(head)
-    return not (m and m.group(1).strip(" []"))
+    """Every file in working/ is waiting on a decision (2026-10-05: tags retired,
+    working/ IS the inbox). The tag predicate below is kept only for history.
+
+    A tag in the BODY counts (2026-10-04): this is the predicate --prune-noise
+    trusts before binning a note, so it must agree with `cl stream`, which
+    reads tags from frontmatter and body both. It used to read frontmatter
+    only, and a note saying `#dream` in Obsidian would have looked unplaced
+    here while every view showed it placed. Asks stream, never re-implements."""
+    return f.is_file() and not f.name.startswith(".")
 shopping_path = STORE
 system_improvements_path = STORE / "system-improvements.md"
 
@@ -216,7 +215,7 @@ def _write_note(slug, content):
     notes_path.mkdir(parents=True, exist_ok=True)
     dest = notes_path / f"{slug}.md"
     dest.write_text(
-        f"---\ncreated: {datetime.now().strftime('%Y-%m-%d')}\ntags: []\nstatus: seed\n---\n\n{content}\n"
+        f"---\ncreated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n---\n\n{content}\n"
     )
     return dest
 
@@ -323,7 +322,6 @@ def route_new_project(file):
         f"sleeping: \n"
         f"last_reviewed: \n"
         f"area: {area_name}\n"
-        f"tags: []\n"
         f"---\n\n"
         f"# {title}\n\n"
         f"## Idea\n\n"
@@ -625,7 +623,7 @@ def ni_new_project(file, name, area="ideas"):
     today = datetime.now().strftime("%Y-%m-%d")
     (project_dir / "project.md").write_text(
         f"---\ncreated: {today}\ndeadline: \nstatus: on-hold\ncompleted: \nabandoned: \n"
-        f"sleeping: \nlast_reviewed: \narea: {area}\ntags: []\n---\n\n# {title}\n\n## Idea\n\n{content}\n"
+        f"sleeping: \nlast_reviewed: \narea: {area}\n---\n\n# {title}\n\n## Idea\n\n{content}\n"
     )
     file.unlink()
     return {"ok": True, "msg": f"new project: {area}/{slug}"}
@@ -795,6 +793,12 @@ def prune_noise(dry_run=False, min_confidence=None, min_age_hours=None):
     """
     floor = PRUNE_MIN_CONFIDENCE if min_confidence is None else float(min_confidence)
     age_floor = PRUNE_MIN_AGE_HOURS if min_age_hours is None else float(min_age_hours)
+    # RETIRED 2026-10-05: nothing auto-bins captures any more (working/ ages into
+    # archive/ instead). Same JSON shape, nothing touched. The old body follows,
+    # unreachable, for the record.
+    return {"trashed": [], "skipped": [], "kept": 0, "floor": floor,
+            "age_floor": age_floor, "dry_run": dry_run,
+            "retired": "--prune-noise is retired (2026-10-05); nothing was judged or moved"}
     trashed, skipped, kept = [], [], 0
     for it in prune_items().get("items", []):
         f = inbox_path / it["file"]

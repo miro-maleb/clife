@@ -22,7 +22,7 @@ from tui_common import (
     KeyButton, ConfirmScreen,
     apply_termux_css, git_push_kb, exit_to_launcher,
 )
-from projects import (
+from projects_legacy import (
     get_all_reviewable,
     get_status, get_goal, open_task_count, status_color,
     set_status, reclassify,

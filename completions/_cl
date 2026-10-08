@@ -32,7 +32,11 @@ except Exception: pass')"})
 _cl_stream_slugs() {
   local -a sl
   local d
-  for d in $HOME/kb/writing/_stream/*/*/*.md(N); do
+  # The flat store (2026-09-07). This globbed writing/_stream/*/*/*.md, a path the
+  # flatten retired, so slug completion for `stream set` and `triage` quietly
+  # offered nothing for nine days.
+  # 2026-10-05 redesign: notes live under writing/ working/ threads/ archive/.
+  for d in $HOME/kb/{writing,working,threads,archive}/**/*.md(N); do
     sl+=("${${d##*/}%.md}")
   done
   _describe "stream notes" sl
@@ -90,7 +94,9 @@ _cl() {
     "projects:project review"
     "notes:notes browser"
     "tags:index inline #tags across daily notes"
-    "stream:views over the capture stream — agenda / inbox / tag / tags / set"
+    "stream:views — agenda (todo.md) / inbox (working/) / chrono"
+    "todo:the todo list — list / add / done / sweep"
+    "links:wikilinks — resolve / out / back / orphans / suggest"
     "triage:the unplaced queue, one suggestion slot per note"
     "review:full review pipeline"
     "chat:flesh out a project with local qwen (.t toggles think)"
@@ -134,36 +140,53 @@ _cl() {
       capture)
         _values "capture options" \
           "--voice[voice capture]" \
-          "--journal[capture to journal]" \
-          "-j[capture to journal]"
+          "--journal[RETIRED — no daily notes]"
         ;;
       stream)
         if (( CURRENT == 3 )); then
           _values "stream subcommand" \
-            "agenda[todo items by intent date]" \
-            "inbox[untagged notes — nobody has decided yet]" \
-            "tag[every note carrying a tag]" \
-            "tags[the tag vocabulary in use]" \
-            "ls[filter the whole stream]" \
-            "set[edit one note's status / when / tags]" \
+            "agenda[todo.md in two bands]" \
+            "inbox[working/ — captures not yet filed out]" \
+            "chrono[writing/working/threads by date written]" \
+            "ls[filter working/]" \
             "render[write the agenda artifact to outbox/]"
         else
+          _values "options" "--json[machine output]"
+        fi
+        ;;
+
+      todo)
+        if (( CURRENT == 3 )); then
+          _values "todo subcommand" \
+            "list[open items, Sooner then Later]" \
+            "add[add an item — Later unless --sooner]" \
+            "done[delete the one item matching every word]" \
+            "sweep[drop checked lines]"
+        else
           case "$words[3]" in
-            set)
-              if (( CURRENT == 4 )); then
-                _cl_stream_slugs
-              else
-                _values "set options" \
-                  "--todo[status: todo]" "--done[status: done]" \
-                  "--archive[status: archived]" \
-                  "--when[intent date: today|fri|+3d|none]:when:" \
-                  "--tag[tags to ADD (guarded)]:tags:_cl_stream_tags" \
-                  "--untag[tags to REMOVE]:tags:_cl_stream_tags" \
-                  "--new[allow a flagged near-duplicate]" \
-                  "--json[machine output]"
-              fi
-              ;;
-            tag) (( CURRENT == 4 )) && _cl_stream_tags || _values "opts" "--json[machine output]" ;;
+            list) _values "options" "--sooner[only Sooner]" "--json[machine output]" ;;
+            add) _values "options" "--sooner[put it in Sooner]" ;;
+            done) local -a its; its=(${(f)"$(cl todo list --json 2>/dev/null | python3 -c 'import json,sys
+for i in json.load(sys.stdin): print(i["text"])' 2>/dev/null)"}); compadd -Q -a its ;;
+          esac
+        fi
+        ;;
+
+      links)
+        if (( CURRENT == 3 )); then
+          _values "links subcommand" \
+            "resolve[the file a link points at]" \
+            "out[links going out of one note]" \
+            "back[notes linking in — backlinks]" \
+            "orphans[notes with no link in and none out]" \
+            "suggest[related notes not yet linked — dry run unless --write]" \
+            "index[every name a link can resolve to]" \
+            "map[name -> path as JSON, for an editor]"
+        else
+          case "$words[3]" in
+            resolve|back) (( CURRENT == 4 )) && _cl_stream_slugs || _values "opts" "--json[machine output]" ;;
+            out) (( CURRENT == 4 )) && _files -g '*.md' || _values "opts" "--json[machine output]" ;;
+            orphans) _values "options" "--include-journal[don't exclude daily notes]" "--json[machine output]" ;;
             *) _values "options" "--json[machine output]" ;;
           esac
         fi

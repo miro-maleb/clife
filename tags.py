@@ -273,6 +273,11 @@ def main():
     args = ap.parse_args()
 
     if args.sync:
+        # RETIRED 2026-10-05: tags are gone; never write frontmatter tags again.
+        msg = "cl tags --sync is retired (2026-10-05): tags are retired, nothing written"
+        print(json.dumps({'changed': 0, 'retired': msg}) if args.json else msg)
+        return
+    if False:  # the old --sync body, unreachable, kept for the record
         scope = Path(args.path).expanduser() if args.path else KB
         changed = 0
         for f in _iter_files(scope):

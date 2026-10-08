@@ -26,7 +26,7 @@ from rich.table import Table
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import projects
+import projects_legacy as projects
 import inbox
 
 console = Console()
