@@ -8,7 +8,7 @@ not from the model being perfect:
   1. Prefixes are rules, not guesses — 100% when you want certainty:
        todo: / sooner: / buy: / grocery: / dream:
   2. Coarse destinations, and "unsure" is a valid answer: anything not clearly a
-     todo, dream or finished piece of writing STAYS in working/ (always safe).
+     todo, grocery, dream or finished piece of writing STAYS in working/ (always safe).
   3. Nothing is destroyed: the capture file itself moves to archive/folded/ when it
      becomes a line, every action is a line in _state/routing-log.md, and git has
      the rest. `cl route --undo FILE` puts one back.
@@ -38,6 +38,7 @@ EXAMPLES = Path(__file__).with_name("router_examples.json")
 SETTLE_SEC = 10 * 60          # a capture younger than this may still be being written
 KINDS = {
     "todo": "something Miro has to DO: a task, errand, chore, purchase, or person to contact",
+    "grocery": "food or household supplies to pick up at the grocery store (milk, eggs, produce, soap, toilet paper) — goes on the shared shopping list, not the todo list",
     "dream": "a dream he had",
     "writing": "his own writing worth keeping: a poem, story, letter, blog post or journal reflection",
     "working": "everything else: an idea, a link, a place, a loose thought, notes for a project, a wish for his computer setup",
@@ -82,8 +83,10 @@ Examples of how Miro files his own notes:
 Now file this one.
 Note: "{" ".join(text.split())[:1500]}"
 
-Return ONLY JSON: {{"kind": "todo|dream|writing|working", "todo_text": "<if todo: the task as a short imperative line, else empty>"}}""")
+Return ONLY JSON: {{"kind": "todo|grocery|dream|writing|working", "todo_text": "<if todo: the task as a short imperative line, else empty>", "items": ["<if grocery: each item name, short and lowercase>"]}}""")
     k = d.get("kind")
+    if k == "grocery":
+        return k, [str(i).strip() for i in d.get("items") or [] if str(i).strip()]
     return (k if k in KINDS else "working"), (d.get("todo_text") or "").strip()
 
 
@@ -139,6 +142,10 @@ def route_one(p, dry=False):
                 _append_dream(p, rest)
         return what
     kind, todo_text = classify(text)
+    if kind == "grocery" and todo_text:         # todo_text holds the item list here
+        if not dry:
+            grocery_add(todo_text); _fold(p)
+        return f"groceries: {', '.join(todo_text)}"
     if kind == "todo":
         line = todo_text or " ".join(text.split())[:120]
         if not dry:
@@ -167,6 +174,39 @@ def _append_dream(p, text):
     _fold(p)
 
 
+SNIPS = {}   # name → first words of the capture, for the receipt
+
+
+def _receipt(results):
+    """One phone notification per router pass saying where each capture went
+    (Miro, 2026-10-09: "saved locally" left him unsure, so he re-sent a dream to
+    Hermes and made a duplicate). Straight push, not hermes-notify: that door is
+    the alert gate (crit only), and this is a receipt he asked for. Best effort —
+    with the phone off the tailnet it just doesn't arrive; the log has it."""
+    lines = []
+    for name, what in results:
+        if what.startswith("skip") or name not in SNIPS:
+            continue
+        where = ("dreams" if what == "dream" else
+                 "stayed in working/ (not sure where it goes)" if what.startswith("stays") else
+                 "KitchenOwl — " + what.split(":", 1)[1].strip() if what.startswith("groceries") else
+                 what.split(":", 1)[0] if what.startswith("todo") else what)
+        lines.append(f"“{SNIPS[name]}…” → {where}")
+    if not lines:
+        return
+    title = "Capture filed" if len(lines) == 1 else f"{len(lines)} captures filed"
+    try:
+        subprocess.run([str(PUSH_PY), str(PUSH_SEND), "--title", title,
+                        "--body", "\n".join(lines), "--url", "/"],
+                       cwd=PUSH_SEND.parent, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+PUSH_PY = Path.home() / "hearth" / "surface" / "push-venv" / "bin" / "python"
+PUSH_SEND = Path.home() / "hearth" / "surface" / "push_send.py"
+
+
 def run(dry=False, all_=False):
     # Ticked boxes (Obsidian, phone) mean done; done means gone. Sweep them here so
     # the 5-minute timer is the one place that happens.
@@ -186,11 +226,14 @@ def run(dry=False, all_=False):
             continue
         if now - p.stat().st_mtime < SETTLE_SEC and not all_:
             continue
+        snip = " ".join(_body(p).split())[:60]
         try:
             what = route_one(p, dry)
         except Exception as e:                     # one bad capture must not stop the rest
             what = f"error ({e.__class__.__name__}: {e}) — left in working/"
         out.append((p.name, what))
+        if not dry and not what.startswith("skip"):
+            SNIPS[p.name] = snip
         if not dry:
             seen.add(p.name)
             if not what.startswith("stays") and not what.startswith("skip"):
@@ -216,8 +259,22 @@ def main(argv):
     if argv[:1] == ["--undo"] and len(argv) > 1:
         print(undo(argv[1])); return
     dry = "--dry-run" in argv
-    for name, what in run(dry=dry, all_="--all" in argv):
+    results = run(dry=dry, all_="--all" in argv)
+    for name, what in results:
         print(f"{name:32} {what}")
+    if not dry:
+        _receipt(results)
+    if not dry:
+        # Same 5-minute beat: top Active projects up from their `## Next` queues,
+        # wherever the last step was crossed off. See projects.refill().
+        import projects
+        try:
+            for name, steps in projects.refill_all().items():
+                for t in steps:
+                    _log(f"threads/{name}.md", f"next step → todo (Sooner): {t}")
+                    print(f"{name:32} queue → todo: {t}")
+        except Exception as e:  # a bad thread must not stop the router
+            print(f"refill failed: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

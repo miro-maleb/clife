@@ -39,6 +39,7 @@ PROJECTS = THREADS / "INDEX.md"            # project/idea status, in bands: Acti
 DREAMS = WRITING / "dreams.md"
 IDEAS = WRITING / "ideas.md"
 JOURNAL = WRITING / "journal"
+VOICE_DIARY = WRITING / "voice-diary"      # one file per day, written by ~/hearth/recorder/voicediary.py
 NOTE_DIRS = (WRITING, WORKING, THREADS, ARCHIVE)   # everything a reader may scan
 
 # Legacy name. Every pre-redesign module imports STORE as "where new notes go";

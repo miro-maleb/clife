@@ -81,6 +81,60 @@ def _find(match):
     return exact or hits
 
 
+# ── matching what he SAID to a line (2026-10-12) ───────────────────────────
+# "I emailed sam" must tick "email Sam back" without anyone knowing the line's
+# exact wording — that's the point of asking an assistant. Hermes used to pick
+# the line itself and picked wrong ("Research part ordering for Sam"). This
+# scores plainly instead: shared word stems, filler words ignored.
+_STOP = set("""i im ive i'm me my mine we our you your a an the to of for and or but on in at
+by with from up out off it its this that these those is was were be been am are do did done
+just finally already today yesterday this morning tonight got get have has had back""".split())
+
+
+_IRREGULAR = {"bought": "buy", "sent": "send", "went": "go", "made": "make", "paid": "pay",
+              "took": "take", "wrote": "write", "did": "do", "gave": "give", "told": "tell",
+              "found": "find", "brought": "bring", "fed": "feed", "met": "meet", "ran": "run",
+              "spoke": "speak", "sold": "sell", "built": "build", "put": "put", "read": "read",
+              "set": "set", "cut": "cut", "hung": "hang", "dug": "dig", "swept": "sweep"}
+
+
+def _stem(w):
+    w = _IRREGULAR.get(w.lower(), w.lower())
+    for suf in ("ing", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            w = w[: -len(suf)]
+            break
+    return w.rstrip("e") or w
+
+
+def _stems(text):
+    text = re.sub(r"\(threads/[^)]*\)|— threads/\S+", " ", text)
+    return {_stem(w) for w in re.findall(r"[\w'-]+", text.lower()) if w not in _STOP and len(w) > 1}
+
+
+def best(said):
+    """(item or None, [candidate texts]). An item comes back only when one line
+    clearly wins: it shares the most stems with what he said, at least 2 of
+    them (or all of a 1-word line), and beats the runner-up by 1+. Otherwise
+    the candidates (best first) are for asking which."""
+    want = _stems(said)
+    scored = []
+    for it in open_items():
+        have = _stems(it["text"])
+        hit = len(want & have)
+        if hit:
+            scored.append((hit, -len(have), it))
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    if not scored:
+        return None, []
+    top = scored[0]
+    second = scored[1][0] if len(scored) > 1 else 0
+    need = min(2, len(_stems(top[2]["text"])))
+    if top[0] >= need and top[0] - second >= 1:
+        return top[2], []
+    return None, [t[2]["text"] for t in scored[:4]]
+
+
 def done(match):
     """Delete the one open item matching every word of `match`. Refuses ambiguity."""
     hits = _find(match)

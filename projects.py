@@ -14,6 +14,13 @@ An Active project keeps 2-3 lines in todo.md, tied to it by ending with
 `(threads/<name>.md)`; the rest of its plan lives in its thread. A name with
 no threads/<name>.md file is fine until someone needs one.
 
+THE QUEUE (2026-10-08): a thread's first `## Next` section is a plain list of
+upcoming steps, in order. `refill()` tops an Active project back up to
+REFILL_TO lines by moving steps off the front of its queue into Sooner, so
+crossing a step off anywhere (phone, Desk, gemma, nvim) brings the next one
+without anyone remembering to. The router timer calls `refill_all()` every
+5 minutes; Hermes' todo_done calls `refill()` at once.
+
 Every reader and writer (Hermes' MCP tools, the Desk, Bridge) goes through
 here, so the format has exactly one parser — the lesson of four hand-rolled
 "has tags?" readers disagreeing in one day.
@@ -27,6 +34,7 @@ from paths import PROJECTS, THREADS
 
 BANDS = ("Active", "Ideas", "Asleep", "Reference")
 TODO_LINES = 3          # an Active project's share of todo.md, at most
+REFILL_TO = 2           # refill() tops an Active project up to this many lines
 _LINE = re.compile(r"^- \*\*(.+?)\*\* — (.*)$")
 
 
@@ -71,6 +79,74 @@ def todo_lines(name):
     """This project's open todo lines: [{band, text, ...}]."""
     t = f"threads/{name}.md"
     return [it for it in todo.open_items() if t in it["text"]]
+
+
+_NEXT_HEAD = re.compile(r"^##\s+Next\s*$", re.I)
+_QITEM = re.compile(r"^- (?:\[( |x|X)\] )?(.+?)\s*$")
+
+
+def _queue(lines):
+    """[(first, last, text)] open items of the first `## Next` section. An item
+    is a `- x` or `- [ ] x` line plus any indented lines under it; checked
+    items are skipped. `first`/`last` are 0-based line indexes, inclusive."""
+    try:
+        h = next(i for i, ln in enumerate(lines) if _NEXT_HEAD.match(ln))
+    except StopIteration:
+        return []
+    out, i = [], h + 1
+    while i < len(lines) and not lines[i].startswith("## "):
+        m = _QITEM.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(lines) and lines[j + 1][:1] in (" ", "\t") and lines[j + 1].strip():
+            j += 1
+        text = " ".join([m.group(2)] + [ln.strip() for ln in lines[i + 1:j + 1]])
+        if m.group(1) in (None, " "):
+            out.append((i, j, text))
+        i = j + 1
+    return out
+
+
+def queue(name):
+    """A project's upcoming steps, in order (its thread's `## Next` list)."""
+    f = THREADS / f"{name}.md"
+    return [t for _, _, t in _queue(f.read_text().splitlines())] if f.is_file() else []
+
+
+def refill(name):
+    """Top an ACTIVE project up to REFILL_TO todo lines from its queue, into
+    Sooner. Each step is added to todo.md first, then cut from the thread, so a
+    crash in between duplicates a step rather than losing one. Returns the
+    steps added."""
+    p = find(name)
+    if not p or p["band"] != "Active":
+        return []
+    f = THREADS / f"{p['name']}.md"
+    added = []
+    while len(todo_lines(p["name"])) < REFILL_TO and f.is_file():
+        lines = f.read_text().splitlines()
+        q = _queue(lines)
+        if not q:
+            break
+        first, last, text = q[0]
+        todo.add(f"{text} {tag(p['name'])}", sooner=True)
+        del lines[first:last + 1]
+        f.write_text("\n".join(lines).rstrip("\n") + "\n")
+        added.append(text)
+    return added
+
+
+def refill_all():
+    """{name: [steps added]} for every Active project that needed topping up."""
+    out = {}
+    for p in items():
+        if p["band"] == "Active":
+            got = refill(p["name"])
+            if got:
+                out[p["name"]] = got
+    return out
 
 
 def has_thread(name):
@@ -150,7 +226,7 @@ if __name__ == "__main__":
     cmd, *rest = sys.argv[1:] or ["list"]
     if cmd == "list":
         b = _band(rest[0]) if rest else None
-        out = [dict(p, todo=[t["text"] for t in todo_lines(p["name"])])
+        out = [dict(p, todo=[t["text"] for t in todo_lines(p["name"])], queue=queue(p["name"]))
                for p in items() if b is None or p["band"] == b]
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif cmd == "move":
@@ -159,5 +235,10 @@ if __name__ == "__main__":
         print(json.dumps(set_note(rest[0], " ".join(rest[1:]))))
     elif cmd == "add":
         print(json.dumps(add(rest[0], " ".join(rest[2:]), rest[1])))
+    elif cmd == "queue":
+        print(json.dumps(queue(rest[0]), ensure_ascii=False))
+    elif cmd == "refill":
+        print(json.dumps(refill(rest[0]) if rest else refill_all(), ensure_ascii=False))
     else:
-        sys.exit("usage: projects.py list [band] | move NAME BAND | note NAME TEXT | add NAME BAND NOTE")
+        sys.exit("usage: projects.py list [band] | move NAME BAND | note NAME TEXT | add NAME BAND NOTE"
+                 " | queue NAME | refill [NAME]")
