@@ -146,6 +146,33 @@ def done(match):
     return {"ok": True, "removed": hits[0]["text"]}
 
 
+def take_back(text, band=None):
+    """Delete the open line whose text is exactly `text` (the newest, if the
+    same line is there twice) — an undo of add(), so no word matching."""
+    hits = [it for it in open_items(band) if it["text"] == " ".join(str(text).split())]
+    if not hits:
+        return {"ok": False}
+    lines = _read()
+    del lines[hits[-1]["line"]]
+    _write(lines)
+    return {"ok": True, "removed": hits[-1]["text"]}
+
+
+def move(match, band):
+    """Move the one open line matching `match` to Sooner or Later (the line keeps
+    its words). Refuses ambiguity, like done()."""
+    band = "Sooner" if str(band).lower().startswith("s") else "Later"
+    hits = _find(match)
+    if len(hits) != 1:
+        return {"ok": False, "matches": [h["text"] for h in hits]}
+    it = hits[0]
+    if it["band"] == band:
+        return {"ok": True, "text": it["text"], "band": band, "moved": False}
+    take_back(it["text"], it["band"])
+    add(it["text"], sooner=band == "Sooner")
+    return {"ok": True, "text": it["text"], "band": band, "moved": True}
+
+
 def sweep():
     """Drop any checked lines (Obsidian/phone check-offs). Returns how many."""
     lines = _read()

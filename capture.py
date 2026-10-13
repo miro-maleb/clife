@@ -164,6 +164,50 @@ def append_journal(text):
     insert_journal_bullet(text)
 
 
+# Quick capture (2026-10-13): each line goes to the assistant through the Board
+# hub (clife quick.py), which saves it, acts on it and answers with receipts.
+# One door for the tower and the laptop alike, so todo.md has one writer. With
+# the hub unreachable the line is written here as before and the router files it.
+# The hub's address is private (a tailnet name); it lives in ~/.config/life-os/secrets.env
+# as CLIFE_QUICK_URL. Unset = no quick capture, plain capture as before.
+def _quick_url():
+    u = os.environ.get("CLIFE_QUICK_URL")
+    if u:
+        return u
+    try:
+        for ln in (Path.home() / ".config" / "life-os" / "secrets.env").read_text().splitlines():
+            if ln.startswith("CLIFE_QUICK_URL="):
+                return ln.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+QUICK_URL = _quick_url()
+QUICK_ICON = {"todo": "☐", "grocery": "🛒", "remind": "⏰", "dream": "☾", "note": "✎"}
+
+
+def _quick(path, payload):
+    if not QUICK_URL:
+        return None
+    import json as _json
+    import urllib.request as _u
+    req = _u.Request(QUICK_URL + path, data=_json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with _u.urlopen(req, timeout=15) as r:
+            return _json.load(r)
+    except Exception:
+        return None
+
+
+def _receipts(r, seen=()):
+    for a in r.get("actions", []):
+        if a["id"] in seen:
+            continue
+        mark = f"[{theme.MUTE}]undone[/] " if a.get("undone") else f"[{theme.DONE}]{QUICK_ICON.get(a['kind'], '•')}[/] "
+        console.print(f"    {mark}[{theme.DIM}]{a['label']}[/]")
+    for e in r.get("errors", []):
+        console.print(f"    [{theme.MUTE}]! {e}[/]")
+
+
 def text_mode(journal=False):
     stream_path.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -173,7 +217,8 @@ def text_mode(journal=False):
     # The Surface capture lens, at terminal scale: the accent chip, the note's
     # destination in mute beside it, then a hairline in the border colour. No
     # box drawing — Surface has no frame around the composer either.
-    console.print(f"  {theme.CHIP('CAPTURE')}  [{theme.MUTE}]→ {dest_label}[/]")
+    console.print(f"  {theme.CHIP('CAPTURE')}  [{theme.MUTE}]→ the assistant files it · “> …” changes the last one[/]")
+    last = None
     console.print(Rule(style=theme.RULE))
     console.print()
 
@@ -200,9 +245,21 @@ def text_mode(journal=False):
             if journal:
                 append_journal(line)
                 console.print(f"    [{theme.DONE}]✓[/] [{theme.MUTE}]journal[/]")
+            elif line.startswith(">") and last:
+                # A follow-up to the last capture's tiny chat: "> make it Sooner".
+                before = {a["id"]: a.get("undone") for a in last.get("actions", [])}
+                r = _quick("/follow", {"id": last["id"], "text": line[1:].strip()})
+                if r and r.get("id"):
+                    changed = {a["id"] for a in r["actions"] if a["id"] in before and before[a["id"]] == a.get("undone")}
+                    _receipts(r, changed); last = r
+                else:
+                    console.print(f"    [{theme.MUTE}]! couldn't reach the assistant[/]")
+                continue
+            elif (r := _quick("", {"text": line})) and r.get("id"):
+                _receipts(r); last = r
             else:
                 path = write_inbox(line, stamp)
-                console.print(f"    [{theme.DONE}]✓[/] [{theme.MUTE}]{path.name}[/]")
+                console.print(f"    [{theme.DONE}]✓[/] [{theme.MUTE}]{path.name} · saved; the assistant was unreachable, the router will file it[/]")
 
             count += 1
 

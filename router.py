@@ -96,6 +96,18 @@ def form_of(text):
     return d.get("form") if d.get("form") in FORMS else "journal"
 
 
+def split_buy(items):
+    """The items that are NOT groceries (food/household supplies). On a model
+    failure everything counts as groceries, which is what buy: always meant."""
+    try:
+        d = _ask(f"""Which of these are NOT groceries? Groceries = food or household supplies from a grocery store (milk, eggs, produce, soap, toilet paper). A tool, a part, a book or clothes is not a grocery.
+Items: {json.dumps(items)}
+Return ONLY JSON: {{"not_groceries": ["<items copied exactly>"]}}""")
+        return [i for i in d.get("not_groceries") or [] if i in items]
+    except Exception:
+        return []
+
+
 def grocery_add(items):
     tok = (Path.home() / ".config" / "kitchenowl" / "token").read_text().strip()
     for it in items:
@@ -133,9 +145,18 @@ def route_one(p, dry=False):
                 todo.add(rest, sooner=verb == "sooner"); _fold(p)
         elif verb in ("buy", "grocery", "groceries"):
             items = [i.strip() for i in re.split(r",|\band\b|\n", rest) if i.strip()]
-            what = f"groceries: {', '.join(items)}"
+            # buy: is shopping, not only groceries (Miro, 2026-10-13): a
+            # breadboard is a todo "Buy breadboard", not a line on the shared list.
+            other = split_buy(items) if verb == "buy" else []
+            food = [i for i in items if i not in other]
+            what = "; ".join(x for x in [f"groceries: {', '.join(food)}" if food else "",
+                                         f"todo (Later): Buy {', '.join(other)}" if other else ""] if x)
             if not dry:
-                grocery_add(items); _fold(p)
+                if food:
+                    grocery_add(food)
+                if other:
+                    todo.add(f"Buy {', '.join(other)}")
+                _fold(p)
         else:
             what = "dream"
             if not dry:

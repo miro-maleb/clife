@@ -115,6 +115,34 @@ def queue(name):
     return [t for _, _, t in _queue(f.read_text().splitlines())] if f.is_file() else []
 
 
+def enqueue(name, text):
+    """Add a step to the end of a project's queue (its thread's first `## Next`
+    list), making the section under the header if there is none. Returns the
+    step. An Active project's refill() may then move it to todo.md."""
+    text = " ".join(str(text).split())
+    if not text:
+        raise ValueError("empty step")
+    p = find(name)
+    if not p:
+        raise KeyError(name)
+    f = THREADS / f"{p['name']}.md"
+    lines = f.read_text().splitlines() if f.is_file() else [f"# {p['name']}", ""]
+    h = next((i for i, ln in enumerate(lines) if _NEXT_HEAD.match(ln)), None)
+    if h is None:
+        at = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
+        lines[at:at] = ["## Next", f"- {text}", ""]
+    else:
+        end = h + 1
+        while end < len(lines) and not lines[end].startswith("## "):
+            end += 1
+        last = end - 1
+        while last > h and not lines[last].strip():
+            last -= 1
+        lines.insert(last + 1, f"- {text}")
+    f.write_text("\n".join(lines).rstrip("\n") + "\n")
+    return text
+
+
 def refill(name):
     """Top an ACTIVE project up to REFILL_TO todo lines from its queue, into
     Sooner. Each step is added to todo.md first, then cut from the thread, so a
