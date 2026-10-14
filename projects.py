@@ -143,6 +143,25 @@ def enqueue(name, text):
     return text
 
 
+def dequeue(name, text):
+    """Take a step out of a project's queue (done, or no longer wanted): the
+    first open item whose text matches. Returns the step, or None."""
+    p = find(name)
+    if not p:
+        raise KeyError(name)
+    f = THREADS / f"{p['name']}.md"
+    if not f.is_file():
+        return None
+    want = " ".join(str(text).split())
+    lines = f.read_text().splitlines()
+    for first, last, t in _queue(lines):
+        if t == want:
+            del lines[first:last + 1]
+            f.write_text("\n".join(lines).rstrip("\n") + "\n")
+            return t
+    return None
+
+
 def refill(name):
     """Top an ACTIVE project up to REFILL_TO todo lines from its queue, into
     Sooner. Each step is added to todo.md first, then cut from the thread, so a
