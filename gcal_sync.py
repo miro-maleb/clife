@@ -78,6 +78,7 @@ def _init(conn):
       status             TEXT,
       html_link          TEXT,
       updated            TEXT,      -- API 'updated' stamp (debug/audit)
+      color              TEXT,      -- the event's own colorId ('1'-'11'), NULL = the calendar's
       PRIMARY KEY (id, calendar)
     );
     CREATE INDEX IF NOT EXISTS ix_events_span ON events(start_date, end_date);
@@ -91,6 +92,8 @@ def _init(conn):
       last_sync  TEXT
     );
     """)
+    if "color" not in {r[1] for r in conn.execute("PRAGMA table_info(events)")}:
+        conn.execute("ALTER TABLE events ADD COLUMN color TEXT")   # added 2026-10-14 for the Board calendar
     conn.commit()
 
 
@@ -98,16 +101,17 @@ def _upsert(conn, ev, cal_name):
     d = event_dict(ev, cal_name)
     conn.execute("""
       INSERT INTO events (id, calendar, title, start_date, end_date, start_time,
-        end_time, all_day, recurring, recurring_event_id, status, html_link, updated)
+        end_time, all_day, recurring, recurring_event_id, status, html_link, updated, color)
       VALUES (:id,:calendar,:title,:start_date,:end_date,:start_time,:end_time,
-        :all_day,:recurring,:recurring_event_id,:status,:html_link,:updated)
+        :all_day,:recurring,:recurring_event_id,:status,:html_link,:updated,:color)
       ON CONFLICT(id, calendar) DO UPDATE SET
         title=excluded.title, start_date=excluded.start_date, end_date=excluded.end_date,
         start_time=excluded.start_time, end_time=excluded.end_time, all_day=excluded.all_day,
         recurring=excluded.recurring, recurring_event_id=excluded.recurring_event_id,
-        status=excluded.status, html_link=excluded.html_link, updated=excluded.updated
+        status=excluded.status, html_link=excluded.html_link, updated=excluded.updated,
+        color=excluded.color
     """, {**d, "all_day": int(bool(d["all_day"])), "recurring": int(bool(d["recurring"])),
-          "updated": ev.get("updated")})
+          "updated": ev.get("updated"), "color": ev.get("colorId")})
 
 
 def _delete(conn, eid, cal_name):
