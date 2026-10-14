@@ -173,6 +173,22 @@ def move(match, band):
     return {"ok": True, "text": it["text"], "band": band, "moved": True}
 
 
+def edit(match, new_text):
+    """Reword the one open line matching `match`, in place: same band, same spot
+    (to tie it to a project, add ` (threads/<name>.md)`; to note what blocks it,
+    say so in the words). Refuses ambiguity, like done()."""
+    new_text = " ".join(str(new_text).split())
+    if not new_text:
+        raise ValueError("empty todo")
+    hits = _find(match)
+    if len(hits) != 1:
+        return {"ok": False, "matches": [h["text"] for h in hits]}
+    lines = _read()
+    lines[hits[0]["line"]] = f"- [ ] {new_text}"
+    _write(lines)
+    return {"ok": True, "was": hits[0]["text"], "text": new_text}
+
+
 def sweep():
     """Drop any checked lines (Obsidian/phone check-offs). Returns how many."""
     lines = _read()
@@ -192,5 +208,7 @@ if __name__ == "__main__":
         print(json.dumps(add(" ".join(r for r in rest if r != "--sooner"), sooner)))
     elif cmd == "done":
         print(json.dumps(done(" ".join(rest))))
+    elif cmd == "edit":            # todo.py edit "<words of the line>" "<new words>"
+        print(json.dumps(edit(rest[0], " ".join(rest[1:]))))
     elif cmd == "sweep":
         print(sweep())
