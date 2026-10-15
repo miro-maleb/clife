@@ -15,12 +15,16 @@ CLI (JSON out), used by the Board hub:
   kbfile.py resolve NAME
   kbfile.py backlinks PATH
   kbfile.py search QUERY               file names first, then contents
+  kbfile.py list DIR                   a folder's notes, newest first (the writing panel)
+  kbfile.py new FOLDER TITLE           a new piece in writing/FOLDER, created: stamped
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import paths
@@ -95,12 +99,99 @@ def save_file(raw, body, mtime=None):
     now = str(p.stat().st_mtime_ns)
     if mtime is not None and str(mtime) != now:
         return {"conflict": True, "mtime": now}
-    fm, _ = split_fm(p.read_text())
+    fm, old = split_fm(p.read_text())
+    why = locked(p, old, body)
+    if why:
+        return {"error": why}
     out = (fm + "\n" + body) if fm else body
     if not out.endswith("\n"):
         out += "\n"
     atomic_write(p, out)
     return {"ok": True, "path": str(p), "mtime": str(p.stat().st_mtime_ns)}
+
+
+def locked(p, old, body):
+    """Why this save is refused, or None. voice-diary/ is voicediary.py's
+    alone; ideas.md only grows (earlier lines are never changed)."""
+    if p.is_relative_to(paths.VOICE_DIARY.resolve()):
+        return "voice-diary is written only by voicediary.py"
+    if p == paths.IDEAS.resolve() and not body.startswith(old.rstrip()):
+        return "ideas.md is append-only: add to the end, don't change what's there"
+    return None
+
+
+def fm_field(fm, key):
+    for line in fm.split("\n"):
+        if line.startswith(key + ":"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def piece(f):
+    """One note as the writing panel lists it: title, date, first line, words."""
+    fm, body = split_fm(f.read_text(errors="replace"))
+    # written (a transcribed page) > captured > created > mtime; T → space
+    date = (fm_field(fm, "written") or fm_field(fm, "captured") or fm_field(fm, "created")).replace("T", " ")[:16]
+    st = f.stat()
+    if not re.match(r"\d{4}-\d\d-\d\d", date):
+        date = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+    title, first = "", ""
+    for line in body.split("\n"):
+        t = line.strip()
+        if not t or t.startswith("<!--"):
+            continue
+        if not title and t.startswith("# "):
+            title = t[2:].strip()
+            continue
+        if not t.startswith("#"):
+            first = t[:160]
+            break
+    return {"path": str(f), "rel": str(f.relative_to(KB)), "name": f.stem, "title": title or f.stem.replace("-", " "),
+            "date": date, "first": first, "words": len(body.split()), "mtime": str(st.st_mtime_ns),
+            "readonly": locked(f, "", "x") is not None and f.resolve() != paths.IDEAS.resolve(),
+            "append_only": f.resolve() == paths.IDEAS.resolve()}
+
+
+def list_dir(raw):
+    """Folders (with counts) and every note under DIR, newest first."""
+    try:
+        d = (KB / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
+        d.relative_to(KB)
+    except (ValueError, OSError):
+        return {"error": "not a kb folder"}
+    if not d.is_dir():
+        return {"error": "not a kb folder"}
+    folders, pieces = [], []
+    for c in sorted(d.iterdir()):
+        if c.name.startswith((".", "_")):
+            continue
+        if c.is_dir():
+            notes = [f for f in c.rglob("*.md") if not f.name.startswith(".")]
+            folders.append({"name": c.name, "rel": str(c.relative_to(KB)), "dir": True, "count": len(notes),
+                            "readonly": c.resolve() == paths.VOICE_DIARY.resolve()})
+            pieces += [piece(f) for f in notes]
+        elif c.suffix == ".md":
+            folders.append({"name": c.name, "rel": str(c.relative_to(KB)), "dir": False, "count": 1, "readonly": False})
+            pieces.append(piece(c))
+    pieces.sort(key=lambda x: x["date"], reverse=True)
+    return {"dir": str(d.relative_to(KB)), "folders": folders, "pieces": pieces}
+
+
+def new_piece(folder, title):
+    """writing/FOLDER/<slug>.md with created: now and a # Title. Never overwrites."""
+    title = " ".join(title.split())
+    d = (paths.WRITING / folder).resolve()
+    if not title:
+        return {"error": "a piece needs a title"}
+    if d.parent != paths.WRITING.resolve() or not d.is_dir() or d == paths.VOICE_DIARY.resolve():
+        return {"error": f"no writing folder called {folder}"}
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60].strip("-") or "untitled"
+    f, n = d / f"{slug}.md", 2
+    while f.exists():
+        f, n = d / f"{slug}-{n}.md", n + 1
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    atomic_write(f, f"---\ncreated: {now}\n---\n\n# {title}\n\n")
+    return open_file(str(f))
 
 
 def resolve(name):
@@ -174,6 +265,10 @@ def main(argv):
         out = resolve(rest[0])
     elif cmd == "backlinks":
         out = backlinks(rest[0])
+    elif cmd == "list":
+        out = list_dir(rest[0] if rest else "writing")
+    elif cmd == "new":
+        out = new_piece(rest[0], " ".join(rest[1:])) if rest else {"error": "new FOLDER TITLE"}
     elif cmd == "search":
         out = search(" ".join(rest))
     else:
