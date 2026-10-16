@@ -28,6 +28,8 @@ KB = Path(os.environ.get("CLIFE_KB", str(Path.home() / "kb"))).expanduser()
 #   threads/  written FOR CLAUDE to resume a conversation or project; INDEX.md first
 #   archive/  finished or gone quiet; nothing is deleted
 #   todo.md   the todo list: `## Sooner` / `## Later` checkbox lines (clife/todo.py)
+#   contractor/  1099 work, owned by Workday (~/code/contractor-note): workdays/,
+#             clients/<c>/client.md + jobs/, <year>.md review, waiting.md
 # Tags are retired. Nothing composes these paths itself; import them.
 WRITING = KB / "writing"
 WORKING = KB / "working"
@@ -40,6 +42,7 @@ DREAMS = WRITING / "dreams.md"
 IDEAS = WRITING / "ideas.md"
 JOURNAL = WRITING / "journal"
 VOICE_DIARY = WRITING / "voice-diary"      # one file per day, written by ~/hearth/recorder/voicediary.py
+CONTRACTOR = KB / "contractor"             # Workday's data; see ~/code/contractor-note/DESIGN.md
 NOTE_DIRS = (WRITING, WORKING, THREADS, ARCHIVE)   # everything a reader may scan
 
 # Legacy name. Every pre-redesign module imports STORE as "where new notes go";
