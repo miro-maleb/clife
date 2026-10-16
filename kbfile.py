@@ -17,6 +17,7 @@ CLI (JSON out), used by the Board hub:
   kbfile.py search QUERY               file names first, then contents
   kbfile.py list DIR                   a folder's notes, newest first (the writing panel)
   kbfile.py new FOLDER TITLE           a new piece in writing/FOLDER, created: stamped
+  kbfile.py new --path writing/F/S.md  that exact piece, empty (frontmatter only); opens it if it exists
 """
 import json
 import os
@@ -194,6 +195,19 @@ def new_piece(folder, title):
     return open_file(str(f))
 
 
+def new_at(raw):
+    """A draft at an exact path (an editor kit names it): writing/<folder>/<slug>.md,
+    created empty, frontmatter only: the words are Miro's, nothing is pre-filled.
+    Already there: just open it."""
+    p = guard(raw)
+    if not p or p.parent.parent != paths.WRITING.resolve() or not p.parent.is_dir() \
+            or p.parent == paths.VOICE_DIARY.resolve() or not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.md", p.name):
+        return {"error": "a draft lives at writing/<folder>/<slug>.md"}
+    if not p.exists():
+        atomic_write(p, f"---\ncreated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n---\n")
+    return open_file(str(p))
+
+
 def resolve(name):
     hit = links.resolve(name)
     if hit is None or guard(str(hit)) is None:
@@ -268,7 +282,8 @@ def main(argv):
     elif cmd == "list":
         out = list_dir(rest[0] if rest else "writing")
     elif cmd == "new":
-        out = new_piece(rest[0], " ".join(rest[1:])) if rest else {"error": "new FOLDER TITLE"}
+        out = (new_at(rest[1] if len(rest) > 1 else "") if rest[:1] == ["--path"]
+               else new_piece(rest[0], " ".join(rest[1:])) if rest else {"error": "new FOLDER TITLE"})
     elif cmd == "search":
         out = search(" ".join(rest))
     else:
