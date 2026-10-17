@@ -10,6 +10,8 @@ import json
 import os
 import urllib.request
 
+import quiet  # background calls wait while Miro dictates
+
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 # One model for everything on this box, deliberately. The tower has a single
 # 24 GB card and a 27B at 64k holds ~21.7 GiB of it, so a second model is not a
@@ -638,6 +640,7 @@ def _generate_json(prompt, timeout=180, model=None):
         "keep_alive": -1,
         "options": {"temperature": 0.1},
     }).encode()
+    quiet.wait()                     # the priority lane: dictation goes first
     req = urllib.request.Request(OLLAMA_URL, data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -664,6 +667,7 @@ def _generate_text(prompt, timeout=180, model=None, num_predict=600, temperature
         "keep_alive": -1,
         "options": {"temperature": temperature, "num_predict": num_predict},
     }).encode()
+    quiet.wait()                     # the priority lane: dictation goes first
     req = urllib.request.Request(OLLAMA_URL, data=body,
                                  headers={"Content-Type": "application/json"})
     try:

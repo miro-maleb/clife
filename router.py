@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 from paths import ARCHIVE, DREAMS, KB, WORKING, WRITING
+import quiet  # the priority lane: dictation goes first
 import todo
 
 MODEL = "resident"
@@ -60,6 +61,7 @@ def _body(p):
 def _ask(prompt):
     body = {"model": MODEL, "prompt": prompt, "stream": False, "format": "json",
             "think": False, "keep_alive": -1, "options": {"temperature": 0}}
+    quiet.wait()
     req = urllib.request.Request(OLLAMA, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
